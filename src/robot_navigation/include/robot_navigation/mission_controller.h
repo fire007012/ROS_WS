@@ -109,13 +109,16 @@ class MissionController {
   bool checkScanQrComplete();
   bool checkPositionInCircleComplete();
   bool checkScanBarcodeComplete();
+  bool skipBedsideScan_;
+  double bedsideScanSkipWaitSec_;
+  ros::Time bedsideScanSkipStart_;
   bool checkHomeCheckComplete();
 
   // ── 服务调用辅助 ──
   bool callSelectPath(const std::string& path_name);
   bool callFineTuningStart();
   bool callOpenMedicineBox(int8_t box_id);
-  bool callArmPlaceMedicine(int8_t bed_id);
+  bool callArmPlaceMedicine(int8_t bed_id, int8_t box_id);
   bool callSpeak(const std::string& text);
 
   // ── 底盘锁死 ──

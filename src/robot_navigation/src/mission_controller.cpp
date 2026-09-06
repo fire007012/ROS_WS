@@ -34,6 +34,8 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , medicine_release_done_received_(false)
     , odom_received_(false)
     , home_arrived_(false)
+    , skipBedsideScan_(true)
+    , bedsideScanSkipWaitSec_(1.0)
     , stage_timeout_sec_(30.0)
     , mission_timeout_sec_(180.0)
     , state_machine_rate_hz_(10.0)
@@ -82,6 +84,9 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 }
 
 bool MissionController::init() {
+  pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, true);
+  pnh_.param<double>("bedside_scan_skip_wait_s", bedsideScanSkipWaitSec_, 1.0);
+  bedsideScanSkipWaitSec_ = std::max(0.0, bedsideScanSkipWaitSec_);
   // ── 订阅 ──
   qr_result_sub_     = nh_.subscribe("/qr_result", 1,
                                      &MissionController::qrResultCallback, this);
@@ -436,33 +441,28 @@ void MissionController::actionPositionInCircleA() {
 }
 
 void MissionController::actionScanBarcodeA() {
-  int bed = qr_result_.first_bed;
+  const int bed = qr_result_.first_bed;
+  if (skipBedsideScan_) {
+    bedsideScanSkipStart_ = ros::Time::now();
+    ROS_WARN("[mission_controller] 无摄像头：跳过 %d 床条形码扫描，等待 %.1f s；药箱仍按护士台 first_box=%d",
+             bed, bedsideScanSkipWaitSec_, qr_result_.first_box);
+    return;
+  }
   ROS_INFO("[mission_controller] 动作: 等待 %d 床条形码", bed);
   if (bed == 1) barcode_bed1_received_.store(false);
-  else          barcode_bed3_received_.store(false);
+  else barcode_bed3_received_.store(false);
 }
 
 void MissionController::actionOpenBoxA() {
-  int box = qr_result_.first_box;
-  ROS_INFO("[mission_controller] 动作: 打开药箱 %d（底盘已锁死）", box);
-
-  // ── 底盘锁死（P1-4） ──
+  ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.first_box);
   lockChassis();
-
-  if (!callOpenMedicineBox(box)) {
-    ROS_ERROR("[mission_controller] 打开药箱 %d 失败", box);
-    unlockChassis();
-    enterFailedState("打开药箱失败");
-    return;
-  }
   enterState(State::PLACE_MEDICINE_A);
-  // 底盘保持锁死，直到语音播报结束
 }
 
 void MissionController::actionPlaceMedicineA() {
   int bed = qr_result_.first_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
-  if (!callArmPlaceMedicine(bed)) {
+  if (!callArmPlaceMedicine(bed, qr_result_.first_box)) {
     ROS_ERROR("[mission_controller] 放置药品到 %d 床失败", bed);
     unlockChassis();
     enterFailedState("放置药品失败");
@@ -521,30 +521,28 @@ void MissionController::actionPositionInCircleB() {
 }
 
 void MissionController::actionScanBarcodeB() {
-  int bed = qr_result_.second_bed;
+  const int bed = qr_result_.second_bed;
+  if (skipBedsideScan_) {
+    bedsideScanSkipStart_ = ros::Time::now();
+    ROS_WARN("[mission_controller] 无摄像头：跳过 %d 床条形码扫描，等待 %.1f s；药箱仍按护士台 second_box=%d",
+             bed, bedsideScanSkipWaitSec_, qr_result_.second_box);
+    return;
+  }
   ROS_INFO("[mission_controller] 动作: 等待 %d 床条形码", bed);
   if (bed == 1) barcode_bed1_received_.store(false);
-  else          barcode_bed3_received_.store(false);
+  else barcode_bed3_received_.store(false);
 }
 
 void MissionController::actionOpenBoxB() {
-  int box = qr_result_.second_box;
-  ROS_INFO("[mission_controller] 动作: 打开药箱 %d（底盘已锁死）", box);
-
+  ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.second_box);
   lockChassis();
-
-  if (!callOpenMedicineBox(box)) {
-    unlockChassis();
-    enterFailedState("打开药箱失败");
-    return;
-  }
   enterState(State::PLACE_MEDICINE_B);
 }
 
 void MissionController::actionPlaceMedicineB() {
   int bed = qr_result_.second_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
-  if (!callArmPlaceMedicine(bed)) {
+  if (!callArmPlaceMedicine(bed, qr_result_.second_box)) {
     unlockChassis();
     enterFailedState("放置药品失败");
     return;
@@ -634,7 +632,7 @@ bool MissionController::checkScanQrComplete() {
 }
 
 bool MissionController::checkPositionInCircleComplete() {
-  if (fine_tuning_done_received_.load() && medicine_release_done_received_.load()) {
+  if (fine_tuning_done_received_.load()) {
     if (current_state_ == State::POSITION_IN_CIRCLE_A) {
       enterState(State::SCAN_BARCODE_A);
     } else {
@@ -646,6 +644,13 @@ bool MissionController::checkPositionInCircleComplete() {
 }
 
 bool MissionController::checkScanBarcodeComplete() {
+  if (skipBedsideScan_) {
+    if ((ros::Time::now() - bedsideScanSkipStart_).toSec() < bedsideScanSkipWaitSec_) return false;
+    ROS_WARN("[mission_controller] 条形码扫描已跳过（无摄像头），继续执行护士台指定药箱");
+    if (current_state_ == State::SCAN_BARCODE_A) enterState(State::OPEN_BOX_A);
+    else enterState(State::OPEN_BOX_B);
+    return true;
+  }
   // 用 load() 获取原子值
   int bed = (current_state_ == State::SCAN_BARCODE_A)
       ? qr_result_.first_bed : qr_result_.second_bed;
@@ -793,7 +798,7 @@ bool MissionController::callOpenMedicineBox(int8_t box_id) {
   return true;
 }
 
-bool MissionController::callArmPlaceMedicine(int8_t bed_id) {
+bool MissionController::callArmPlaceMedicine(int8_t bed_id, int8_t box_id) {
   if (!arm_place_client_.exists()) {
     ROS_ERROR("[mission_controller] /arm_place_medicine 服务不可用");
     return false;
@@ -801,6 +806,7 @@ bool MissionController::callArmPlaceMedicine(int8_t bed_id) {
 
   arm_and_gripper::ArmPlaceMedicine srv;
   srv.request.bed_id = bed_id;
+  srv.request.box_id = box_id;
 
   if (!arm_place_client_.call(srv)) {
     ROS_ERROR("[mission_controller] 调用 /arm_place_medicine(%d) 失败", bed_id);

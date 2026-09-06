@@ -1,28 +1,25 @@
-# 机械臂+夹爪控制参数
-can_device: "can0"             # CAN 接口名称（CAN2对应 can1）
-arm_can_id: 0x205             # 机械臂电机 CAN ID（地址5: 0x205）
-position_cmd_code: 0x10       # 位置模式指令码
-arm_angle_scale: 2.78         # 角度→编码器计数值比例（1000 counts/360° ≈ 2.78）
+# STM32 标准板 CAN1/CAN2 放药控制
+can_device: can0
+arm_can_id: 0x205
+default_arm_angle: 180.0
+default_reset_arm: true
+arm_move_timeout_s: 3.0
 
-# 默认动作参数
-default_arm_angle: 180.0         # 默认机械臂目标角度（度）
-default_servo1_open_angle: 180.0 # 默认舵机1张开角度（度）
-default_servo2_open_angle: 180.0 # 默认舵机2张开角度（度）
-default_reset_arm: true         # 完成后是否复位机械臂
+# 旧位置型 SG90：PB0；只控制一个药箱时手动打开/关闭
+servo_hold_duration_s: 1.0
+old_servo_open_angle: 180
+old_servo_close_angle: 0
+old_servo_move_duration_s: 0.5
+old_servo_return_duration_s: 1.0
 
-# 时序参数
-post_servo1_delay_s: 0.5      # SG90保持打开时间，之后由STM32自动回到0度 (s)
-post_servo2_delay_s: 1.0      # SG90归位后的稳定时间，再开始Y42归位 (s)
-arm_move_timeout_s: 3.0       # 机械臂移动等待时间 (s)
+# 新连续旋转型 SG90：PD14；控制值不是绝对角度
+# 当前STM32映射：0=逆时针，180=顺时针，88约为1.50ms停止
+new_servo_open_control: 0
+new_servo_close_control: 180
+new_servo_stop_control: 88
+new_servo_open_duration_s: 0.235
+new_servo_close_duration_s: 0.235
+servo_settle_duration_s: 0.05
 
-# STM32 SG90 触发帧
-servo_trigger_can_id: 0x700
-servo_trigger_cmd_code: 0x20
-servo_trigger_extended: true
-servo_return_angle: 0.0
-
-# 推出动作参数（/arm_place_medicine 服务使用）
-push_distance_m: 0.05         # 推出距离 (m)
-push_velocity: 0.03           # 推出速度 (m/s)
-push_timeout_s: 5.0           # 推出超时 (s)
-push_cmd_code: 0x11           # 线性移动指令码
+# 正式流程由 mission_controller 在选定药箱后调用 /arm_place_medicine
+auto_start_on_fine_tuning: false

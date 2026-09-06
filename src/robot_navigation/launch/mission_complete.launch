@@ -31,7 +31,9 @@
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_camera"       default="true"/>
   <arg name="enable_arm"          default="true"/>
-  <arg name="enable_servo"        default="true"/>
+  <arg name="enable_servo"        default="false"/>
+  <arg name="skip_bedside_scan" default="true"/>
+  <arg name="bedside_scan_skip_wait_s" default="1.0"/>
 
   <!-- ======================== 配置文件路径 ======================== -->
   <arg name="robot_params"        default="$(find robot_bringup)/config/robot_params.yaml"/>
@@ -115,14 +117,7 @@
   <!-- ============================================================ -->
   <!--  第5层：业务执行层                                            -->
   <!-- ============================================================ -->
-
-  <!-- 5.1 舵机控制（可选） -->
-  <group if="$(arg enable_servo)">
-    <node pkg="arm_and_gripper" type="servo_controller_node"
-          name="servo_controller_node" output="screen">
-      <rosparam file="$(arg servo_config)" command="load"/>
-    </node>
-  </group>
+  <!-- 舵机由STM32 CAN控制，不启动旧pigpio节点。 -->
 
   <!-- 5.2 机械臂+夹爪（可选） -->
   <group if="$(arg enable_arm)">
@@ -143,17 +138,7 @@
       <param name="push_cmd_code" value="17"/>
     </node>
   </group>
-
-  <!-- 5.3 药箱开启控制 -->
-  <node pkg="robot_navigation" type="open_medicine_box_node"
-        name="open_medicine_box_node" output="screen">
-    <rosparam file="$(arg mission_config)" command="load"/>
-    <param name="can_device" value="can1"/>
-    <param name="can_id" value="518"/>
-    <param name="servo_cmd_code" value="32"/>
-    <param name="open_angle_deg" value="90.0"/>
-    <param name="hold_duration_sec" value="1.0"/>
-  </node>
+  <!-- 药箱由 arm_and_gripper_node 按护士台 box_id 统一控制。 -->
 
   <!-- ============================================================ -->
   <!--  第6层：视觉感知层（可选）                                    -->
@@ -322,6 +307,8 @@
   <!-- 9.3 任务状态机 — 编排全部任务流程 -->
   <node pkg="robot_navigation" type="mission_controller_node"
         name="mission_controller_node" output="screen" required="true">
+      <param name="skip_bedside_scan" value="$(arg skip_bedside_scan)"/>
+      <param name="bedside_scan_skip_wait_s" value="$(arg bedside_scan_skip_wait_s)"/>
     <rosparam file="$(arg mission_config)" command="load"/>
   </node>
 
