@@ -31,6 +31,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , barcode_bed3_received_(false)
     , path_finished_received_(false)
     , fine_tuning_done_received_(false)
+    , medicine_release_done_received_(false)
     , odom_received_(false)
     , home_arrived_(false)
     , stage_timeout_sec_(30.0)
@@ -97,6 +98,9 @@ bool MissionController::init() {
 
   fine_tuning_done_sub_ = nh_.subscribe("/fine_tuning_done", 1,
                                         &MissionController::fineTuningDoneCallback, this);
+
+  medicine_release_done_sub_ = nh_.subscribe("/medicine_release_done", 1,
+                                        &MissionController::medicineReleaseDoneCallback, this);
 
   // ── 发布 ──
   mission_finished_pub_ = nh_.advertise<std_msgs::Bool>("/mission_finished", 1, true);
@@ -240,6 +244,13 @@ void MissionController::fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& m
   if (msg->data) {
     fine_tuning_done_received_.store(true);
     ROS_INFO("[mission_controller] 收到微调完成信号");
+  }
+}
+
+void MissionController::medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (msg->data) {
+    medicine_release_done_received_.store(true);
+    ROS_INFO("[mission_controller] 收到放药完成信号");
   }
 }
 
@@ -416,6 +427,7 @@ void MissionController::actionGotoBedA() {
 void MissionController::actionPositionInCircleA() {
   ROS_INFO("[mission_controller] 动作: 启动微调（A床）");
   fine_tuning_done_received_.store(false);
+  medicine_release_done_received_.store(false);
   if (!callFineTuningStart()) {
     // 微调失败不致命，继续流程
     ROS_WARN("[mission_controller] 微调启动失败，跳过微调继续执行");
@@ -501,6 +513,7 @@ void MissionController::actionGotoBedB() {
 void MissionController::actionPositionInCircleB() {
   ROS_INFO("[mission_controller] 动作: 启动微调（B床）");
   fine_tuning_done_received_.store(false);
+  medicine_release_done_received_.store(false);
   if (!callFineTuningStart()) {
     ROS_WARN("[mission_controller] 微调启动失败，跳过微调继续执行");
     fine_tuning_done_received_.store(true);
@@ -621,7 +634,7 @@ bool MissionController::checkScanQrComplete() {
 }
 
 bool MissionController::checkPositionInCircleComplete() {
-  if (fine_tuning_done_received_.load()) {
+  if (fine_tuning_done_received_.load() && medicine_release_done_received_.load()) {
     if (current_state_ == State::POSITION_IN_CIRCLE_A) {
       enterState(State::SCAN_BARCODE_A);
     } else {
@@ -854,6 +867,7 @@ void MissionController::resetMissionState() {
   barcode_bed3_received_.store(false);
   path_finished_received_.store(false);
   fine_tuning_done_received_.store(false);
+  medicine_release_done_received_.store(false);
   home_arrived_ = false;
   action_initiated_ = false;
   mission_completed_.store(false);

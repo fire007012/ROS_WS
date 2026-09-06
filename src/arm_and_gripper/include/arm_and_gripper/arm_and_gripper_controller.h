@@ -53,12 +53,14 @@ class ArmAndGripperController {
   void closeCanSocket();
   bool sendArmAngleCommand(double angle_deg);
   bool sendArmLinearCommand(double distance_m);   // 新增: 线性推出/退回
+  bool sendServoTriggerCommand(double servo1_angle, double servo2_angle);
   bool callServoAngle(uint8_t servo_id, double angle_deg);
 
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
 
   ros::Subscriber fine_tuning_done_sub_;
+  ros::Publisher medicine_release_done_pub_;
   ros::ServiceServer place_medicine_srv_;
   ros::ServiceServer arm_place_medicine_srv_;   // 新增
   ros::ServiceClient servo_cmd_client_;
@@ -78,6 +80,10 @@ class ArmAndGripperController {
   double post_servo1_delay_s_;
   double post_servo2_delay_s_;
   double arm_move_timeout_s_;
+  uint32_t servo_trigger_can_id_;
+  uint8_t servo_trigger_cmd_code_;
+  bool servo_trigger_extended_;
+  double servo_return_angle_;
 
   // ── 推出动作参数 ──
   double push_distance_m_;        // 推出距离 (m)，默认 0.05

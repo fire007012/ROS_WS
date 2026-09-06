@@ -12,6 +12,7 @@
 
 #include "arm_and_gripper/arm_and_gripper_controller.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -35,12 +36,16 @@ ArmAndGripperController::ArmAndGripperController(ros::NodeHandle& nh, ros::NodeH
     , arm_angle_scale_(1000.0 / 360.0)  // 默认: 360° = 1000 counts → 约 2.78 counts/°
     , socket_fd_(-1)
     , default_arm_angle_(90.0)
-    , default_servo1_open_angle_(90.0)
-    , default_servo2_open_angle_(90.0)
+    , default_servo1_open_angle_(180.0)
+    , default_servo2_open_angle_(180.0)
     , default_reset_arm_(true)
     , post_servo1_delay_s_(0.5)
     , post_servo2_delay_s_(1.0)
     , arm_move_timeout_s_(5.0)
+    , servo_trigger_can_id_(0x700)
+    , servo_trigger_cmd_code_(0x20)
+    , servo_trigger_extended_(true)
+    , servo_return_angle_(0.0)
     , push_distance_m_(0.05)
     , push_velocity_(0.03)
     , push_timeout_s_(5.0)
@@ -65,12 +70,20 @@ bool ArmAndGripperController::init() {
   pnh_.param<double>("arm_angle_scale", arm_angle_scale_, arm_angle_scale_);
 
   pnh_.param<double>("default_arm_angle", default_arm_angle_, 90.0);
-  pnh_.param<double>("default_servo1_open_angle", default_servo1_open_angle_, 90.0);
-  pnh_.param<double>("default_servo2_open_angle", default_servo2_open_angle_, 90.0);
+  pnh_.param<double>("default_servo1_open_angle", default_servo1_open_angle_, 180.0);
+  pnh_.param<double>("default_servo2_open_angle", default_servo2_open_angle_, 180.0);
   pnh_.param<bool>("default_reset_arm", default_reset_arm_, true);
   pnh_.param<double>("post_servo1_delay_s", post_servo1_delay_s_, 0.5);
   pnh_.param<double>("post_servo2_delay_s", post_servo2_delay_s_, 1.0);
   pnh_.param<double>("arm_move_timeout_s", arm_move_timeout_s_, 5.0);
+  int servo_trigger_can_id_int = static_cast<int>(servo_trigger_can_id_);
+  pnh_.param("servo_trigger_can_id", servo_trigger_can_id_int, servo_trigger_can_id_int);
+  servo_trigger_can_id_ = static_cast<uint32_t>(servo_trigger_can_id_int);
+  int servo_trigger_cmd_int = static_cast<int>(servo_trigger_cmd_code_);
+  pnh_.param("servo_trigger_cmd_code", servo_trigger_cmd_int, servo_trigger_cmd_int);
+  servo_trigger_cmd_code_ = static_cast<uint8_t>(servo_trigger_cmd_int & 0xFF);
+  pnh_.param<bool>("servo_trigger_extended", servo_trigger_extended_, true);
+  pnh_.param<double>("servo_return_angle", servo_return_angle_, 0.0);
 
   // ── 推出动作参数 ──
   pnh_.param<double>("push_distance_m", push_distance_m_, 0.05);
@@ -84,6 +97,11 @@ bool ArmAndGripperController::init() {
   fine_tuning_done_sub_ = nh_.subscribe(
       "/fine_tuning_done", 1,
       &ArmAndGripperController::fineTuningDoneCallback, this);
+
+  medicine_release_done_pub_ = nh_.advertise<std_msgs::Bool>("/medicine_release_done", 10, true);
+  std_msgs::Bool release_init;
+  release_init.data = false;
+  medicine_release_done_pub_.publish(release_init);
 
   // ── 服务: 手动触发药品摆放 ──
   place_medicine_srv_ = nh_.advertiseService(
@@ -111,6 +129,9 @@ bool ArmAndGripperController::init() {
   ROS_INFO("[arm_and_gripper]   默认机械臂角度: %.0f°", default_arm_angle_);
   ROS_INFO("[arm_and_gripper]   舵机1张开角度: %.0f°, 舵机2张开角度: %.0f°",
            default_servo1_open_angle_, default_servo2_open_angle_);
+  ROS_INFO("[arm_and_gripper]   SG90触发帧: ID=0x%03X, cmd=0x%02X, ext=%s",
+           servo_trigger_can_id_, servo_trigger_cmd_code_,
+           servo_trigger_extended_ ? "true" : "false");
   ROS_INFO("[arm_and_gripper]   订阅 /fine_tuning_done, 服务 /place_medicine 已就绪");
 
   return true;
@@ -173,30 +194,23 @@ bool ArmAndGripperController::executePlaceSequence(
     ROS_INFO("[arm_and_gripper] 机械臂已就位");
   }
 
-  // ── 步骤2: 舵机1张开 ──
-  ROS_INFO("[arm_and_gripper] [2/5] 舵机1张开到 %.0f° ...", servo1_angle);
-  if (!callServoAngle(1, servo1_angle)) {
-    ROS_ERROR("[arm_and_gripper] 舵机1控制失败！");
+  // ── 步骤2: 通知STM32执行两个SG90舵机动作 ──
+  ROS_INFO("[arm_and_gripper] [2/5] 发送SG90触发帧: servo1=%.0f°, servo2=%.0f° ...",
+           servo1_angle, servo2_angle);
+  if (!sendServoTriggerCommand(servo1_angle, servo2_angle)) {
+    ROS_ERROR("[arm_and_gripper] SG90触发帧发送失败！");
     all_ok = false;
   }
   ros::Duration(post_servo1_delay_s_).sleep();
-
-  // ── 步骤3: 舵机2张开 ──
-  ROS_INFO("[arm_and_gripper] [3/5] 舵机2张开到 %.0f° ...", servo2_angle);
-  if (!callServoAngle(2, servo2_angle)) {
-    ROS_ERROR("[arm_and_gripper] 舵机2控制失败！");
-    all_ok = false;
-  }
   ros::Duration(post_servo2_delay_s_).sleep();
 
-  // ── 步骤4: 舵机1闭合 ──
-  ROS_INFO("[arm_and_gripper] [4/5] 舵机1闭合 (回到0°) ...");
-  callServoAngle(1, 0.0);
+  // ── 步骤4: STM32侧按触发帧内的保持时间自动回位 ──
+  ROS_INFO("[arm_and_gripper] [4/5] SG90动作等待完成");
 
   // ── 步骤5: 机械臂复位（可选） ──
   if (reset_arm) {
-    ROS_INFO("[arm_and_gripper] [5/5] 机械臂复位到 0° ...");
-    if (!sendArmAngleCommand(0.0)) {
+    ROS_INFO("[arm_and_gripper] [5/5] 机械臂反向移动 %.0f° 回到初始位置 ...", arm_angle);
+    if (!sendArmAngleCommand(-arm_angle)) {
       ROS_ERROR("[arm_and_gripper] 机械臂复位失败！");
       all_ok = false;
     } else {
@@ -208,8 +222,12 @@ bool ArmAndGripperController::executePlaceSequence(
 
   sequence_running_.store(false);
 
+  std_msgs::Bool done_msg;
+  done_msg.data = all_ok;
+  medicine_release_done_pub_.publish(done_msg);
+
   if (all_ok) {
-    ROS_INFO("[arm_and_gripper] ====== 药品摆放动作序列完成 ======");
+    ROS_INFO("[arm_and_gripper] ====== 药品摆放动作序列完成，发布 /medicine_release_done=true ======");
   } else {
     ROS_ERROR("[arm_and_gripper] ====== 药品摆放动作序列有错误 ======");
   }
@@ -311,7 +329,7 @@ bool ArmAndGripperController::sendArmAngleCommand(double angle_deg) {
   frame1.can_id = frame1_id | CAN_EFF_FLAG;
   frame1.can_dlc = 4;
   frame1.data[0] = 0xFB;
-  frame1.data[1] = 0x02;  // mode = 2，从当前位置打断
+  frame1.data[1] = 0x02;  // raf = 2，相对当前实时位置
   frame1.data[2] = 0x00; // 保留
   frame1.data[3] = 0x6B;  // 校验
 
@@ -321,6 +339,56 @@ bool ArmAndGripperController::sendArmAngleCommand(double angle_deg) {
 
   ROS_INFO("[arm_and_gripper] CAN TX: ID=0x%03X/0x%03X, dir=%u, speed=50RPM, angle=%.1f°",
            frame0_id, frame1_id, direction, angle_deg);
+  return true;
+}
+
+// ── 发送STM32 SG90触发帧 ─────────────────────────────────
+bool ArmAndGripperController::sendServoTriggerCommand(double servo1_angle, double servo2_angle) {
+  if (socket_fd_ < 0 && !initCanSocket()) {
+    ROS_ERROR("[arm_and_gripper] CAN socket 不可用，无法发送SG90触发帧");
+    return false;
+  }
+
+  auto angle_to_u8 = [](double angle_deg) -> uint8_t {
+    const double limited = std::max(0.0, std::min(180.0, angle_deg));
+    return static_cast<uint8_t>(std::lround(limited));
+  };
+
+  const double hold_s = std::max(0.0, post_servo1_delay_s_);
+  const uint32_t hold_ms_u32 = static_cast<uint32_t>(std::lround(hold_s * 1000.0));
+  const uint16_t hold_ms = static_cast<uint16_t>(std::min<uint32_t>(hold_ms_u32, 65535U));
+
+  uint8_t data[8] = {0};
+  data[0] = servo_trigger_cmd_code_;
+  data[1] = 0x03U;  // bit0=servo1, bit1=servo2
+  data[2] = angle_to_u8(servo1_angle);
+  data[3] = angle_to_u8(servo2_angle);
+  data[4] = angle_to_u8(servo_return_angle_);
+  data[5] = static_cast<uint8_t>(hold_ms & 0xFFU);
+  data[6] = static_cast<uint8_t>((hold_ms >> 8) & 0xFFU);
+  for (uint8_t i = 0; i < 7; ++i) {
+    data[7] = static_cast<uint8_t>(data[7] + data[i]);
+  }
+
+  struct can_frame frame;
+  std::memset(&frame, 0, sizeof(frame));
+  frame.can_id = servo_trigger_can_id_ & (servo_trigger_extended_ ? CAN_EFF_MASK : CAN_SFF_MASK);
+  if (servo_trigger_extended_) {
+    frame.can_id |= CAN_EFF_FLAG;
+  }
+  frame.can_dlc = 8;
+  std::memcpy(frame.data, data, sizeof(data));
+
+  int nbytes = write(socket_fd_, &frame, sizeof(frame));
+  if (nbytes != static_cast<int>(sizeof(frame))) {
+    ROS_ERROR("[arm_and_gripper] CAN 写入失败: %s", std::strerror(errno));
+    return false;
+  }
+
+  ROS_INFO("[arm_and_gripper] CAN TX (SG90): ID=0x%03X%s, cmd=0x%02X, s1=%u, s2=%u, return=%u, hold=%ums",
+           servo_trigger_can_id_,
+           servo_trigger_extended_ ? " ext" : "",
+           servo_trigger_cmd_code_, data[2], data[3], data[4], hold_ms);
   return true;
 }
 
@@ -377,7 +445,7 @@ bool ArmAndGripperController::armPlaceMedicineCallback(
   bool ok = true;
 
   // ── 步骤1: 推出（将药品从药箱推到床头柜圆圈内） ──
-  ROS_INFO("[arm_and_gripper] [1/2] 推出 %.2f m ...", push_distance_m_);
+  ROS_INFO("[arm_and_gripper] [1/3] 推出 %.2f m ...", push_distance_m_);
   if (!sendArmLinearCommand(push_distance_m_)) {
     ROS_ERROR("[arm_and_gripper] 推出动作失败！");
     ok = false;
@@ -385,8 +453,17 @@ bool ArmAndGripperController::armPlaceMedicineCallback(
     ros::Duration(push_timeout_s_).sleep();
   }
 
-  // ── 步骤2: 退回 ──
-  ROS_INFO("[arm_and_gripper] [2/2] 退回 ...");
+  ROS_INFO("[arm_and_gripper] [2/3] 发送SG90触发帧: servo1=%.0f°, servo2=%.0f° ...",
+           default_servo1_open_angle_, default_servo2_open_angle_);
+  if (!sendServoTriggerCommand(default_servo1_open_angle_, default_servo2_open_angle_)) {
+    ROS_ERROR("[arm_and_gripper] SG90触发帧发送失败！");
+    ok = false;
+  }
+  ros::Duration(post_servo1_delay_s_).sleep();
+  ros::Duration(post_servo2_delay_s_).sleep();
+
+  // ── 步骤3: 退回 ──
+  ROS_INFO("[arm_and_gripper] [3/3] 退回 ...");
   if (!sendArmLinearCommand(-push_distance_m_)) {
     ROS_ERROR("[arm_and_gripper] 退回动作失败！");
     ok = false;

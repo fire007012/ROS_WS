@@ -1,6 +1,6 @@
 <launch>
   <!--
-    药品摆放控制 launch — 默认只启动机械臂+夹爪控制
+    药品摆放控制 launch — 舵机由 STM32 CAN 控制，不需要 pigpio
     依赖: CAN接口已UP (sudo ip link set can1 up type can bitrate 1000000)
           pigpiod 已运行 (sudo pigpiod)
   -->

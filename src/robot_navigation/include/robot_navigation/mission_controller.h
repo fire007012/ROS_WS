@@ -78,6 +78,7 @@ class MissionController {
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
+  void medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void missionTimerCallback(const ros::TimerEvent& event);
   void stateMachineTimerCallback(const ros::TimerEvent& event);
 
@@ -158,6 +159,7 @@ class MissionController {
   ros::Subscriber odom_sub_;
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
+  ros::Subscriber medicine_release_done_sub_;
 
   // 发布
   ros::Publisher mission_finished_pub_;
@@ -204,6 +206,7 @@ class MissionController {
 
   // ── 微调完成信号 ──
   std::atomic<bool> fine_tuning_done_received_;
+  std::atomic<bool> medicine_release_done_received_;
 
   // ── 里程计 ──
   nav_msgs::Odometry current_odom_;
