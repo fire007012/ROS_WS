@@ -1,0 +1,25 @@
+# STM32 标准板 CAN1/CAN2 放药控制
+can_device: can0
+arm_can_id: 0x205
+default_arm_angle: 180.0
+default_reset_arm: true
+arm_move_timeout_s: 3.0
+
+# 旧位置型 SG90：PB0；只控制一个药箱时手动打开/关闭
+servo_hold_duration_s: 1.0
+old_servo_open_angle: 180
+old_servo_close_angle: 0
+old_servo_move_duration_s: 0.5
+old_servo_return_duration_s: 1.0
+
+# 新连续旋转型 SG90：PD14；控制值不是绝对角度
+# 当前STM32映射：0=逆时针，180=顺时针，88约为1.50ms停止
+new_servo_open_control: 0
+new_servo_close_control: 180
+new_servo_stop_control: 88
+new_servo_open_duration_s: 0.235
+new_servo_close_duration_s: 0.235
+servo_settle_duration_s: 0.05
+
+# 正式流程由 mission_controller 在选定药箱后调用 /arm_place_medicine
+auto_start_on_fine_tuning: false

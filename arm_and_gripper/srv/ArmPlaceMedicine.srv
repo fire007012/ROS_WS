@@ -1,0 +1,6 @@
+# 机械臂完整放药流程
+int8 bed_id
+int8 box_id
+---
+bool success
+string message

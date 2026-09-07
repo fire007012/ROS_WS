@@ -1,0 +1,315 @@
+<?xml version="1.0"?>
+<!--
+  ==============================================================================
+   完整任务启动文件 — robot_navigation/launch/mission_complete.launch
+  ==============================================================================
+
+   启动顺序（按依赖关系）：
+     1. can_motor_interface        — 底盘 CAN 通信
+     2. motion_planner             — 运动规划 + 里程计
+     3. arm_interface              — 机械臂 CAN 接口
+     4. path_manager               — 路径管理
+     5. path_tracker               — 路径跟踪
+     6. fine_tuning                — 终点微调（VL53L1X）
+     7. servo_controller           — 舵机控制
+     8. arm_and_gripper            — 药品摆放（机械臂+舵机）
+     9. barcode_qr_detector        — 二维码/条形码识别
+    10. open_medicine_box          — 药箱开启控制
+    11. display_node               — 屏幕显示
+    12. start_signal_pub           — 启动信号转发
+    13. mission_controller         — 任务状态机
+
+   使用方式：
+     roslaunch robot_navigation mission_complete.launch
+
+   可选参数：
+     enable_camera:=false          — 禁用摄像头相关节点
+     mission_config:=/path/to/config  — 自定义任务配置文件
+  ==============================================================================
+-->
+<launch>
+  <!-- ======================== 顶层开关参数 ======================== -->
+  <arg name="enable_camera"       default="true"/>
+  <arg name="enable_arm"          default="true"/>
+  <arg name="enable_servo"        default="false"/>
+  <arg name="skip_bedside_scan" default="true"/>
+  <arg name="bedside_scan_skip_wait_s" default="1.0"/>
+
+  <!-- ======================== 配置文件路径 ======================== -->
+  <arg name="robot_params"        default="$(find robot_bringup)/config/robot_params.yaml"/>
+  <arg name="arm_params"          default="$(find robot_bringup)/config/arm_params.yaml"/>
+  <arg name="paths_file"          default="$(find robot_bringup)/config/paths.yaml"/>
+  <arg name="path_tracker_params" default="$(find robot_bringup)/config/path_tracker.yaml"/>
+  <arg name="fine_tuning_config"  default="$(find fine_tuning)/config/fine_tuning.yaml"/>
+  <arg name="servo_config"        default="$(find arm_and_gripper)/config/servo_params.yaml"/>
+  <arg name="arm_gripper_config"  default="$(find arm_and_gripper)/config/arm_and_gripper.yaml"/>
+  <arg name="mission_config"      default="$(find robot_navigation)/config/mission_params.yaml"/>
+
+  <!-- ======================== 全局参数加载 ======================== -->
+  <rosparam file="$(arg robot_params)"   command="load"/>
+  <rosparam file="$(arg arm_params)"     command="load"/>
+  <rosparam file="$(arg mission_config)" command="load"/>
+
+  <!-- ============================================================ -->
+  <!--  第1层：硬件通信层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 1.1 底盘 CAN 接口 (can0) -->
+  <node pkg="can_motor_interface" type="can_interface_node"
+        name="can_interface_node" output="screen" required="true">
+    <param name="can_device" value="can0"/>
+    <param name="tx_can_id" value="513"/>
+    <param name="rx_can_id" value="385"/>
+    <param name="motor_count" value="4"/>
+    <param name="max_rpm" value="3000.0"/>
+    <param name="heartbeat_timeout_sec" value="1.0"/>
+  </node>
+
+  <!-- ============================================================ -->
+  <!--  第2层：运动规划层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 2.1 cmd_vel 多路复用器 -->
+  <node pkg="motion_planner" type="cmd_vel_mux_node"
+        name="cmd_vel_mux_node" output="screen" required="true">
+    <param name="publish_rate_hz" value="30.0"/>
+  </node>
+
+  <!-- 2.2 里程计 -->
+  <node pkg="motion_planner" type="base_odometry_node"
+        name="base_odometry_node" output="screen" required="true">
+    <param name="odom_publish_hz" value="50.0"/>
+  </node>
+
+  <!-- 2.3 运动规划器 -->
+  <node pkg="motion_planner" type="planner_node"
+        name="planner_node" output="screen" required="true">
+    <param name="print_debug_log" value="false"/>
+  </node>
+
+  <!-- ============================================================ -->
+  <!--  第3层：路径导航层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 3.1 路径管理器 -->
+  <node pkg="path_manager" type="path_manager_node"
+        name="path_manager_node" output="screen" required="true">
+    <param name="yaml_file_path" value="$(arg paths_file)"/>
+    <param name="publish_rate_hz" value="10.0"/>
+  </node>
+
+  <!-- 3.2 路径跟踪器 -->
+  <node pkg="path_manager" type="path_tracker_node"
+        name="path_tracker_node" output="screen" required="true">
+    <rosparam file="$(arg path_tracker_params)" command="load"/>
+  </node>
+
+  <!-- ============================================================ -->
+  <!--  第4层：精确定位层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 4.1 终点微调 (VL53L1X) -->
+  <node pkg="fine_tuning" type="fine_tuning_node"
+        name="fine_tuning_node" output="screen" required="true">
+    <rosparam file="$(arg fine_tuning_config)" command="load"/>
+  </node>
+
+  <!-- ============================================================ -->
+  <!--  第5层：业务执行层                                            -->
+  <!-- ============================================================ -->
+  <!-- 舵机由STM32 CAN控制，不启动旧pigpio节点。 -->
+
+  <!-- 5.2 机械臂+夹爪（可选） -->
+  <group if="$(arg enable_arm)">
+    <!-- 机械臂 CAN 接口 -->
+    <node pkg="arm_interface" type="arm_controller_node"
+          name="arm_controller_node" output="screen">
+      <rosparam file="$(arg arm_params)" command="load"/>
+    </node>
+
+    <!-- 机械臂动作序列控制 -->
+    <node pkg="arm_and_gripper" type="arm_and_gripper_node"
+          name="arm_and_gripper_node" output="screen">
+      <rosparam file="$(arg arm_gripper_config)" command="load"/>
+      <!-- 推出动作参数 -->
+      <param name="push_distance_m" value="0.05"/>
+      <param name="push_velocity" value="0.03"/>
+      <param name="push_timeout_s" value="5.0"/>
+      <param name="push_cmd_code" value="17"/>
+    </node>
+  </group>
+  <!-- 药箱由 arm_and_gripper_node 按护士台 box_id 统一控制。 -->
+
+  <!-- ============================================================ -->
+  <!--  第6层：视觉感知层（可选）                                    -->
+  <!-- ============================================================ -->
+
+  <!-- 6.1 USB 摄像头驱动（需要安装 usb_cam 包） -->
+  <group if="$(arg enable_camera)">
+    <node pkg="usb_cam" type="usb_cam_node" name="usb_cam"
+          output="screen" required="false">
+      <param name="video_device" value="/dev/video0"/>
+      <param name="image_width" value="1280"/>
+      <param name="image_height" value="720"/>
+      <param name="pixel_format" value="yuyv"/>
+      <param name="framerate" value="25"/>
+    </node>
+
+    <!-- 6.2 二维码/条形码识别 -->
+    <node pkg="robot_navigation" type="barcode_qr_detector_node"
+          name="barcode_qr_detector_node" output="screen">
+      <param name="qr_timeout_sec" value="30.0"/>
+      <param name="barcode_timeout_sec" value="30.0"/>
+      <param name="image_queue_size" value="10"/>
+    </node>
+  </group>
+
+  <!-- ============================================================ -->
+  <!--  第7层：人机交互层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 7.1 显示屏节点 -->
+  <node pkg="robot_navigation" type="display_node"
+        name="display_node" output="screen">
+    <param name="can_enable" value="false"/>
+  </node>
+
+  <!-- 7.2 启动信号转发（CAN → ROS） -->
+  <node pkg="robot_navigation" type="start_signal_pub_node"
+        name="start_signal_pub_node" output="screen">
+    <param name="can_device" value="can0"/>
+    <param name="can_id" value="384"/>
+    <param name="start_cmd_code" value="240"/>
+  </node>
+
+  <!-- 7.3 物理启动按钮（GPIO 直连） -->
+  <node pkg="robot_navigation" type="start_button_node"
+        name="start_button_node" output="screen">
+    <param name="button_pin" value="17"/>
+    <param name="led_pin" value="27"/>
+    <param name="debounce_ms" value="50"/>
+    <param name="active_low" value="true"/>
+    <param name="led_enabled" value="true"/>
+  </node>
+
+  <!-- 7.4 视频推流（MJPEG over HTTP） -->
+  <group if="$(arg enable_camera)">
+    <node pkg="robot_navigation" type="video_stream_node"
+          name="video_stream_node" output="screen">
+      <param name="http_port" value="8080"/>
+      <param name="jpeg_quality" value="85"/>
+      <param name="stream_width" value="1280"/>
+      <param name="stream_height" value="720"/>
+      <param name="framerate" value="25.0"/>
+    </node>
+
+    <!-- 7.5 双向音频聊天 -->
+    <node pkg="robot_navigation" type="audio_chat_node"
+          name="audio_chat_node" output="screen">
+      <param name="enabled" value="true"/>
+      <param name="role" value="master"/>
+      <param name="sample_rate" value="48000"/>
+      <param name="remote_ip" value="192.168.15.129"/>
+      <param name="rx_port" value="5004"/>
+      <param name="tx_port" value="5004"/>
+    </node>
+  </group>
+
+  <!-- ============================================================ -->
+  <!--  第8层：安全感知层                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 8.1 VL53L1X 激光测距传感器驱动 — I2C 读取距离数据（前方） -->
+  <!-- <node pkg="robot_navigation" type="vl53l1x_driver_node"
+        name="vl53l1x_driver_node" output="screen" required="true">
+    <param name="i2c_device" value="/dev/i2c-1"/>
+    <param name="i2c_address" value="41"/>       <!-- 0x29 -->
+    <param name="read_rate_hz" value="20.0"/>
+    <param name="distance_mode" value="2"/>       <!-- 中距离模式 -->
+    <param name="timing_budget_ms" value="50.0"/>
+    <param name="use_median_filter" value="true"/>
+    <param name="median_window_size" value="5"/>
+    <param name="use_moving_average" value="true"/>
+    <param name="moving_average_alpha" value="0.3"/>
+    <param name="safety_threshold_mm" value="300.0"/>
+    <param name="critical_threshold_mm" value="100.0"/>
+    <param name="safety_timeout_sec" value="0.5"/>
+  </node> -->
+
+  <!-- 8.1b VL53L1X 左侧传感器（I2C 地址 0x30，需硬件配置） -->
+  <node pkg="robot_navigation" type="vl53l1x_driver_node"
+        name="vl53l1x_driver_left" output="screen" required="false">
+    <param name="i2c_device" value="/dev/i2c-1"/>
+    <param name="i2c_address" value="48"/>       <!-- 0x30 -->
+    <param name="topic_name" value="/vl53l1x_distance_left"/>
+    <param name="read_rate_hz" value="20.0"/>
+    <param name="distance_mode" value="2"/>
+    <param name="timing_budget_ms" value="50.0"/>
+  </node>
+
+  <!-- 8.1c VL53L1X 右侧传感器（I2C 地址 0x31，需硬件配置） -->
+  <node pkg="robot_navigation" type="vl53l1x_driver_node"
+        name="vl53l1x_driver_right" output="screen" required="false">
+    <param name="i2c_device" value="/dev/i2c-1"/>
+    <param name="i2c_address" value="49"/>       <!-- 0x31 -->
+    <param name="topic_name" value="/vl53l1x_distance_right"/>
+    <param name="read_rate_hz" value="20.0"/>
+    <param name="distance_mode" value="2"/>
+    <param name="timing_budget_ms" value="50.0"/>
+  </node>
+
+  <!-- 8.2 距离安全检测 — 障碍物过近时通过 cmd_vel_safety 紧急制动 + Bug2 绕障 -->
+  <node pkg="robot_navigation" type="distance_safety_node"
+        name="distance_safety_node" output="screen" required="true">
+    <param name="safety_distance_mm" value="300.0"/>
+    <param name="critical_distance_mm" value="100.0"/>
+    <param name="reverse_speed" value="0.05"/>
+    <param name="distance_timeout_sec" value="0.5"/>
+    <param name="control_rate_hz" value="20.0"/>
+    <param name="check_forward_only" value="true"/>
+    <!-- Bug2 动态避障 -->
+    <param name="bug2_enabled" value="true"/>
+    <param name="bug2_side_clearance_mm" value="400.0"/>
+    <param name="bug2_turn_speed" value="0.5"/>
+    <param name="bug2_along_speed" value="0.1"/>
+    <param name="bug2_max_duration_sec" value="10.0"/>
+  </node>
+
+  <!-- 8.3 急停按钮（GPIO 直连） -->
+  <node pkg="robot_navigation" type="emergency_stop_node"
+        name="emergency_stop_node" output="screen" required="true">
+    <param name="estop_pin" value="22"/>
+    <param name="led_pin" value="23"/>
+    <param name="debounce_ms" value="30"/>
+    <param name="active_low" value="true"/>
+    <param name="poll_rate_hz" value="100.0"/>
+  </node>
+
+  <!-- ============================================================ -->
+  <!--  第9层：任务编排层（最顶层）                                  -->
+  <!-- ============================================================ -->
+
+  <!-- 9.1 语音播报服务 — 文字转语音输出 -->
+  <node pkg="robot_navigation" type="speak_node"
+        name="speak_node" output="screen">
+    <param name="language" value="zh"/>
+    <param name="speed" value="1.0"/>
+    <param name="volume" value="1.0"/>
+  </node>
+
+  <!-- 9.2 系统健康监控 — 关键话题检测 + 急停转发 -->
+  <node pkg="robot_navigation" type="health_monitor_node"
+        name="health_monitor_node" output="screen">
+    <param name="publish_rate_hz" value="1.0"/>
+    <param name="max_consecutive_failures" value="3"/>
+  </node>
+
+  <!-- 9.3 任务状态机 — 编排全部任务流程 -->
+  <node pkg="robot_navigation" type="mission_controller_node"
+        name="mission_controller_node" output="screen" required="true">
+      <param name="skip_bedside_scan" value="$(arg skip_bedside_scan)"/>
+      <param name="bedside_scan_skip_wait_s" value="$(arg bedside_scan_skip_wait_s)"/>
+    <rosparam file="$(arg mission_config)" command="load"/>
+  </node>
+
+</launch>
