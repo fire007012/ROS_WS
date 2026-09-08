@@ -34,6 +34,9 @@
   <arg name="enable_fine_tuning"   default="true"/>
   <arg name="enable_servo"         default="true"/>
   <arg name="enable_arm_and_gripper" default="true"/>
+  <arg name="enable_vl53l1x_can" default="true"/>
+  <arg name="vl53l1x_can_interface" default="can0"/>
+  <arg name="vl53l1x_can_config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
 
   <!-- ======================== 配置文件路径 ======================== -->
   <arg name="navigation_params"  default="$(find robot_navigation)/config/navigation_params.yaml"/>
@@ -209,18 +212,13 @@
   <!--  安全感知节点                                                 -->
   <!-- ============================================================ -->
 
-  <!-- VL53L1X 激光测距传感器驱动（前方） -->
-  <node pkg="robot_navigation" type="vl53l1x_driver_node"
-        name="vl53l1x_driver_node" output="screen" required="false">
-    <param name="i2c_device" value="/dev/i2c-1"/>
-    <param name="i2c_address" value="41"/>
-    <param name="read_rate_hz" value="20.0"/>
-    <param name="distance_mode" value="2"/>
-    <param name="timing_budget_ms" value="50.0"/>
-    <param name="safety_threshold_mm" value="300.0"/>
-    <param name="critical_threshold_mm" value="100.0"/>
-    <param name="safety_timeout_sec" value="0.5"/>
-  </node>
+  <!-- STM32 VL53L1X CAN bridge: three Range sensors + installation TF -->
+  <group if="$(arg enable_vl53l1x_can)">
+    <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
+      <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>
+      <arg name="config" value="$(arg vl53l1x_can_config)"/>
+    </include>
+  </group>
 
   <!-- 距离安全检测 — 自动避障制动 + Bug2 绕障 -->
   <node pkg="robot_navigation" type="distance_safety_node"
@@ -228,7 +226,7 @@
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
     <param name="reverse_speed" value="0.05"/>
-    <param name="distance_timeout_sec" value="0.5"/>
+    <param name="distance_timeout_sec" value="0.25"/>
     <param name="control_rate_hz" value="20.0"/>
     <param name="check_forward_only" value="true"/>
     <param name="bug2_enabled" value="true"/>

@@ -118,7 +118,7 @@ distance_safety:
   safety_distance_mm: 300.0
   critical_distance_mm: 100.0
   reverse_speed: 0.05
-  distance_timeout_sec: 0.5
+  distance_timeout_sec: 0.25
   control_rate_hz: 20.0
   check_forward_only: true
   bug2_enabled: true

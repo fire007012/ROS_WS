@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
+  <arg name="can_interface" default="can0"/>
+  <arg name="publish_tf" default="true"/>
+
+  <!-- Coordinates are installation parameters; override these for the actual chassis. -->
+  <arg name="front_x" default="0.0"/><arg name="front_y" default="0.0"/><arg name="front_z" default="0.0"/>
+  <arg name="front_yaw" default="0.0"/><arg name="front_pitch" default="0.0"/><arg name="front_roll" default="0.0"/>
+  <arg name="left_x" default="0.0"/><arg name="left_y" default="0.0"/><arg name="left_z" default="0.0"/>
+  <arg name="left_yaw" default="0.0"/><arg name="left_pitch" default="0.0"/><arg name="left_roll" default="0.0"/>
+  <arg name="right_x" default="0.0"/><arg name="right_y" default="0.0"/><arg name="right_z" default="0.0"/>
+  <arg name="right_yaw" default="0.0"/><arg name="right_pitch" default="0.0"/><arg name="right_roll" default="0.0"/>
+
+  <node pkg="robot_navigation" type="vl53l1x_can_bridge_node"
+        name="vl53l1x_can_bridge_node" output="screen" required="true">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="can_interface" value="$(arg can_interface)"/>
+  </node>
+
+  <group if="$(arg publish_tf)">
+    <node pkg="tf" type="static_transform_publisher" name="front_range_tf"
+          args="$(arg front_x) $(arg front_y) $(arg front_z) $(arg front_yaw) $(arg front_pitch) $(arg front_roll) base_link front_range_link 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="left_range_tf"
+          args="$(arg left_x) $(arg left_y) $(arg left_z) $(arg left_yaw) $(arg left_pitch) $(arg left_roll) base_link left_range_link 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="right_range_tf"
+          args="$(arg right_x) $(arg right_y) $(arg right_z) $(arg right_yaw) $(arg right_pitch) $(arg right_roll) base_link right_range_link 100"/>
+  </group>
+</launch>
