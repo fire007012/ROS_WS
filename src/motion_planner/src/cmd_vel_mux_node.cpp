@@ -81,7 +81,11 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
     if (!sourceActive(source_name, now)) {
       continue;
     }
-    const geometry_msgs::Twist clamped = clampTwist(sources_[source_name].twist, dt);
+    // A safety command must be able to stop immediately. Applying the normal
+    // acceleration ramp here would turn a safety stop into a delayed stop.
+    const bool is_safety_source = std::string(source_name) == "safety";
+    const geometry_msgs::Twist clamped = clampTwist(
+        sources_[source_name].twist, dt, is_safety_source);
     publishSelected(clamped, source_name);
     return;
   }
@@ -104,11 +108,16 @@ bool CmdVelMuxNode::sourceActive(const std::string& source_name, const ros::Time
   return (now - it->second.stamp).toSec() <= cmd_timeout_sec_;
 }
 
-geometry_msgs::Twist CmdVelMuxNode::clampTwist(const geometry_msgs::Twist& input, double dt) const {
+geometry_msgs::Twist CmdVelMuxNode::clampTwist(const geometry_msgs::Twist& input, double dt,
+                                               bool bypass_acceleration_limit) const {
   geometry_msgs::Twist output = input;
   output.linear.x = std::max(-max_linear_vel_, std::min(max_linear_vel_, output.linear.x));
   output.linear.y = std::max(-max_linear_vel_, std::min(max_linear_vel_, output.linear.y));
   output.angular.z = std::max(-max_angular_vel_, std::min(max_angular_vel_, output.angular.z));
+
+  if (bypass_acceleration_limit) {
+    return output;
+  }
 
   const double linear_step = max_linear_accel_ * dt;
   const double angular_step = max_angular_accel_ * dt;

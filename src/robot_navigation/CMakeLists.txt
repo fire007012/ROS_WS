@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   geometry_msgs
   sensor_msgs
+  diagnostic_msgs
   cv_bridge
   message_generation
   path_manager
@@ -46,6 +47,8 @@ catkin_package(
   CATKIN_DEPENDS
     roscpp
     std_msgs
+    sensor_msgs
+    diagnostic_msgs
     std_srvs
     message_runtime
     path_manager
@@ -141,6 +144,19 @@ add_dependencies(vl53l1x_driver_node
   ${catkin_EXPORTED_TARGETS}
 )
 target_link_libraries(vl53l1x_driver_node
+  ${catkin_LIBRARIES}
+)
+
+# ── STM32 VL53L1X CAN bridge (three sensors) ───────────────────
+add_executable(vl53l1x_can_bridge_node
+  src/vl53l1x_can_bridge.cpp
+)
+add_dependencies(vl53l1x_can_bridge_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+target_link_libraries(vl53l1x_can_bridge_node
+  can_utils
   ${catkin_LIBRARIES}
 )
 
@@ -243,6 +259,7 @@ install(TARGETS
   display_node
   start_signal_pub_node
   vl53l1x_driver_node
+  vl53l1x_can_bridge_node
   distance_safety_node
   speak_node
   health_monitor_node
@@ -261,6 +278,19 @@ install(DIRECTORY launch/
 install(DIRECTORY config/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_vl53l1x_can_bridge
+    test/test_vl53l1x_can_bridge.cpp
+  )
+  if(TARGET test_vl53l1x_can_bridge)
+    target_link_libraries(test_vl53l1x_can_bridge
+      can_utils
+      gtest_main
+      ${catkin_LIBRARIES}
+    )
+  endif()
+endif()
 
 # ── Python 脚本 ─────────────────────────────────────────────
 catkin_install_python(PROGRAMS

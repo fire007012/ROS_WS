@@ -2,9 +2,12 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/UInt32.h>
 #include <nav_msgs/Odometry.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <path_manager/PathPoint.h>
+#include <std_srvs/Trigger.h>
 
 namespace path_manager {
 
@@ -12,7 +15,7 @@ namespace path_manager {
  * @brief 路径跟踪控制器
  *
  * 订阅 /path_points（来自 path_manager_node）和 /odom（来自 base_odometry_node），
- * 使用比例控制器依次跟踪每个路径点，到达后自动切换到下一个点。
+ * 使用比例控制器跟踪当前路径点；到达后通过 /next_point 请求路径管理器推进。
  * 控制指令发布到 /cmd_vel_external，与 cmd_vel_mux 兼容。
  * 全部路径点完成后发布 /path_finished = true。
  */
@@ -26,6 +29,8 @@ class PathTracker {
  private:
   // ── 回调 ──
   void pathPointsCallback(const path_manager::PathPoint::ConstPtr& msg);
+  void pathHasNextCallback(const std_msgs::Bool::ConstPtr& msg);
+  void pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void controlTimerCallback(const ros::TimerEvent& event);
 
@@ -46,15 +51,21 @@ class PathTracker {
   ros::NodeHandle pnh_;
 
   ros::Subscriber path_points_sub_;
+  ros::Subscriber path_has_next_sub_;
+  ros::Subscriber path_revision_sub_;
   ros::Subscriber odom_sub_;
   ros::Publisher  cmd_vel_pub_;
   ros::Publisher  path_finished_pub_;
+  ros::Publisher  current_target_pub_;
+  ros::ServiceClient next_point_client_;
   ros::Timer      control_timer_;
 
-  // ── 路径点队列 ──
-  std::vector<path_manager::PathPoint> point_queue_;
-  size_t current_point_idx_;
-  bool all_points_received_;  // 是否已收到全部路径点（话题可能持续发布）
+  // ── 当前路径点 ──
+  path_manager::PathPoint current_target_;
+  bool has_target_;
+  bool waiting_for_next_point_;
+  bool path_has_next_point_;
+  uint32_t path_revision_;
   bool path_completed_;
 
   // ── 当前位姿 ──

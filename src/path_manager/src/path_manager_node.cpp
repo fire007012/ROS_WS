@@ -8,6 +8,8 @@
 #include <path_manager/LoadPath.h>
 #include <path_manager/SelectPath.h>
 #include <std_srvs/Trigger.h>
+#include <std_msgs/Bool.h>
+#include <std_msgs/UInt32.h>
 
 #include <sstream>
 #include <cstdlib>
@@ -36,6 +38,7 @@ class PathManager {
     , override_y_(0.0)
     , override_tolerance_(0.05)
     , publish_rate_hz_(10.0)
+    , path_revision_(0)
   {}
 
   bool init();
@@ -45,6 +48,8 @@ class PathManager {
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
   ros::Publisher  path_pub_;
+  ros::Publisher  has_next_pub_;
+  ros::Publisher  path_revision_pub_;
   ros::ServiceServer load_srv_;
   ros::ServiceServer select_srv_;
   ros::ServiceServer next_srv_;
@@ -67,6 +72,7 @@ class PathManager {
   // ── 配置 ──
   double publish_rate_hz_;
   std::string yaml_file_path_;
+  uint32_t path_revision_;
 
   // ── 内部方法 ──
   bool loadPathsFromParam();
@@ -80,6 +86,7 @@ class PathManager {
                        std_srvs::Trigger::Response& res);
   void reconfigureCallback(path_manager::PathManagerConfig& config,
                            uint32_t level);
+  void publishPathState();
 };
 
 // ── 初始化 ─────────────────────────────────────────────────
@@ -91,6 +98,8 @@ bool PathManager::init() {
 
   // 发布者
   path_pub_ = nh_.advertise<path_manager::PathPoint>("/path_points", 10);
+  has_next_pub_ = nh_.advertise<std_msgs::Bool>("/path_manager/has_next_point", 1, true);
+  path_revision_pub_ = nh_.advertise<std_msgs::UInt32>("/path_manager/path_revision", 1, true);
 
   // 服务
   load_srv_   = nh_.advertiseService("/load_path",   &PathManager::handleLoadPath,   this);
@@ -112,7 +121,20 @@ bool PathManager::init() {
                                &PathManager::publishTimerCallback, this);
 
   ROS_INFO("[path_manager] 初始化完成，已加载 %zu 条路径", paths_.size());
+  publishPathState();
   return true;
+}
+
+void PathManager::publishPathState() {
+  std_msgs::Bool has_next;
+  has_next.data = active_path_idx_ >= 0 &&
+      active_path_idx_ < static_cast<int>(paths_.size()) &&
+      active_point_idx_ + 1 < static_cast<int>(paths_[active_path_idx_].points.size());
+  has_next_pub_.publish(has_next);
+
+  std_msgs::UInt32 revision;
+  revision.data = path_revision_;
+  path_revision_pub_.publish(revision);
 }
 
 // ── 从参数服务器读取路径 ──────────────────────────────────
@@ -214,11 +236,13 @@ void PathManager::publishTimerCallback(const ros::TimerEvent& /*event*/) {
     msg.x         = override_x_;
     msg.y         = override_y_;
     msg.tolerance = override_tolerance_;
+    msg.has_next  = active_point_idx_ + 1 < static_cast<int>(path.points.size());
   } else {
     const PointDef& pt = path.points[active_point_idx_];
     msg.x         = pt.x;
     msg.y         = pt.y;
     msg.tolerance = pt.tolerance;
+    msg.has_next  = active_point_idx_ + 1 < static_cast<int>(path.points.size());
   }
 
   path_pub_.publish(msg);
@@ -252,6 +276,8 @@ bool PathManager::handleSelectPath(
       active_path_idx_  = static_cast<int>(i);
       active_point_idx_ = 0;
       override_enabled_ = false;  // 切换路径时清除覆盖
+      ++path_revision_;
+      publishPathState();
 
       res.success = true;
       res.message = "已选择路径: " + req.path_name
@@ -290,6 +316,7 @@ bool PathManager::handleNextPoint(
 
   active_point_idx_++;
   override_enabled_ = false;  // 切换到新点后清除覆盖
+  publishPathState();
 
   res.success = true;
   res.message = "前进到点 " + std::to_string(active_point_idx_ + 1) +

@@ -14,8 +14,10 @@ constexpr double kTwoPi = 2.0 * M_PI;
 PathTracker::PathTracker(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     : nh_(nh)
     , pnh_(pnh)
-    , current_point_idx_(0)
-    , all_points_received_(false)
+    , has_target_(false)
+    , waiting_for_next_point_(false)
+    , path_has_next_point_(false)
+    , path_revision_(0)
     , path_completed_(false)
     , current_x_(0.0)
     , current_y_(0.0)
@@ -53,12 +55,18 @@ bool PathTracker::init() {
   // ── 订阅与发布 ──
   path_points_sub_ = nh_.subscribe("/path_points", 10,
                                    &PathTracker::pathPointsCallback, this);
+  path_has_next_sub_ = nh_.subscribe("/path_manager/has_next_point", 1,
+                                      &PathTracker::pathHasNextCallback, this);
+  path_revision_sub_ = nh_.subscribe("/path_manager/path_revision", 1,
+                                      &PathTracker::pathRevisionCallback, this);
   odom_sub_ = nh_.subscribe("/odom", 10,
                             &PathTracker::odomCallback, this);
 
   // 发布到 cmd_vel_mux 的 external 输入（优先级: safety > external > teleop > fixed_route）
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_external", 10);
   path_finished_pub_ = nh_.advertise<std_msgs::Bool>("/path_finished", 10, true);  // latched
+  current_target_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/path_tracker/current_target", 1, true);
+  next_point_client_ = nh_.serviceClient<std_srvs::Trigger>("/next_point");
 
   // ── 控制定时器 ──
   const double period = 1.0 / std::max(1.0, control_rate_hz_);
@@ -83,35 +91,53 @@ bool PathTracker::init() {
 
 // ── /path_points 回调 ──────────────────────────────────────
 void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& msg) {
-  // 过滤重复点：如果与队列最后一个点完全相同则忽略
-  if (!point_queue_.empty()) {
-    const auto& last = point_queue_.back();
-    if (std::abs(last.x - msg->x) < 1e-6 &&
-        std::abs(last.y - msg->y) < 1e-6) {
-      return;  // 重复点，忽略
-    }
-  }
+  path_has_next_point_ = msg->has_next;
+  const bool target_changed = !has_target_ ||
+      std::abs(current_target_.x - msg->x) >= 1e-6 ||
+      std::abs(current_target_.y - msg->y) >= 1e-6 ||
+      std::abs(current_target_.tolerance - msg->tolerance) >= 1e-6;
+  if (!target_changed) return;
 
-  // 如果已经完成，新路径点会触发新路径
-  if (state_ == State::ALL_DONE) {
-    ROS_INFO("[path_tracker] 收到新路径点，重置跟踪状态");
-    point_queue_.clear();
-    current_point_idx_ = 0;
-    path_completed_ = false;
-    all_points_received_ = false;
-
-    // 清除 path_finished
-    std_msgs::Bool msg;
-    msg.data = false;
-    path_finished_pub_.publish(msg);
-  }
-
-  point_queue_.push_back(*msg);
-
-  if (state_ == State::WAITING_FOR_PATH || state_ == State::STOPPED) {
+  current_target_ = *msg;
+  has_target_ = true;
+  waiting_for_next_point_ = false;
+  path_completed_ = false;
+  if (state_ == State::WAITING_FOR_PATH || state_ == State::STOPPED || state_ == State::ALL_DONE) {
     state_ = State::MOVING;
-    ROS_INFO("[path_tracker] 开始跟踪路径，共 %zu 个点", point_queue_.size());
   }
+
+  std_msgs::Bool unfinished;
+  unfinished.data = false;
+  path_finished_pub_.publish(unfinished);
+
+  geometry_msgs::PoseStamped target_pose;
+  target_pose.header.stamp = ros::Time::now();
+  target_pose.header.frame_id = "odom";
+  target_pose.pose.position.x = current_target_.x;
+  target_pose.pose.position.y = current_target_.y;
+  target_pose.pose.orientation.w = 1.0;
+  current_target_pub_.publish(target_pose);
+  ROS_INFO("[path_tracker] 跟踪目标 (x=%.3f, y=%.3f), has_next=%s",
+           current_target_.x, current_target_.y, path_has_next_point_ ? "true" : "false");
+}
+
+void PathTracker::pathHasNextCallback(const std_msgs::Bool::ConstPtr& msg) {
+  path_has_next_point_ = msg->data;
+}
+
+void PathTracker::pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg) {
+  if (msg->data == path_revision_) return;
+  path_revision_ = msg->data;
+  has_target_ = false;
+  waiting_for_next_point_ = false;
+  path_completed_ = false;
+  state_ = State::WAITING_FOR_PATH;
+  publishStop();
+
+  std_msgs::Bool unfinished;
+  unfinished.data = false;
+  path_finished_pub_.publish(unfinished);
+  ROS_INFO("[path_tracker] 接收到新路径版本 %u，重置跟踪状态", path_revision_);
 }
 
 // ── /odom 回调 ─────────────────────────────────────────────
@@ -140,34 +166,16 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
     return;
   }
 
-  // 没有路径点
-  if (point_queue_.empty()) {
+  // 没有目标点或正等待路径管理器推进
+  if (!has_target_ || waiting_for_next_point_) {
     if (state_ != State::WAITING_FOR_PATH) {
       state_ = State::WAITING_FOR_PATH;
     }
+    publishStop();
     return;
   }
 
-  // 所有点已完成
-  if (current_point_idx_ >= point_queue_.size()) {
-    if (!path_completed_) {
-      path_completed_ = true;
-      state_ = State::ALL_DONE;
-      publishStop();
-
-      std_msgs::Bool done_msg;
-      done_msg.data = true;
-      path_finished_pub_.publish(done_msg);
-
-      ROS_INFO("[path_tracker] ====== 全部路径点完成！======");
-    }
-    return;
-  }
-
-  const path_manager::PathPoint& target = point_queue_[current_point_idx_];
-
-  // 使用路径点自带的 tolerance，若未设置则用默认值
-  double tolerance = (target.tolerance > 0.0) ? target.tolerance : position_tolerance_;
+  const path_manager::PathPoint& target = current_target_;
 
   // 检查是否到达
   bool reached = isPointReached(target, current_x_, current_y_);
@@ -184,7 +192,7 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
       if (std::abs(heading_err) < heading_tolerance_) {
         // 朝向已对齐，切换到移动
         state_ = State::MOVING;
-        ROS_DEBUG("[path_tracker] 朝向已对齐，开始前进到点 %lu", current_point_idx_ + 1);
+        ROS_DEBUG("[path_tracker] 朝向已对齐，开始前进到当前目标");
       } else {
         // 仅旋转
         double cmd_omega = kp_angular_ * heading_err;
@@ -201,11 +209,10 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
 
     case State::MOVING: {
       if (reached) {
-        // 初次到达，开始计时
+        // 初次到达，开始计时。
         state_ = State::ARRIVED_AT_POINT;
         arrival_time_ = ros::Time::now();
-        ROS_INFO("[path_tracker] 到达点 %lu/%zu (x=%.3f, y=%.3f)，稳定中...",
-                 current_point_idx_ + 1, point_queue_.size(),
+        ROS_INFO("[path_tracker] 到达当前路径点 (x=%.3f, y=%.3f)，稳定中...",
                  target.x, target.y);
         // 发布零速度让机器人停下
         publishStop();
@@ -231,31 +238,27 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
 
       ros::Duration hold_dur = ros::Time::now() - arrival_time_;
       if (hold_dur.toSec() >= arrival_hold_time_) {
-        // 切换到下一个点
-        current_point_idx_++;
-
-        if (current_point_idx_ >= point_queue_.size()) {
-          // 全部完成
+        if (!path_has_next_point_) {
           path_completed_ = true;
           state_ = State::ALL_DONE;
 
           std_msgs::Bool done_msg;
           done_msg.data = true;
           path_finished_pub_.publish(done_msg);
-
           ROS_INFO("[path_tracker] ====== 全部路径点完成！======");
         } else {
-          // 下一个点
-          const auto& next = point_queue_[current_point_idx_];
-          ROS_INFO("[path_tracker] → 切换到点 %lu/%zu (x=%.3f, y=%.3f)",
-                   current_point_idx_ + 1, point_queue_.size(),
-                   next.x, next.y);
-
-          if (use_turn_then_move_) {
-            state_ = State::TURNING;
-          } else {
-            state_ = State::MOVING;
+          std_srvs::Trigger next_srv;
+          if (!next_point_client_.call(next_srv) || !next_srv.response.success) {
+            ROS_ERROR("[path_tracker] 请求下一个路径点失败，保持停车: %s",
+                      next_srv.response.message.c_str());
+            state_ = State::STOPPED;
+            publishStop();
+            return;
           }
+          waiting_for_next_point_ = true;
+          has_target_ = false;
+          state_ = State::WAITING_FOR_PATH;
+          ROS_INFO("[path_tracker] 当前点完成，等待下一个路径点");
         }
       }
       break;

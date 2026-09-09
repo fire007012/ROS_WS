@@ -1,0 +1,32 @@
+# STM32 VL53L1X CAN bridge. Protocol IDs are fixed by the STM32 firmware,
+# but remain configurable for deployments using a CAN gateway.
+can_interface: can0
+distance_can_id: 0x110
+diagnostic_can_id: 0x111
+poll_rate_hz: 200
+sensor_timeout_ms: 200
+
+front:
+  name: front
+  range_topic: /front/range
+  distance_topic: /vl53l1x_distance
+  frame_id: front_range_link
+  min_range: 0.04
+  max_range: 4.0
+  field_of_view: 0.47
+left:
+  name: left
+  range_topic: /left/range
+  distance_topic: /vl53l1x_distance_left
+  frame_id: left_range_link
+  min_range: 0.04
+  max_range: 4.0
+  field_of_view: 0.47
+right:
+  name: right
+  range_topic: /right/range
+  distance_topic: /vl53l1x_distance_right
+  frame_id: right_range_link
+  min_range: 0.04
+  max_range: 4.0
+  field_of_view: 0.47

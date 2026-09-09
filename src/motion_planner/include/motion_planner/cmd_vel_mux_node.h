@@ -23,7 +23,8 @@ class CmdVelMuxNode {
   void timerCallback(const ros::TimerEvent& event);
   void updateSourceCommand(const std::string& source_name, const geometry_msgs::Twist& msg);
   bool sourceActive(const std::string& source_name, const ros::Time& now) const;
-  geometry_msgs::Twist clampTwist(const geometry_msgs::Twist& input, double dt) const;
+  geometry_msgs::Twist clampTwist(const geometry_msgs::Twist& input, double dt,
+                                  bool bypass_acceleration_limit = false) const;
   void publishSelected(const geometry_msgs::Twist& twist, const std::string& source_name);
   void publishStop(const std::string& reason);
 
