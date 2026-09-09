@@ -250,6 +250,12 @@ target_link_libraries(emergency_stop_node
   ${catkin_LIBRARIES}
 )
 
+catkin_install_python(PROGRAMS
+  scripts/esp32_vitals_bridge_node.py
+  scripts/robot_status_display_node.py
+  DESTINATION 
+)
+
 # ── 安装 ───────────────────────────────────────────────────
 install(TARGETS
   can_utils

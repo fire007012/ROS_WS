@@ -1,0 +1,10 @@
+<launch>
+  <arg name="fullscreen" default="true"/>
+  <arg name="tcp_port" default="8899"/>
+  <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen">
+    <param name="tcp_port" value="$(arg tcp_port)"/>
+  </node>
+  <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node" output="screen">
+    <param name="fullscreen" value="$(arg fullscreen)"/>
+  </node>
+</launch>
