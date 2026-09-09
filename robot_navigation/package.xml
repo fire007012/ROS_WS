@@ -47,6 +47,11 @@
   <exec_depend>fine_tuning</exec_depend>
   <exec_depend>arm_and_gripper</exec_depend>
   <exec_depend>robot_bringup</exec_depend>
+  <exec_depend>amcl</exec_depend>
+  <exec_depend>global_planner</exec_depend>
+  <exec_depend>map_server</exec_depend>
+  <exec_depend>move_base</exec_depend>
+  <exec_depend>teb_local_planner</exec_depend>
 
   <export/>
 </package>

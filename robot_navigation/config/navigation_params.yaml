@@ -113,19 +113,20 @@ mission_controller:
     - {x:  0.5, y:  0.5}
     - {x: -0.5, y:  0.5}
 
-# ── 距离安全 + Bug2 避障参数 ──────────────────────────────────
+# ── 距离安全参数 ───────────────────────────────────────────────
 distance_safety:
   safety_distance_mm: 300.0
   critical_distance_mm: 100.0
   reverse_speed: 0.05
+  allow_emergency_reverse: false
+  # Stop threshold is max(safety_distance_mm, braking distance + latency + margin).
+  # Measure these values on the real chassis before a match.
+  braking_deceleration_mps2: 1.0
+  reaction_time_sec: 0.2
+  stop_margin_mm: 300.0
   distance_timeout_sec: 0.25
   control_rate_hz: 20.0
   check_forward_only: true
-  bug2_enabled: true
-  bug2_side_clearance_mm: 400.0
-  bug2_turn_speed: 0.5
-  bug2_along_speed: 0.1
-  bug2_max_duration_sec: 10.0
 
 # ── 视频推流参数 ──────────────────────────────────────────────
 video_stream:

@@ -10,6 +10,8 @@ find_package(catkin REQUIRED COMPONENTS
   std_srvs
   nav_msgs
   geometry_msgs
+  actionlib
+  move_base_msgs
   message_generation
   dynamic_reconfigure
 )
@@ -39,7 +41,7 @@ generate_messages(
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs std_srvs nav_msgs geometry_msgs message_runtime dynamic_reconfigure
+  CATKIN_DEPENDS roscpp std_msgs std_srvs nav_msgs geometry_msgs actionlib move_base_msgs message_runtime dynamic_reconfigure
 )
 
 include_directories(
@@ -71,7 +73,19 @@ target_link_libraries(path_tracker_node
   ${catkin_LIBRARIES}
 )
 
-install(TARGETS path_manager_node path_tracker_node
+# ── move_base 路径适配器 ──────────────────────────────────────
+add_executable(move_base_path_adapter_node
+  src/move_base_path_adapter_node.cpp
+)
+add_dependencies(move_base_path_adapter_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+target_link_libraries(move_base_path_adapter_node
+  ${catkin_LIBRARIES}
+)
+
+install(TARGETS path_manager_node path_tracker_node move_base_path_adapter_node
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

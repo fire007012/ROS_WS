@@ -7,7 +7,7 @@
   基于 AMCL + move_base 的动态导航方案，替代固定路线模式。
 
   使用方式：
-    roslaunch robot_navigation dynamic_navigation.launch
+    roslaunch robot_navigation dynamic_navigation.launch map_file:=/absolute/path/to/arena.yaml
 
   前置条件：
     - 已构建场地地图（map_server 加载）
@@ -21,14 +21,70 @@
   ==============================================================================
 -->
 <launch>
+  <!-- This launch owns the base stack. Do not run it alongside
+       complete_navigation.launch or mission_complete.launch. -->
+  <arg name="start_base_stack" default="true"/>
+  <arg name="robot_params" default="$(find robot_bringup)/config/robot_params.yaml"/>
+  <arg name="can_device" default="can0"/>
+  <arg name="paths_file" default="$(find robot_bringup)/config/paths.yaml"/>
+  <arg name="enable_predefined_paths" default="true"/>
+
   <!-- ======================== 地图 ============================ -->
 
-  <arg name="map_file" default="$(find robot_navigation)/maps/arena.yaml"/>
+  <!-- A map is an installation artifact, so require the caller to provide it. -->
+  <arg name="map_file"/>
   <arg name="use_map_server" default="true"/>
+
+  <!-- Optional close-range fail-safe. It is not a substitute for /scan. -->
+  <arg name="enable_range_safety" default="false"/>
+  <arg name="vl53l1x_can_config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
 
   <group if="$(arg use_map_server)">
     <node pkg="map_server" type="map_server"
           name="map_server" args="$(arg map_file)"/>
+  </group>
+
+  <!-- ======================== 底盘与安全仲裁 ==================== -->
+  <group if="$(arg start_base_stack)">
+    <include file="$(find can_motor_interface)/launch/can_interface.launch">
+      <arg name="can_device" value="$(arg can_device)"/>
+    </include>
+    <include file="$(find motion_planner)/launch/planner.launch">
+      <arg name="params_file" value="$(arg robot_params)"/>
+      <arg name="enable_twist_test" value="false"/>
+      <arg name="enable_fixed_route" value="false"/>
+    </include>
+  </group>
+
+  <group if="$(arg enable_range_safety)">
+    <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
+      <arg name="config" value="$(arg vl53l1x_can_config)"/>
+      <arg name="can_interface" value="$(arg can_device)"/>
+    </include>
+    <node pkg="robot_navigation" type="distance_safety_node"
+          name="distance_safety_node" output="screen" required="true">
+      <param name="safety_distance_mm" value="300.0"/>
+      <param name="critical_distance_mm" value="100.0"/>
+      <param name="braking_deceleration_mps2" value="1.0"/>
+      <param name="reaction_time_sec" value="0.2"/>
+      <param name="stop_margin_mm" value="300.0"/>
+    </node>
+  </group>
+
+  <!-- Existing YAML paths are converted to sequential move_base goals.  Do not
+       run path_tracker_node in this mode: move_base is the route controller. -->
+  <group if="$(arg enable_predefined_paths)">
+    <rosparam file="$(arg paths_file)" command="load" ns="path_manager"/>
+    <node pkg="path_manager" type="path_manager_node"
+          name="path_manager_node" output="screen" required="true">
+      <param name="yaml_file_path" value="$(arg paths_file)"/>
+      <param name="publish_rate_hz" value="10.0"/>
+    </node>
+    <node pkg="path_manager" type="move_base_path_adapter_node"
+          name="move_base_path_adapter_node" output="screen" required="true">
+      <param name="goal_frame" value="map"/>
+      <param name="goal_timeout_sec" value="60.0"/>
+    </node>
   </group>
 
   <!-- ======================== 定位 ============================ -->
@@ -61,6 +117,8 @@
   <!-- move_base — 全局 + 局部路径规划 -->
   <node pkg="move_base" type="move_base" name="move_base"
         output="screen" respawn="false">
+    <!-- move_base must never publish directly to the motor command topic. -->
+    <remap from="cmd_vel" to="/cmd_vel_external"/>
 
     <!-- 规划器选择 -->
     <param name="base_global_planner" value="global_planner/GlobalPlanner"/>
@@ -81,8 +139,12 @@
       transform_tolerance: 0.5
       plugins:
         - {name: static_layer,    type: "costmap_2d::StaticLayer"}
-        - {name: obstacle_layer,  type: "costmap_2d::VoxelLayer"}
+        - {name: obstacle_layer,  type: "costmap_2d::ObstacleLayer"}
         - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+      obstacle_layer:
+        observation_sources: scan
+        scan: {data_type: LaserScan, topic: /scan, marking: true, clearing: true,
+               obstacle_range: 3.0, raytrace_range: 3.5}
     </rosparam>
 
     <!-- 局部代价地图 -->
@@ -98,8 +160,12 @@
       resolution: 0.05
       transform_tolerance: 0.5
       plugins:
-        - {name: obstacle_layer,  type: "costmap_2d::VoxelLayer"}
+        - {name: obstacle_layer,  type: "costmap_2d::ObstacleLayer"}
         - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+      obstacle_layer:
+        observation_sources: scan
+        scan: {data_type: LaserScan, topic: /scan, marking: true, clearing: true,
+               obstacle_range: 3.0, raytrace_range: 3.5}
     </rosparam>
 
     <!-- 全局规划器 (A*) -->

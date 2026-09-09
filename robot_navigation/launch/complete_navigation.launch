@@ -220,16 +220,19 @@
     </include>
   </group>
 
-  <!-- 距离安全检测 — 自动避障制动 + Bug2 绕障 -->
+  <!-- 距离安全检测 — 近距离制动；绕障由动态导航的局部规划器完成 -->
   <node pkg="robot_navigation" type="distance_safety_node"
         name="distance_safety_node" output="screen" required="false">
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
     <param name="reverse_speed" value="0.05"/>
+    <param name="allow_emergency_reverse" value="false"/>
+    <param name="braking_deceleration_mps2" value="1.0"/>
+    <param name="reaction_time_sec" value="0.2"/>
+    <param name="stop_margin_mm" value="300.0"/>
     <param name="distance_timeout_sec" value="0.25"/>
     <param name="control_rate_hz" value="20.0"/>
     <param name="check_forward_only" value="true"/>
-    <param name="bug2_enabled" value="true"/>
   </node>
 
   <!-- ============================================================ -->

@@ -34,6 +34,12 @@
   <arg name="enable_servo"        default="false"/>
   <arg name="skip_bedside_scan" default="true"/>
   <arg name="bedside_scan_skip_wait_s" default="1.0"/>
+  <arg name="enable_vl53l1x_can" default="true"/>
+  <arg name="vl53l1x_can_interface" default="can0"/>
+  <arg name="vl53l1x_can_config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
+  <arg name="use_dynamic_navigation" default="false"/>
+  <!-- Required when use_dynamic_navigation:=true. -->
+  <arg name="dynamic_map_file" default=""/>
 
   <!-- ======================== 配置文件路径 ======================== -->
   <arg name="robot_params"        default="$(find robot_bringup)/config/robot_params.yaml"/>
@@ -98,11 +104,28 @@
     <param name="publish_rate_hz" value="10.0"/>
   </node>
 
-  <!-- 3.2 路径跟踪器 -->
-  <node pkg="path_manager" type="path_tracker_node"
-        name="path_tracker_node" output="screen" required="true">
-    <rosparam file="$(arg path_tracker_params)" command="load"/>
-  </node>
+  <!-- 3.2 传统里程计路径跟踪器 -->
+  <group unless="$(arg use_dynamic_navigation)">
+    <node pkg="path_manager" type="path_tracker_node"
+          name="path_tracker_node" output="screen" required="true">
+      <rosparam file="$(arg path_tracker_params)" command="load"/>
+    </node>
+  </group>
+
+  <!-- 3.3 动态导航模式：YAML 路径点逐个交给 move_base；局部规划器负责绕障。 -->
+  <group if="$(arg use_dynamic_navigation)">
+    <node pkg="path_manager" type="move_base_path_adapter_node"
+          name="move_base_path_adapter_node" output="screen" required="true">
+      <param name="goal_frame" value="map"/>
+      <param name="goal_timeout_sec" value="60.0"/>
+    </node>
+    <include file="$(find robot_navigation)/launch/dynamic_navigation.launch">
+      <arg name="start_base_stack" value="false"/>
+      <arg name="enable_predefined_paths" value="false"/>
+      <arg name="enable_range_safety" value="false"/>
+      <arg name="map_file" value="$(arg dynamic_map_file)"/>
+    </include>
+  </group>
 
   <!-- ============================================================ -->
   <!--  第4层：精确定位层                                            -->
@@ -219,60 +242,27 @@
   <!--  第8层：安全感知层                                            -->
   <!-- ============================================================ -->
 
-  <!-- 8.1 VL53L1X 激光测距传感器驱动 — I2C 读取距离数据（前方） -->
-  <!-- <node pkg="robot_navigation" type="vl53l1x_driver_node"
-        name="vl53l1x_driver_node" output="screen" required="true">
-    <param name="i2c_device" value="/dev/i2c-1"/>
-    <param name="i2c_address" value="41"/>       <!-- 0x29 -->
-    <param name="read_rate_hz" value="20.0"/>
-    <param name="distance_mode" value="2"/>       <!-- 中距离模式 -->
-    <param name="timing_budget_ms" value="50.0"/>
-    <param name="use_median_filter" value="true"/>
-    <param name="median_window_size" value="5"/>
-    <param name="use_moving_average" value="true"/>
-    <param name="moving_average_alpha" value="0.3"/>
-    <param name="safety_threshold_mm" value="300.0"/>
-    <param name="critical_threshold_mm" value="100.0"/>
-    <param name="safety_timeout_sec" value="0.5"/>
-  </node> -->
+  <!-- Front, left, and right VL53L1X samples are supplied by the STM32 bridge. -->
+  <group if="$(arg enable_vl53l1x_can)">
+    <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
+      <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>
+      <arg name="config" value="$(arg vl53l1x_can_config)"/>
+    </include>
+  </group>
 
-  <!-- 8.1b VL53L1X 左侧传感器（I2C 地址 0x30，需硬件配置） -->
-  <node pkg="robot_navigation" type="vl53l1x_driver_node"
-        name="vl53l1x_driver_left" output="screen" required="false">
-    <param name="i2c_device" value="/dev/i2c-1"/>
-    <param name="i2c_address" value="48"/>       <!-- 0x30 -->
-    <param name="topic_name" value="/vl53l1x_distance_left"/>
-    <param name="read_rate_hz" value="20.0"/>
-    <param name="distance_mode" value="2"/>
-    <param name="timing_budget_ms" value="50.0"/>
-  </node>
-
-  <!-- 8.1c VL53L1X 右侧传感器（I2C 地址 0x31，需硬件配置） -->
-  <node pkg="robot_navigation" type="vl53l1x_driver_node"
-        name="vl53l1x_driver_right" output="screen" required="false">
-    <param name="i2c_device" value="/dev/i2c-1"/>
-    <param name="i2c_address" value="49"/>       <!-- 0x31 -->
-    <param name="topic_name" value="/vl53l1x_distance_right"/>
-    <param name="read_rate_hz" value="20.0"/>
-    <param name="distance_mode" value="2"/>
-    <param name="timing_budget_ms" value="50.0"/>
-  </node>
-
-  <!-- 8.2 距离安全检测 — 障碍物过近时通过 cmd_vel_safety 紧急制动 + Bug2 绕障 -->
+  <!-- 8.2 距离安全检测 — 持续近距离制动；绕障由动态导航局部规划器处理 -->
   <node pkg="robot_navigation" type="distance_safety_node"
         name="distance_safety_node" output="screen" required="true">
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
     <param name="reverse_speed" value="0.05"/>
+    <param name="allow_emergency_reverse" value="false"/>
+    <param name="braking_deceleration_mps2" value="1.0"/>
+    <param name="reaction_time_sec" value="0.2"/>
+    <param name="stop_margin_mm" value="300.0"/>
     <param name="distance_timeout_sec" value="0.5"/>
     <param name="control_rate_hz" value="20.0"/>
     <param name="check_forward_only" value="true"/>
-    <!-- Bug2 动态避障 -->
-    <param name="bug2_enabled" value="true"/>
-    <param name="bug2_side_clearance_mm" value="400.0"/>
-    <param name="bug2_turn_speed" value="0.5"/>
-    <param name="bug2_along_speed" value="0.1"/>
-    <param name="bug2_max_duration_sec" value="10.0"/>
   </node>
 
   <!-- 8.3 急停按钮（GPIO 直连） -->
