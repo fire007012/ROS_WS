@@ -16,6 +16,8 @@
 
 #include "robot_navigation/mission_controller.h"
 
+#include <cmath>
+
 namespace robot_navigation {
 
 // ── 构造 ───────────────────────────────────────────────────
@@ -48,11 +50,36 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , stage_skip_attempted_(false)
     , chassis_locked_(false)
     , bed_verified_(false)
+    , enable_vl53_circle_check_(true)
+    , require_all_vl53_ranges_(true)
+    , vl53_circle_timeout_sec_(0.5)
+    , vl53_min_clearance_m_(0.05)
+    , base_projection_radius_m_(0.20)
+    , full_projection_radius_m_(0.25)
+    , circle_boundary_margin_m_(0.02)
+    , front_range_topic_("/front/range")
+    , left_range_topic_("/left/range")
+    , right_range_topic_("/right/range")
 {
   // ── 参数读取 ──
   pnh_.param<double>("stage_timeout_sec", stage_timeout_sec_, 30.0);
   pnh_.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
   pnh_.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
+  pnh_.param<bool>("enable_vl53_circle_check", enable_vl53_circle_check_, true);
+  pnh_.param<bool>("require_all_vl53_ranges", require_all_vl53_ranges_, true);
+  pnh_.param<double>("vl53_circle_timeout_sec", vl53_circle_timeout_sec_, 0.5);
+  pnh_.param<double>("vl53_min_clearance_m", vl53_min_clearance_m_, 0.05);
+  pnh_.param<double>("base_projection_radius_m", base_projection_radius_m_, 0.20);
+  pnh_.param<double>("full_projection_radius_m", full_projection_radius_m_, 0.25);
+  pnh_.param<double>("circle_boundary_margin_m", circle_boundary_margin_m_, 0.02);
+  pnh_.param<std::string>("front_range_topic", front_range_topic_, "/front/range");
+  pnh_.param<std::string>("left_range_topic", left_range_topic_, "/left/range");
+  pnh_.param<std::string>("right_range_topic", right_range_topic_, "/right/range");
+  vl53_circle_timeout_sec_ = std::max(0.01, vl53_circle_timeout_sec_);
+  vl53_min_clearance_m_ = std::max(0.0, vl53_min_clearance_m_);
+  base_projection_radius_m_ = std::max(0.0, base_projection_radius_m_);
+  full_projection_radius_m_ = std::max(base_projection_radius_m_, full_projection_radius_m_);
+  circle_boundary_margin_m_ = std::max(0.0, circle_boundary_margin_m_);
 
   pnh_.param<std::string>("path_nurse_station", path_nurse_station_, "nurse_station");
   pnh_.param<std::string>("path_bed1_circle", path_bed1_circle_, "bed1_circle");
@@ -98,6 +125,12 @@ bool MissionController::init() {
                                      &MissionController::startSignalCallback, this);
   odom_sub_          = nh_.subscribe("/odom", 10,
                                      &MissionController::odomCallback, this);
+  front_range_sub_   = nh_.subscribe(front_range_topic_, 10,
+                                     &MissionController::frontRangeCallback, this);
+  left_range_sub_    = nh_.subscribe(left_range_topic_, 10,
+                                     &MissionController::leftRangeCallback, this);
+  right_range_sub_   = nh_.subscribe(right_range_topic_, 10,
+                                     &MissionController::rightRangeCallback, this);
   path_finished_sub_  = nh_.subscribe("/path_finished", 10,
                                      &MissionController::pathFinishedCallback, this);
 
@@ -166,6 +199,9 @@ bool MissionController::init() {
            stateToString(current_state_).c_str());
   ROS_INFO("[mission_controller]   阶段超时: %.0f s, 全局超时: %.0f s",
            stage_timeout_sec_, mission_timeout_sec_);
+  ROS_INFO("[mission_controller]   投影校验: %s, 车体半径=%.3f m, 整机半径=%.3f m, VL53超时=%.2f s",
+           enable_vl53_circle_check_ ? "enabled" : "disabled",
+           base_projection_radius_m_, full_projection_radius_m_, vl53_circle_timeout_sec_);
   ROS_INFO("[mission_controller]   等待 /start_signal 信号...");
 
   return true;
@@ -182,6 +218,24 @@ void MissionController::qrResultCallback(const robot_navigation::QrResult::Const
            "second_bed=%d, second_box=%d",
            msg->first_bed, msg->first_box,
            msg->second_bed, msg->second_box);
+}
+
+void MissionController::frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(range_mutex_);
+  front_range_ = *msg;
+  front_range_time_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
+}
+
+void MissionController::leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(range_mutex_);
+  left_range_ = *msg;
+  left_range_time_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
+}
+
+void MissionController::rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(range_mutex_);
+  right_range_ = *msg;
+  right_range_time_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
 }
 
 // ── 回调: 条形码 bed1 ──────────────────────────────────────
@@ -456,6 +510,11 @@ void MissionController::actionScanBarcodeA() {
 void MissionController::actionOpenBoxA() {
   ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.first_box);
   lockChassis();
+  if (!callOpenMedicineBox(qr_result_.first_box)) {
+    unlockChassis();
+    enterFailedState("打开药箱失败");
+    return;
+  }
   enterState(State::PLACE_MEDICINE_A);
 }
 
@@ -536,6 +595,11 @@ void MissionController::actionScanBarcodeB() {
 void MissionController::actionOpenBoxB() {
   ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.second_box);
   lockChassis();
+  if (!callOpenMedicineBox(qr_result_.second_box)) {
+    unlockChassis();
+    enterFailedState("打开药箱失败");
+    return;
+  }
   enterState(State::PLACE_MEDICINE_B);
 }
 
@@ -633,7 +697,14 @@ bool MissionController::checkScanQrComplete() {
 
 bool MissionController::checkPositionInCircleComplete() {
   if (fine_tuning_done_received_.load()) {
-    if (current_state_ == State::POSITION_IN_CIRCLE_A) {
+    const bool is_bed1 = current_state_ == State::POSITION_IN_CIRCLE_A;
+    const CircleDef& circle = is_bed1 ? circle_bed1_ : circle_bed3_;
+    // The bed circle excludes the arm: only the complete chassis footprint is
+    // required to be inside it. VL53 freshness/clearance is checked as well.
+    if (!isProjectionInsideCircle(circle, false) || !areVl53RangesValid()) {
+      return false;
+    }
+    if (is_bed1) {
       enterState(State::SCAN_BARCODE_A);
     } else {
       enterState(State::SCAN_BARCODE_B);
@@ -682,7 +753,7 @@ bool MissionController::checkHomeCheckComplete() {
 
   ros::Time now = ros::Time::now();
 
-  if (!isRobotInHomeZone()) {
+  if (!isRobotInHomeZone() || !areVl53RangesValid()) {
     home_arrived_ = false;
     return false;
   }
@@ -863,7 +934,81 @@ bool MissionController::isRobotInHomeZone() const {
     }
   }
 
-  return (crossings % 2 == 1);
+  if (crossings % 2 != 1) return false;
+
+  // The rule checks the vertical projection of every part, not just base_link.
+  // Approximate the measured vehicle+arm envelope by a configurable disk and
+  // require its clearance from every home-zone edge. This is conservative for
+  // rectangular zones and can be tuned with full_projection_radius_m.
+  const double required_clearance = full_projection_radius_m_ + circle_boundary_margin_m_;
+  for (size_t i = 0; i < n; ++i) {
+    const Point2D& p1 = home_zone_vertices_[i];
+    const Point2D& p2 = home_zone_vertices_[(i + 1) % n];
+    const double ex = p2.x - p1.x;
+    const double ey = p2.y - p1.y;
+    const double length_sq = ex * ex + ey * ey;
+    const double projection = length_sq > 1e-12
+        ? clamp(((rx - p1.x) * ex + (ry - p1.y) * ey) / length_sq, 0.0, 1.0)
+        : 0.0;
+    const double nearest_x = p1.x + projection * ex;
+    const double nearest_y = p1.y + projection * ey;
+    if (std::hypot(rx - nearest_x, ry - nearest_y) < required_clearance) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MissionController::isProjectionInsideCircle(const CircleDef& circle,
+                                                  bool include_arm) const {
+  if (!odom_received_.load()) return false;
+
+  nav_msgs::Odometry odom;
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    odom = current_odom_;
+  }
+
+  const double x = odom.pose.pose.position.x;
+  const double y = odom.pose.pose.position.y;
+  const double envelope_radius = include_arm ? full_projection_radius_m_
+                                             : base_projection_radius_m_;
+  const double usable_radius = circle.radius - envelope_radius - circle_boundary_margin_m_;
+  const double center_error = std::hypot(x - circle.center_x, y - circle.center_y);
+  const bool inside = usable_radius > 0.0 && center_error <= usable_radius;
+  if (!inside) {
+    ROS_WARN_THROTTLE(1.0,
+                      "[mission_controller] 投影校验未通过: center_error=%.3f m, usable_radius=%.3f m",
+                      center_error, usable_radius);
+  }
+  return inside;
+}
+
+bool MissionController::areVl53RangesValid() const {
+  if (!enable_vl53_circle_check_) return true;
+
+  std::lock_guard<std::mutex> lock(range_mutex_);
+  const ros::Time now = ros::Time::now();
+  const sensor_msgs::Range* samples[] = {&front_range_, &left_range_, &right_range_};
+  const ros::Time* stamps[] = {&front_range_time_, &left_range_time_, &right_range_time_};
+  int valid_count = 0;
+  for (size_t i = 0; i < 3; ++i) {
+    const double age = (now - *stamps[i]).toSec();
+    const bool valid = !stamps[i]->isZero() && age >= 0.0 &&
+                       age <= vl53_circle_timeout_sec_ &&
+                       std::isfinite(samples[i]->range) &&
+                       samples[i]->range >= vl53_min_clearance_m_ &&
+                       samples[i]->range <= samples[i]->max_range;
+    if (valid) ++valid_count;
+  }
+
+  const bool ok = require_all_vl53_ranges_ ? valid_count == 3 : valid_count > 0;
+  if (!ok) {
+    ROS_WARN_THROTTLE(1.0,
+                      "[mission_controller] VL53投影校验等待数据: valid=%d/3, require_all=%s",
+                      valid_count, require_all_vl53_ranges_ ? "true" : "false");
+  }
+  return ok;
 }
 
 // ── 重置任务状态 ───────────────────────────────────────────
