@@ -14,7 +14,8 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       max_angular_vel_(2.0),
       max_linear_accel_(1.0),
       max_angular_accel_(2.0),
-      estop_active_(false) {
+      estop_active_(false),
+      chassis_locked_(false) {
   nh_.param("/robot/max_linear_vel", max_linear_vel_, max_linear_vel_);
   nh_.param("/robot/max_angular_vel", max_angular_vel_, max_angular_vel_);
   nh_.param("/robot/max_linear_accel", max_linear_accel_, max_linear_accel_);
@@ -27,6 +28,8 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
   safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
   estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CmdVelMuxNode::estopCallback, this);
+  chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10,
+                                    &CmdVelMuxNode::chassisLockCallback, this);
 
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
   selected_source_pub_ = nh_.advertise<std_msgs::String>("/cmd_vel_mux/selected_source", 10, true);
@@ -67,12 +70,24 @@ void CmdVelMuxNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
   }
 }
 
+void CmdVelMuxNode::chassisLockCallback(const std_msgs::Bool::ConstPtr& msg) {
+  chassis_locked_ = msg->data;
+  if (chassis_locked_) {
+    publishStop("chassis_lock");
+  }
+}
+
 void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
   const ros::Time now = ros::Time::now();
   const double dt = std::max(1e-3, (event.current_real - event.last_real).toSec());
 
   if (estop_active_) {
     publishStop("emergency_stop");
+    return;
+  }
+
+  if (chassis_locked_) {
+    publishStop("chassis_lock");
     return;
   }
 

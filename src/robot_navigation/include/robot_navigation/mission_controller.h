@@ -14,6 +14,7 @@
 #include <std_msgs/Empty.h>
 #include <std_srvs/Trigger.h>
 #include <nav_msgs/Odometry.h>
+#include <sensor_msgs/Range.h>
 
 #include <atomic>
 #include <mutex>
@@ -76,6 +77,9 @@ class MissionController {
   void barcodeBed3Callback(const std_msgs::String::ConstPtr& msg);
   void startSignalCallback(const std_msgs::Empty::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
+  void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -136,6 +140,9 @@ class MissionController {
 
   // ── 回归检测 ──
   bool isRobotInHomeZone() const;
+  struct CircleDef;
+  bool isProjectionInsideCircle(const CircleDef& circle, bool include_arm) const;
+  bool areVl53RangesValid() const;
 
   // ── 重置与失败处理 ──
   void resetMissionState();
@@ -160,6 +167,9 @@ class MissionController {
   ros::Subscriber barcode_bed3_sub_;
   ros::Subscriber start_signal_sub_;
   ros::Subscriber odom_sub_;
+  ros::Subscriber front_range_sub_;
+  ros::Subscriber left_range_sub_;
+  ros::Subscriber right_range_sub_;
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
   ros::Subscriber medicine_release_done_sub_;
@@ -216,6 +226,15 @@ class MissionController {
   std::atomic<bool> odom_received_;
   mutable std::mutex odom_mutex_;
 
+  // VL53 readings used by the conservative projection/clearance check.
+  sensor_msgs::Range front_range_;
+  sensor_msgs::Range left_range_;
+  sensor_msgs::Range right_range_;
+  ros::Time front_range_time_;
+  ros::Time left_range_time_;
+  ros::Time right_range_time_;
+  mutable std::mutex range_mutex_;
+
   // ── 阶段计时 ──
   ros::Time stage_start_time_;
 
@@ -265,6 +284,19 @@ class MissionController {
 
   // ── 床号视觉校验结果 ──
   bool bed_verified_;
+
+  // Geometry and VL53 validation parameters. Keep these installation-specific
+  // values in the launch file so the real chassis/arm envelope can be measured.
+  bool enable_vl53_circle_check_;
+  bool require_all_vl53_ranges_;
+  double vl53_circle_timeout_sec_;
+  double vl53_min_clearance_m_;
+  double base_projection_radius_m_;
+  double full_projection_radius_m_;
+  double circle_boundary_margin_m_;
+  std::string front_range_topic_;
+  std::string left_range_topic_;
+  std::string right_range_topic_;
 };
 
 }  // namespace robot_navigation

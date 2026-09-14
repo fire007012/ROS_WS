@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!--
+  Measurement interface placeholder.
+  Replace this launch file, or override patient_measurement_launch, with the
+  actual heart-rate/temperature driver launch. This file intentionally starts
+  no node and produces no measurement data.
+-->
+<launch>
+</launch>
