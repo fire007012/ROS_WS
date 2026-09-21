@@ -37,6 +37,7 @@
 #include <mutex>
 #include <vector>
 #include <algorithm>
+#include <stdexcept>
 
 namespace robot_navigation {
 
@@ -259,6 +260,8 @@ class VideoStreamNode {
     pnh_.param<double>("framerate", framerate_, 25.0);
     pnh_.param<bool>("enable_http", enable_http_, true);
     pnh_.param<bool>("enable_ros_topic", enable_ros_topic_, true);
+    pnh_.param<bool>("input_compressed", input_compressed_, false);
+    pnh_.param<std::string>("compressed_topic", compressed_topic_, "/camera/compressed");
 
     // ── 输入源 ──
     pnh_.param<std::string>("camera_topic", camera_topic_, "/usb_cam/image_raw");
@@ -271,6 +274,9 @@ class VideoStreamNode {
     // ── 控制 ──
     pnh_.param<std::string>("ready_topic", ready_topic_, "/Ready");
 
+    if (stream_width_ <= 0 || stream_height_ <= 0 || framerate_ <= 0 || jpeg_quality_ < 1 || jpeg_quality_ > 100) {
+      throw std::invalid_argument("Invalid video parameters");
+    }
     // ── 生成黑帧 ──
     black_frame_ = cv::Mat(stream_height_, stream_width_, CV_8UC3, cv::Scalar(0, 0, 0));
     // 在黑帧上写字提示
@@ -291,12 +297,20 @@ class VideoStreamNode {
 
   bool init() {
     // 订阅摄像头（不设回调，在 spinOnce 中处理 — 改为实际回调）
-    image_sub_ = nh_.subscribe(camera_topic_, 1,
-                               &VideoStreamNode::imageCallback, this);
+    if (stream_width_ <= 0 || stream_height_ <= 0 || framerate_ <= 0 || jpeg_quality_ < 1 || jpeg_quality_ > 100) {
+      ROS_ERROR("Invalid video parameters"); return false;
+    }
+    if (input_compressed_) {
+      image_sub_ = nh_.subscribe(camera_topic_, 1, &VideoStreamNode::compressedCallback,
+                                this, ros::TransportHints().tcpNoDelay());
+    } else {
+      image_sub_ = nh_.subscribe(camera_topic_, 1, &VideoStreamNode::imageCallback,
+                                this, ros::TransportHints().tcpNoDelay());
+    }
 
     if (enable_ros_topic_) {
       compressed_pub_ = nh_.advertise<sensor_msgs::CompressedImage>(
-          "/camera/compressed", 1);
+          compressed_topic_, 1);
     }
 
     // 本地显示话题（供 image_view 使用，避免重复拉远程原始帧）
@@ -354,17 +368,10 @@ class VideoStreamNode {
   // ═══════════════════════════════════════════════════════════════
 
   void imageCallback(const sensor_msgs::Image::ConstPtr& msg) {
-    // 帧率控制
     ros::Time now = ros::Time::now();
-    if (!last_frame_time_.isZero()) {
-      double elapsed = (now - last_frame_time_).toSec();
-      if (elapsed < 1.0 / std::max(1.0, framerate_)) {
-        return;
-      }
-    }
-    last_frame_time_   = now;
-    last_image_time_   = now;
-    camera_ok_         = true;
+    last_image_time_ = now;
+    camera_ok_ = true;
+    if (!acceptFrame()) return;
 
     // Ready=0 时不处理真实帧（但仍更新时间戳以检测摄像头在线状态）
     if (ready_ != 1) {
@@ -380,51 +387,61 @@ class VideoStreamNode {
       return;
     }
 
-    processAndPublish(cv_ptr->image, now);
+    processAndPublish(cv_ptr->image, msg->header.stamp);
   }
 
   // ═══════════════════════════════════════════════════════════════
   //  处理并发布帧
   // ═══════════════════════════════════════════════════════════════
 
-  void processAndPublish(const cv::Mat& input, ros::Time stamp) {
-    cv::Mat frame = input;
+  // A small tolerance avoids halving FPS when capture and limit are both 25 Hz.
+  bool acceptFrame() {
+    double now = ros::WallTime::now().toSec();
+    if (last_accept_ > 0 && now-last_accept_ < 0.9 / std::max(1.0,framerate_)) return false;
+    last_accept_=now; return true;
+  }
 
-    // 缩放（如果需要）
-    if (frame.cols != stream_width_ || frame.rows != stream_height_) {
-      cv::resize(frame, frame, cv::Size(stream_width_, stream_height_));
+  void compressedCallback(const sensor_msgs::CompressedImage::ConstPtr& msg) {
+    last_image_time_=ros::Time::now(); camera_ok_=true;
+    if (ready_ != 1 || !acceptFrame()) return;
+    try {
+      cv::Mat frame=cv::imdecode(msg->data, cv::IMREAD_COLOR);
+      if(frame.empty()) { ROS_WARN_THROTTLE(5.0,"Invalid compressed image"); return; }
+      processAndPublish(frame,msg->header.stamp,&msg->data);
+    } catch(const cv::Exception& e) {ROS_WARN_THROTTLE(5.0,"Video decode: %s",e.what());}
+  }
+
+  void processAndPublish(const cv::Mat& input, ros::Time stamp,
+                         const std::vector<uint8_t>* original_jpeg=nullptr) {
+    const double begin=ros::WallTime::now().toSec();
+    cv::Mat frame=input;
+    // Fit inside the configured box; never enlarge a low-resolution source.
+    double scale=std::min(1.0,std::min(double(stream_width_)/input.cols,double(stream_height_)/input.rows));
+    bool resized=scale<0.999;
+    if(resized) cv::resize(input,frame,cv::Size(std::max(1,int(input.cols*scale)),std::max(1,int(input.rows*scale))),0,0,cv::INTER_AREA);
+    std::vector<uint8_t> encoded;
+    const std::vector<uint8_t>* jpeg=original_jpeg;
+    if(enable_http_||enable_ros_topic_) {
+      if(!jpeg||resized) {
+        cv::imencode(".jpg",frame,encoded,{cv::IMWRITE_JPEG_QUALITY,jpeg_quality_});jpeg=&encoded;
+      }
+      if(enable_http_&&server_) server_->updateFrame(*jpeg);
+      if(enable_ros_topic_) {
+        sensor_msgs::CompressedImage out;out.header.stamp=stamp;out.header.frame_id="camera";
+        out.format="jpeg";out.data=*jpeg;compressed_pub_.publish(out);
+      }
     }
-
-    // 编码为 JPEG
-    std::vector<uint8_t> jpeg_buf;
-    std::vector<int>     params = {cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
-    cv::imencode(".jpg", frame, jpeg_buf, params);
-
-    if (jpeg_buf.empty()) return;
-
-    // 推送到 HTTP 服务器
-    if (enable_http_ && server_) {
-      server_->updateFrame(jpeg_buf);
+    if(enable_local_display_) {
+      cv_bridge::CvImage out;out.header.stamp=stamp;out.header.frame_id="camera";
+      out.encoding=sensor_msgs::image_encodings::BGR8;out.image=frame;
+      local_display_pub_.publish(out.toImageMsg());
     }
-
-    // 发布压缩图像话题
-    if (enable_ros_topic_) {
-      sensor_msgs::CompressedImage compressed_msg;
-      compressed_msg.header.stamp    = stamp;
-      compressed_msg.header.frame_id = "camera";
-      compressed_msg.format          = "jpeg";
-      compressed_msg.data            = jpeg_buf;
-      compressed_pub_.publish(compressed_msg);
-    }
-
-    // 发布本地显示话题（原始 RGB，供 image_view 本地订阅，不走网络）
-    if (enable_local_display_) {
-      cv_bridge::CvImage cv_img;
-      cv_img.header.stamp    = stamp;
-      cv_img.header.frame_id = "camera";
-      cv_img.encoding        = sensor_msgs::image_encodings::BGR8;
-      cv_img.image           = frame;
-      local_display_pub_.publish(cv_img.toImageMsg());
+    ++processed_;max_process_ms_=std::max(max_process_ms_,(ros::WallTime::now().toSec()-begin)*1000);
+    double now=ros::WallTime::now().toSec();
+    if(report_start_==0) report_start_=now;
+    if(now-report_start_>=5) {
+      ROS_INFO("[video_stream] source=%dx%d output=%dx%d processed=%.1ffps max_work=%.1fms compressed_input=%d (not display/end-to-end latency)",input.cols,input.rows,frame.cols,frame.rows,processed_/(now-report_start_),max_process_ms_,input_compressed_);
+      processed_=0;max_process_ms_=0;report_start_=now;
     }
   }
 
@@ -455,6 +472,11 @@ class VideoStreamNode {
       compressed_msg.format          = "jpeg";
       compressed_msg.data            = black_jpeg_;
       compressed_pub_.publish(compressed_msg);
+    }
+    if (enable_local_display_) {
+      cv_bridge::CvImage out; out.header.stamp=now;
+      out.encoding=sensor_msgs::image_encodings::BGR8; out.image=black_frame_;
+      local_display_pub_.publish(out.toImageMsg());
     }
   }
 
@@ -534,6 +556,10 @@ class VideoStreamNode {
   double      camera_timeout_sec_;
   std::string camera_topic_;
   std::string ready_topic_;
+  bool input_compressed_=false;
+  std::string compressed_topic_;
+  double last_accept_=0,report_start_=0,max_process_ms_=0;
+  unsigned processed_=0;
 
   // ── 黑帧 ──
   cv::Mat              black_frame_;

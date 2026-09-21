@@ -2,6 +2,8 @@
 import tkinter as tk
 import rospy
 from std_msgs.msg import String, Float32, Bool
+from rospy import AnyMsg
+import struct
 from robot_navigation.msg import QrResult
 
 class StatusWindow:
@@ -31,3 +33,6 @@ class StatusWindow:
     def run(self): self.root.mainloop()
 if __name__=='__main__':
     rospy.init_node('robot_status_display_node'); w=StatusWindow(); w.run()
+
+
+

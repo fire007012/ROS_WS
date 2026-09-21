@@ -54,5 +54,10 @@
   <exec_depend>teb_local_planner</exec_depend>
   <exec_depend>usb_cam</exec_depend>
 
+  <build_depend>libopus-dev</build_depend>
+  <exec_depend>libopus-dev</exec_depend>
+  <exec_depend>pulseaudio-utils</exec_depend>
+  <exec_depend>usb_cam</exec_depend>
+  <exec_depend>image_view</exec_depend>
   <export/>
 </package>
