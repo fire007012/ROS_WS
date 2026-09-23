@@ -103,10 +103,9 @@ bool SpeakNode::handleSpeak(robot_navigation::Speak::Request& req,
     res.success = true;
     res.message = "语音播报完成";
   } else {
-    // 最终回退：ROS 日志输出（保证服务不会失败）
-    res.success = true;  // 不阻止任务流程
-    res.message = "语音播报已通过 ROS 日志输出（TTS 引擎不可用）";
-    ROS_WARN("[speak_node] TTS 引擎不可用，文本已通过日志输出");
+    res.success = false;
+    res.message = "没有可用的 TTS 引擎或播放设备";
+    ROS_ERROR("[speak_node] TTS 引擎不可用，拒绝将日志当作播报成功");
   }
 
   return true;

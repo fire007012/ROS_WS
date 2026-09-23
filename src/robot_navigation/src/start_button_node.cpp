@@ -5,7 +5,7 @@
  * 监听 Raspberry Pi GPIO 引脚上的物理按键：
  *   - 去抖动处理（50ms）
  *   - 上升沿/下降沿检测
- *   - 发布 std_msgs/Empty 到 /start_signal
+ *   - 发布带认证令牌的物理启动脉冲
  *   - 可选：LED 指示灯控制（GPIO 输出）
  *
  * 硬件接线：
@@ -20,6 +20,7 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/UInt32.h>
 #include <std_msgs/Bool.h>
 
 #include <atomic>
@@ -135,6 +136,7 @@ class StartButtonNode {
       , debounce_ms_(50)
       , active_low_(true)     // 按下接地，读低电平
       , led_enabled_(true)
+      , start_auth_token_(0x5A17)
       , poll_rate_hz_(50.0)
       , button_pressed_(false)
       , running_(false)
@@ -144,6 +146,7 @@ class StartButtonNode {
     pnh_.param<int>("debounce_ms", debounce_ms_, 50);
     pnh_.param<bool>("active_low", active_low_, true);
     pnh_.param<bool>("led_enabled", led_enabled_, true);
+    int token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", token, token); start_auth_token_ = static_cast<uint32_t>(token);
     pnh_.param<double>("poll_rate_hz", poll_rate_hz_, 50.0);
   }
 
@@ -154,7 +157,8 @@ class StartButtonNode {
   bool init() {
     // 导出按钮引脚
     if (!button_gpio_.exportPin(button_pin_, "in", "both")) {
-      ROS_WARN("[start_button] GPIO 按钮初始化失败，将仅依赖 /start_signal_manual 话题");
+      ROS_ERROR("[start_button] GPIO 按钮初始化失败，比赛模式拒绝启动");
+      return false;
     } else {
       ROS_INFO("[start_button] 按钮 GPIO %d 已配置 (active_low=%s)",
                button_pin_, active_low_ ? "true" : "false");
@@ -169,11 +173,9 @@ class StartButtonNode {
     }
 
     // 发布者
-    start_signal_pub_ = nh_.advertise<std_msgs::Empty>("/start_signal", 1, true);
+    start_signal_pub_ = nh_.advertise<std_msgs::UInt32>("/start_signal/physical", 1, false);
     led_state_pub_ = nh_.advertise<std_msgs::Bool>("/start_button/led", 1, true);
 
-    // 备用：也发布到 /start_signal_manual 供调试
-    manual_signal_pub_ = nh_.advertise<std_msgs::Empty>("/start_signal_manual", 1, true);
 
     // 启动轮询线程
     running_ = true;
@@ -182,7 +184,7 @@ class StartButtonNode {
     ROS_INFO("[start_button] 初始化完成");
     ROS_INFO("[start_button]   按钮: GPIO %d, 去抖: %d ms, 电平: %s",
              button_pin_, debounce_ms_, active_low_ ? "低有效" : "高有效");
-    ROS_INFO("[start_button]   发布话题: /start_signal (latch=true)");
+    ROS_INFO("[start_button]   发布话题: /start_signal/physical (single pulse)");
     ROS_INFO("[start_button]   等待按钮按下...");
 
     return true;
@@ -255,9 +257,9 @@ class StartButtonNode {
     ROS_INFO("[start_button] ====== 物理按钮按下！发送启动信号 ======");
 
     // 发布启动信号
-    std_msgs::Empty signal;
+    std_msgs::UInt32 signal;
+    signal.data = start_auth_token_;
     start_signal_pub_.publish(signal);
-    manual_signal_pub_.publish(signal);
 
     // LED 闪烁指示
     if (led_enabled_) {
@@ -285,7 +287,6 @@ class StartButtonNode {
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
   ros::Publisher start_signal_pub_;
-  ros::Publisher manual_signal_pub_;
   ros::Publisher led_state_pub_;
 
   // ── GPIO ──
@@ -298,6 +299,7 @@ class StartButtonNode {
   int debounce_ms_;
   bool active_low_;
   bool led_enabled_;
+  uint32_t start_auth_token_;
   double poll_rate_hz_;
 
   // ── 状态 ──

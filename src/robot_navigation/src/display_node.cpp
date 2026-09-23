@@ -13,6 +13,7 @@
 #include <std_msgs/String.h>
 
 #include <atomic>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <string>
@@ -44,7 +45,7 @@ class DisplayNode {
   }
 
   bool init() {
-    sub_ = nh_.subscribe("/robot_display", 1, &DisplayNode::displayCallback, this);
+    sub_ = nh_.subscribe("/robot_display", 10, &DisplayNode::displayCallback, this);
 
     ROS_INFO("[display_node] 初始化完成");
     ROS_INFO("[display_node]   订阅: /robot_display");
@@ -59,19 +60,18 @@ class DisplayNode {
 
  private:
   void displayCallback(const std_msgs::String::ConstPtr& msg) {
-    if (msg->data == last_text_) return;
-    last_text_ = msg->data;
-
-    // ── 输出到 ROS 日志 ──
-    ROS_INFO("[DISPLAY] %s", msg->data.c_str());
-
-    // ── 可选: 通过 CAN 发送到 STM32 液晶屏 ──
-    if (can_enable_) {
-      sendCanDisplay(msg->data);
-    }
+    const std::string::size_type split = msg->data.find("\n");
+    line1_ = split == std::string::npos ? msg->data : msg->data.substr(0, split);
+    line2_ = split == std::string::npos ? line2_ : msg->data.substr(split + 1);
+    const std::string normalized = line1_ + "\n" + line2_;
+    if (normalized == last_text_) return;
+    last_text_ = normalized;
+    ROS_INFO("[DISPLAY] line1=%s | line2=%s", line1_.c_str(), line2_.c_str());
+    if (can_enable_) sendCanDisplay(normalized);
   }
 
   void sendCanDisplay(const std::string& text) {
+    (void)text;
     // CAN 液晶屏显示协议（自定义）：
     // 将文本按 8 字节分帧发送
     // 每帧: [0]=0x30(显示指令), [1-7]=ASCII字符
@@ -103,28 +103,27 @@ class DisplayNode {
       }
     }
 
-    // 发送第一帧（前7字节 + 指令码）
+    // Protocol: 0x3f clears the page; 0x30/0x31 start row 1/2 and
+    // 0x32 continues a row. Each frame carries at most seven bytes.
     struct can_frame frame;
-    std::memset(&frame, 0, sizeof(frame));
-    frame.can_id = can_id_;
-    frame.can_dlc = 8;
-    frame.data[0] = 0x30;  // 显示指令码
-    for (size_t i = 0; i < 7 && i < text.length(); ++i) {
-      frame.data[i + 1] = static_cast<uint8_t>(text[i]);
-    }
-
-    write(socket_fd, &frame, sizeof(frame));
-
-    // 如有更多文本，发送第二帧
-    if (text.length() > 7) {
+    auto send_frame = [&](uint8_t command, const std::string& chunk) {
       std::memset(&frame, 0, sizeof(frame));
-      frame.can_id = can_id_;
-      frame.can_dlc = 8;
-      frame.data[0] = 0x31;  // 续帧指令码
-      for (size_t i = 7; i < 14 && i < text.length(); ++i) {
-        frame.data[i - 6] = static_cast<uint8_t>(text[i]);
-      }
+      frame.can_id = can_id_; frame.can_dlc = 8; frame.data[0] = command;
+      for (size_t i = 0; i < chunk.size() && i < 7; ++i) frame.data[i + 1] = static_cast<uint8_t>(chunk[i]);
       write(socket_fd, &frame, sizeof(frame));
+    };
+    send_frame(0x3f, std::string());
+    const std::string lines[2] = {line1_, line2_};
+    for (size_t row = 0; row < 2; ++row) {
+      const std::string& line = lines[row];
+      size_t offset = 0; bool first = true;
+      do {
+        size_t end = std::min(offset + size_t(7), line.size());
+        while (end > offset && end < line.size() && (static_cast<unsigned char>(line[end]) & 0xc0) == 0x80) --end;
+        if (end == offset) end = std::min(offset + size_t(7), line.size());
+        send_frame(first ? static_cast<uint8_t>(0x30 + row) : 0x32, line.substr(offset, end - offset));
+        offset = end; first = false;
+      } while (offset < line.size() || first);
     }
   }
 
@@ -136,6 +135,8 @@ class DisplayNode {
   std::string can_device_;
   uint32_t can_id_;
   std::string last_text_;
+  std::string line1_;
+  std::string line2_;
 };
 
 }  // namespace robot_navigation

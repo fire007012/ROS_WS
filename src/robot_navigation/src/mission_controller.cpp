@@ -48,6 +48,12 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , home_hold_sec_(5.0)
     , voice_timing_active_(false)
     , stage_skip_attempted_(false)
+    , competition_mode_(true)
+    , scan_session_id_(0)
+    , start_auth_token_(0x5A17)
+    , audio_video_enabled_(false)
+    , audio_ready_(false)
+    , audio_active_(false)
     , chassis_locked_(false)
     , bed_verified_(false)
     , enable_vl53_circle_check_(true)
@@ -63,8 +69,12 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 {
   // ── 参数读取 ──
   pnh_.param<double>("stage_timeout_sec", stage_timeout_sec_, 30.0);
+  stage_timeout_default_sec_ = stage_timeout_sec_;
   pnh_.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
   pnh_.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
+  pnh_.param<bool>("competition_mode", competition_mode_, true);
+  pnh_.param<bool>("audio_video_enabled", audio_video_enabled_, false);
+  int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
   pnh_.param<bool>("enable_vl53_circle_check", enable_vl53_circle_check_, true);
   pnh_.param<bool>("require_all_vl53_ranges", require_all_vl53_ranges_, true);
   pnh_.param<double>("vl53_circle_timeout_sec", vl53_circle_timeout_sec_, 0.5);
@@ -121,7 +131,7 @@ bool MissionController::init() {
                                      &MissionController::barcodeBed1Callback, this);
   barcode_bed3_sub_  = nh_.subscribe("/barcode_bed3", 1,
                                      &MissionController::barcodeBed3Callback, this);
-  start_signal_sub_  = nh_.subscribe("/start_signal", 1,
+  start_signal_sub_  = nh_.subscribe("/start_signal/physical", 1,
                                      &MissionController::startSignalCallback, this);
   odom_sub_          = nh_.subscribe("/odom", 10,
                                      &MissionController::odomCallback, this);
@@ -137,8 +147,9 @@ bool MissionController::init() {
   fine_tuning_done_sub_ = nh_.subscribe("/fine_tuning_done", 1,
                                         &MissionController::fineTuningDoneCallback, this);
 
-  medicine_release_done_sub_ = nh_.subscribe("/medicine_release_done", 1,
-                                        &MissionController::medicineReleaseDoneCallback, this);
+  medicine_release_done_sub_ = nh_.subscribe("/medicine_release_done", 1, &MissionController::medicineReleaseDoneCallback, this);
+  audio_ready_sub_ = nh_.subscribe("/Ready", 1, &MissionController::audioReadyCallback, this);
+  audio_active_sub_ = nh_.subscribe("/audio_chat/active", 1, &MissionController::audioActiveCallback, this);
 
   // ── 发布 ──
   mission_finished_pub_ = nh_.advertise<std_msgs::Bool>("/mission_finished", 1, true);
@@ -146,6 +157,8 @@ bool MissionController::init() {
   stop_all_pub_         = nh_.advertise<std_msgs::Empty>("/stop_all", 1, true);
   display_text_pub_     = nh_.advertise<std_msgs::String>("/robot_display", 1, true);
   chassis_lock_pub_     = nh_.advertise<std_msgs::Bool>("/chassis_lock", 1, true);
+  scan_target_bed_pub_ = nh_.advertise<std_msgs::Int8>("/barcode_scan/target_bed", 1, true);
+  scan_session_pub_ = nh_.advertise<std_msgs::UInt32>("/barcode_scan/session", 1, true);
 
   // ── 服务客户端 ──
   ROS_INFO("[mission_controller] 等待服务就绪...");
@@ -209,6 +222,7 @@ bool MissionController::init() {
 
 // ── 回调: QR 结果 ──────────────────────────────────────────
 void MissionController::qrResultCallback(const robot_navigation::QrResult::ConstPtr& msg) {
+  if (current_state_ != State::SCAN_QR) return;
   if (qr_received_) return;
 
   qr_result_ = *msg;
@@ -240,28 +254,27 @@ void MissionController::rightRangeCallback(const sensor_msgs::Range::ConstPtr& m
 
 // ── 回调: 条形码 bed1 ──────────────────────────────────────
 void MissionController::barcodeBed1Callback(const std_msgs::String::ConstPtr& msg) {
-  if (barcode_bed1_received_) return;
+  if (current_state_ != State::SCAN_BARCODE_A && current_state_ != State::SCAN_BARCODE_B) return;
+  if (!isValidBarcode(msg->data)) { ROS_WARN("[mission_controller] 忽略空或非法的1床条码"); return; }
   barcode_bed1_value_ = msg->data;
   barcode_bed1_received_ = true;
   barcode_display_line1_ = "1床条码: " + msg->data;
-  ROS_INFO("[mission_controller] 收到 1 床条形码: \"%s\"", msg->data.c_str());
-
   updatePersistentBarcodeDisplay();
 }
 
 // ── 回调: 条形码 bed3 ──────────────────────────────────────
 void MissionController::barcodeBed3Callback(const std_msgs::String::ConstPtr& msg) {
-  if (barcode_bed3_received_) return;
+  if (current_state_ != State::SCAN_BARCODE_A && current_state_ != State::SCAN_BARCODE_B) return;
+  if (!isValidBarcode(msg->data)) { ROS_WARN("[mission_controller] 忽略空或非法的3床条码"); return; }
   barcode_bed3_value_ = msg->data;
   barcode_bed3_received_ = true;
   barcode_display_line2_ = "3床条码: " + msg->data;
-  ROS_INFO("[mission_controller] 收到 3 床条形码: \"%s\"", msg->data.c_str());
-
   updatePersistentBarcodeDisplay();
 }
 
 // ── 回调: 启动信号 ─────────────────────────────────────────
-void MissionController::startSignalCallback(const std_msgs::Empty::ConstPtr& /*msg*/) {
+void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& msg) {
+  if (msg->data != start_auth_token_) { ROS_WARN("unauthenticated start signal"); return; }
   // 如果上次任务已完成/失败/超时，允许重新启动
   if (mission_completed_.load()) {
     ROS_INFO("[mission_controller] 上次任务已结束，准备重新启动");
@@ -307,11 +320,11 @@ void MissionController::fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& m
 }
 
 void MissionController::medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
-  if (msg->data) {
-    medicine_release_done_received_.store(true);
-    ROS_INFO("[mission_controller] 收到放药完成信号");
-  }
+  if (msg->data) { medicine_release_done_received_.store(true); ROS_INFO("[mission_controller] 收到放药完成信号"); }
 }
+
+void MissionController::audioReadyCallback(const std_msgs::Int32::ConstPtr& msg) { audio_ready_ = msg->data == 1; }
+void MissionController::audioActiveCallback(const std_msgs::Bool::ConstPtr& msg) { audio_active_ = msg->data; }
 
 // ── 全局超时回调 ───────────────────────────────────────────
 void MissionController::missionTimerCallback(const ros::TimerEvent& /*event*/) {
@@ -357,29 +370,25 @@ void MissionController::processState() {
 
   // ── 超时检查 ──
   if (isStageTimedOut()) {
-    if (!stage_skip_attempted_) {
-      // 首次超时：尝试跳过当前阶段继续（P2-4）
+    if (competition_mode_) {
+    ROS_ERROR("[mission_controller] 比赛模式阶段超时，fail-closed: %s", stateToString(current_state_).c_str());
+    enterFailedState("阶段超时: " + stateToString(current_state_));
+    return;
+  }
+
+  if (!stage_skip_attempted_) {
       stage_skip_attempted_ = true;
-      stage_start_time_ = ros::Time::now();  // 重置计时器
-
-      ROS_WARN("[mission_controller] 状态 %s 阶段超时 (%.0f s)，尝试跳过...",
-                stateToString(current_state_).c_str(), stage_timeout_sec_);
-
-      // 根据当前状态跳到下一个合理状态
+      stage_start_time_ = ros::Time::now();
       switch (current_state_) {
-        case State::SCAN_QR:            enterState(State::GOTO_BED_A);    return;
+        case State::SCAN_QR: enterState(State::GOTO_BED_A); return;
         case State::POSITION_IN_CIRCLE_A: enterState(State::SCAN_BARCODE_A); return;
-        case State::SCAN_BARCODE_A:     enterState(State::OPEN_BOX_A);   return;
+        case State::SCAN_BARCODE_A: enterState(State::OPEN_BOX_A); return;
         case State::POSITION_IN_CIRCLE_B: enterState(State::SCAN_BARCODE_B); return;
-        case State::SCAN_BARCODE_B:     enterState(State::OPEN_BOX_B);   return;
-        case State::HOME_CHECK:         enterState(State::STOP);          return;
-        default:
-          // GOTO 等关键阶段不能跳过
-          ROS_ERROR("[mission_controller] 关键阶段 %s 超时，无法跳过",
-                    stateToString(current_state_).c_str());
-          break;
+        case State::SCAN_BARCODE_B: enterState(State::OPEN_BOX_B); return;
+        case State::HOME_CHECK: enterState(State::STOP); return;
+        default: break;
       }
-    }
+  }
 
     ROS_ERROR("[mission_controller] 状态 %s 阶段超时 (%.0f s)，进入失败",
               stateToString(current_state_).c_str(), stage_timeout_sec_);
@@ -468,6 +477,7 @@ void MissionController::actionGotoNurse() {
 }
 
 void MissionController::actionScanQr() {
+  ++scan_session_id_; std_msgs::UInt32 session; session.data = scan_session_id_; scan_session_pub_.publish(session);
   ROS_INFO("[mission_controller] 动作: 等待二维码识别");
   qr_received_.store(false);
   // 无额外动作，等待 qrResultCallback 设置标志
@@ -496,6 +506,7 @@ void MissionController::actionPositionInCircleA() {
 
 void MissionController::actionScanBarcodeA() {
   const int bed = qr_result_.first_bed;
+  std_msgs::Int8 target; target.data = static_cast<int8_t>(bed); scan_target_bed_pub_.publish(target);
   if (skipBedsideScan_) {
     bedsideScanSkipStart_ = ros::Time::now();
     ROS_WARN("[mission_controller] 无摄像头：跳过 %d 床条形码扫描，等待 %.1f s；药箱仍按护士台 first_box=%d",
@@ -549,9 +560,12 @@ void MissionController::actionVoiceA() {
     voice_timing_active_ = false;
   }
 
+  if (audio_video_enabled_ && (!audio_ready_ || !audio_active_)) {
+    enterFailedState("音视频链路未就绪"); return;
+  }
   std::string text = std::to_string(bed) + "床病人请取药";
   ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  callSpeak(text);
+  if (!callSpeak(text)) { enterFailedState("语音播报失败"); return; }
 
   // ── 语音播报完成后解锁底盘（P1-4） ──
   unlockChassis();
@@ -581,6 +595,7 @@ void MissionController::actionPositionInCircleB() {
 
 void MissionController::actionScanBarcodeB() {
   const int bed = qr_result_.second_bed;
+  std_msgs::Int8 target; target.data = static_cast<int8_t>(bed); scan_target_bed_pub_.publish(target);
   if (skipBedsideScan_) {
     bedsideScanSkipStart_ = ros::Time::now();
     ROS_WARN("[mission_controller] 无摄像头：跳过 %d 床条形码扫描，等待 %.1f s；药箱仍按护士台 second_box=%d",
@@ -631,9 +646,12 @@ void MissionController::actionVoiceB() {
     voice_timing_active_ = false;
   }
 
+  if (audio_video_enabled_ && (!audio_ready_ || !audio_active_)) {
+    enterFailedState("音视频链路未就绪"); return;
+  }
   std::string text = std::to_string(bed) + "床病人请取药";
   ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  callSpeak(text);
+  if (!callSpeak(text)) { enterFailedState("语音播报失败"); return; }
 
   // 解锁底盘
   unlockChassis();
@@ -685,7 +703,10 @@ bool MissionController::checkGotoComplete() {
 
 bool MissionController::checkScanQrComplete() {
   if (qr_received_.load()) {
-    if (qr_result_.first_bed == 0 && qr_result_.first_box == 0) {
+    if ((qr_result_.first_bed != 1 && qr_result_.first_bed != 3) ||
+        (qr_result_.first_box != 1 && qr_result_.first_box != 3) ||
+        qr_result_.second_bed == qr_result_.first_bed ||
+        qr_result_.second_box == qr_result_.first_box) {
       enterFailedState("QR 结果为空");
       return true;
     }
@@ -728,7 +749,7 @@ bool MissionController::checkScanBarcodeComplete() {
   bool got_it = (bed == 1) ? barcode_bed1_received_.load()
                            : barcode_bed3_received_.load();
 
-  if (got_it) {
+  if (got_it && isValidBarcode(bed == 1 ? barcode_bed1_value_ : barcode_bed3_value_)) {
     // ── 床号验证（P2-2）：确认在正确的病床 ──
     int expected_bed = (current_state_ == State::SCAN_BARCODE_A)
         ? qr_result_.first_bed : qr_result_.second_bed;
@@ -1024,6 +1045,9 @@ void MissionController::resetMissionState() {
   mission_completed_.store(false);
 
   qr_result_ = QrResult();
+  ++scan_session_id_;
+  std_msgs::UInt32 session; session.data = scan_session_id_; scan_session_pub_.publish(session);
+  std_msgs::Int8 target; target.data = 0; scan_target_bed_pub_.publish(target);
   barcode_bed1_value_.clear();
   barcode_bed3_value_.clear();
   // 注意: barcode_display_line1_/line2_ 不重置（持久保留用于比赛结束核对）
@@ -1032,6 +1056,7 @@ void MissionController::resetMissionState() {
   voice_timing_active_ = false;
   bed_verified_ = false;
   stage_skip_attempted_ = false;
+  stage_timeout_sec_ = stage_timeout_default_sec_;
 
   ROS_INFO("[mission_controller] 任务状态已重置");
 }
@@ -1137,17 +1162,25 @@ void MissionController::updatePersistentBarcodeDisplay() {
   ROS_INFO("[mission_controller] [DISPLAY] %s | %s", line1.c_str(), line2.c_str());
 }
 
+bool MissionController::isValidBarcode(const std::string& value) const {
+  if (value.size() < 4 || value.size() > 32) return false;
+  for (unsigned char c : value) {
+    if (c <= 0x20 || c > 0x7e) return false;
+  }
+  return true;
+}
+
 // ── 床号视觉校验（P2-2） ───────────────────────────────────
 bool MissionController::verifyBedNumber(int expected_bed) {
   // 基于当前已收到的条形码数据推断所在床位
   // 如果 QR 指定先到1床，则应该在1床收到条形码
   // 这里做简单的逻辑校验：预期的床号是否与被调用告知的一致
 
-  if (expected_bed == 1 && barcode_bed1_received_) {
+  if (expected_bed == 1 && barcode_bed1_received_ && isValidBarcode(barcode_bed1_value_)) {
     ROS_INFO("[mission_controller] ✅ 床号校验通过: 确认在1床");
     return true;
   }
-  if (expected_bed == 3 && barcode_bed3_received_) {
+  if (expected_bed == 3 && barcode_bed3_received_ && isValidBarcode(barcode_bed3_value_)) {
     ROS_INFO("[mission_controller] ✅ 床号校验通过: 确认在3床");
     return true;
   }

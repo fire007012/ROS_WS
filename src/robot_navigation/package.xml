@@ -54,6 +54,7 @@
   <exec_depend>teb_local_planner</exec_depend>
   <exec_depend>usb_cam</exec_depend>
 
+  <!-- Opus is optional; audio_chat_node is omitted when unavailable. -->
   <build_depend>libopus-dev</build_depend>
   <exec_depend>libopus-dev</exec_depend>
   <exec_depend>pulseaudio-utils</exec_depend>

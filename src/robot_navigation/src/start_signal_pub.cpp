@@ -13,6 +13,7 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/UInt32.h>
 
 #include <atomic>
 #include <cerrno>
@@ -56,7 +57,7 @@ class StartSignalPub {
   }
 
   bool init() {
-    pub_ = nh_.advertise<std_msgs::Empty>("/start_signal", 1, true);
+    pub_ = nh_.advertise<std_msgs::UInt32>("/start_signal/can", 1, false);
 
     // 初始化 CAN 接收
     if (initCan()) {
@@ -65,8 +66,7 @@ class StartSignalPub {
       ROS_INFO("[start_signal_pub] CAN 接收线程已启动: %s, ID=0x%03X",
                can_device_.c_str(), can_id_);
     } else {
-      ROS_WARN("[start_signal_pub] CAN 初始化失败，仅支持 ROS 手动触发");
-      ROS_WARN("[start_signal_pub] 可通过 rostopic pub /start_signal std_msgs/Empty 手动触发");
+      ROS_WARN("[start_signal_pub] CAN 初始化失败，比赛模式不启用 CAN 启动入口");
     }
 
     ROS_INFO("[start_signal_pub] 初始化完成，等待 STM32 启动信号...");
@@ -120,7 +120,7 @@ class StartSignalPub {
       if (frame.can_id == can_id_ &&
           frame.data[0] == start_cmd_code_) {
         ROS_INFO("[start_signal_pub] ====== 收到 STM32 启动信号！======");
-        std_msgs::Empty msg;
+        std_msgs::UInt32 msg; msg.data = 0x5A17;
         pub_.publish(msg);
 
         // 只触发一次（发送后退出监听？不，继续运行以支持多次触发）

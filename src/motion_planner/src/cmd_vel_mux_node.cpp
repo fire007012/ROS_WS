@@ -15,6 +15,8 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       max_linear_accel_(1.0),
       max_angular_accel_(2.0),
       estop_active_(false),
+      estop_latched_(false),
+      start_auth_token_(0x5A17),
       chassis_locked_(false) {
   nh_.param("/robot/max_linear_vel", max_linear_vel_, max_linear_vel_);
   nh_.param("/robot/max_angular_vel", max_angular_vel_, max_angular_vel_);
@@ -22,14 +24,15 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   nh_.param("/robot/max_angular_accel", max_angular_accel_, max_angular_accel_);
   pnh_.param("publish_rate_hz", publish_rate_hz_, publish_rate_hz_);
   pnh_.param("cmd_timeout_sec", cmd_timeout_sec_, cmd_timeout_sec_);
+  int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
 
   fixed_route_sub_ = nh_.subscribe("/cmd_vel_fixed_route", 10, &CmdVelMuxNode::fixedRouteCallback, this);
   teleop_sub_ = nh_.subscribe("/cmd_vel_teleop", 10, &CmdVelMuxNode::teleopCallback, this);
   external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
   safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
   estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CmdVelMuxNode::estopCallback, this);
-  chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10,
-                                    &CmdVelMuxNode::chassisLockCallback, this);
+  chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10, &CmdVelMuxNode::chassisLockCallback, this);
+  physical_start_sub_ = nh_.subscribe("/start_signal/physical", 1, &CmdVelMuxNode::physicalStartCallback, this);
 
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
   selected_source_pub_ = nh_.advertise<std_msgs::String>("/cmd_vel_mux/selected_source", 10, true);
@@ -61,13 +64,19 @@ void CmdVelMuxNode::safetyCallback(const geometry_msgs::Twist::ConstPtr& msg) {
 }
 
 void CmdVelMuxNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
-  estop_active_ = msg->data;
+  if (msg->data) { estop_latched_ = true; }
+  estop_active_ = estop_latched_;
   std_msgs::Bool state;
   state.data = estop_active_;
   estop_state_pub_.publish(state);
-  if (estop_active_) {
-    publishStop("emergency_stop");
-  }
+  if (estop_active_) { publishStop("emergency_stop"); }
+}
+
+void CmdVelMuxNode::physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg) {
+  if (msg->data != start_auth_token_) return;
+  estop_latched_ = false;
+  estop_active_ = false;
+  std_msgs::Bool state; state.data = false; estop_state_pub_.publish(state);
 }
 
 void CmdVelMuxNode::chassisLockCallback(const std_msgs::Bool::ConstPtr& msg) {
