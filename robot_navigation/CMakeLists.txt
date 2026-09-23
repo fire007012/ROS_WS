@@ -20,7 +20,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 # ── Opus 音频编解码库 (audio_chat_node) ───────────────────
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(OPUS REQUIRED opus)
+pkg_check_modules(OPUS opus)
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED)
 
@@ -210,6 +210,7 @@ target_link_libraries(video_stream_node
   Threads::Threads
 )
 
+if(OPUS_FOUND)
 # ── 双向音频聊天节点 ──────────────────────────────────────
 add_executable(audio_chat_node
   src/audio_chat_node.cpp
@@ -227,6 +228,7 @@ target_link_libraries(audio_chat_node
   ${OPUS_LIBRARIES}
   Threads::Threads
 )
+endif()
 
 # ── 物理启动按钮节点 (GPIO) ────────────────────────────────
 add_executable(start_button_node
@@ -272,7 +274,6 @@ install(TARGETS
   speak_node
   health_monitor_node
   video_stream_node
-  audio_chat_node
   start_button_node
   emergency_stop_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -311,4 +312,9 @@ if(CATKIN_ENABLE_TESTING)
   add_executable(test_audio_queue test/test_audio_queue.cpp)
   target_include_directories(test_audio_queue PRIVATE include/robot_navigation)
   add_test(NAME audio_packet_queue COMMAND test_audio_queue)
+endif()
+
+if(OPUS_FOUND)
+  install(TARGETS audio_chat_node
+    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 endif()

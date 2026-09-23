@@ -24,10 +24,7 @@ HealthMonitor::HealthMonitor(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   // 默认监控的关键话题
   critical_topics_ = {
-    "/odom",
-    "/vl53l1x_distance",
-    "/motor_state",
-    "/path_points"
+    "/odom", "/front/range", "/left/range", "/right/range", "/motor_state"
   };
 
   // 允许从参数覆盖
@@ -46,10 +43,16 @@ HealthMonitor::HealthMonitor(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 bool HealthMonitor::init() {
   stop_all_sub_ = nh_.subscribe("/stop_all", 10,
                                 &HealthMonitor::stopAllCallback, this);
+  odom_sub_ = nh_.subscribe("/odom", 10, &HealthMonitor::odomCallback, this);
+  front_range_sub_ = nh_.subscribe("/front/range", 10, &HealthMonitor::frontRangeCallback, this);
+  left_range_sub_ = nh_.subscribe("/left/range", 10, &HealthMonitor::leftRangeCallback, this);
+  right_range_sub_ = nh_.subscribe("/right/range", 10, &HealthMonitor::rightRangeCallback, this);
+  path_sub_ = nh_.subscribe("/path_finished", 10, &HealthMonitor::pathCallback, this);
+  motor_state_sub_ = nh_.subscribe("/motor_state", 10, &HealthMonitor::motorStateCallback, this);
 
   health_pub_ = nh_.advertise<std_msgs::String>("/system_health", 10, true);
   health_ok_pub_ = nh_.advertise<std_msgs::Bool>("/system_health/ok", 10, true);
-  emergency_stop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 10, true);
+  emergency_stop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 10, false);
 
   reset_srv_ = nh_.advertiseService("/system_health/reset",
                                     &HealthMonitor::resetCallback, this);
@@ -116,8 +119,8 @@ void HealthMonitor::healthTimerCallback(const ros::TimerEvent& /*event*/) {
   if (!system_ok_) {
     consecutive_failures_++;
     if (consecutive_failures_ >= max_consecutive_failures_) {
-      ROS_ERROR_THROTTLE(5.0, "[health_monitor] ⚠ 系统异常！%d 次连续故障",
-                         consecutive_failures_);
+      ROS_ERROR_THROTTLE(5.0, "[health_monitor] critical data stale; latching safety stop (%d failures)", consecutive_failures_);
+      std_msgs::Bool estop; estop.data = true; emergency_stop_pub_.publish(estop);
     }
   } else {
     consecutive_failures_ = 0;
@@ -136,6 +139,15 @@ void HealthMonitor::healthTimerCallback(const ros::TimerEvent& /*event*/) {
   }
 }
 
+void HealthMonitor::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
+  last_message_time_["/odom"] = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
+}
+void HealthMonitor::frontRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/front/range"] = ros::Time::now(); }
+void HealthMonitor::leftRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/left/range"] = ros::Time::now(); }
+void HealthMonitor::rightRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/right/range"] = ros::Time::now(); }
+void HealthMonitor::pathCallback(const std_msgs::Bool::ConstPtr& msg) { if (msg->data) last_message_time_["/path_finished"] = ros::Time::now(); }
+void HealthMonitor::motorStateCallback(const std_msgs::Float32MultiArray::ConstPtr&) { last_message_time_["/motor_state"] = ros::Time::now(); }
+
 // ── 检查关键话题活跃状态 ──────────────────────────────────
 void HealthMonitor::checkCriticalTopics() {
   ros::Time now = ros::Time::now();
@@ -143,27 +155,14 @@ void HealthMonitor::checkCriticalTopics() {
   for (auto& pair : topic_status_) {
     TopicStatus& ts = pair.second;
 
-    // 统计该话题的发布者数量
-    ros::master::V_TopicInfo topics;
-    ros::master::getTopics(topics);
-
-    bool has_publisher = false;
-    for (const auto& t : topics) {
-      if (t.name == pair.first && !t.datatype.empty()) {
-        has_publisher = true;
-        break;
-      }
-    }
-
-    if (!has_publisher) {
+    const auto stamp_it = last_message_time_.find(pair.first);
+    if (stamp_it == last_message_time_.end()) {
       ts.seen = false;
       continue;
     }
-
-    // 话题有发布者 → 认为活跃（简化判定）
-    // 更精确的方式是订阅并检查数据时间戳，但这会增加复杂度
-    ts.seen = true;
-    ts.last_seen = now;
+    const double age = (now - stamp_it->second).toSec();
+    ts.seen = age >= 0.0 && age <= ts.timeout_sec;
+    if (ts.seen) ts.last_seen = stamp_it->second;
   }
 }
 
@@ -181,7 +180,7 @@ std::string HealthMonitor::generateHealthReport() const {
       ss << "  ✅ " << pair.first << "\n";
       ok_count++;
     } else {
-      ss << "  ❌ " << pair.first << " (无发布者)\n";
+      ss << "  ❌ " << pair.first << " (无新鲜数据)\n";
       fail_count++;
     }
   }

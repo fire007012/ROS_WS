@@ -21,6 +21,8 @@ BarcodeQrDetector::BarcodeQrDetector(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , qr_detected_(false)
     , barcode_bed1_detected_(false)
     , barcode_bed3_detected_(false)
+    , scan_target_bed_(0)
+    , scan_session_id_(0)
     , qr_timeout_sec_(30.0)
     , barcode_timeout_sec_(30.0)
     , image_queue_size_(10)
@@ -39,15 +41,18 @@ bool BarcodeQrDetector::init() {
   // ── 订阅摄像头图像 ──
   image_sub_ = nh_.subscribe("/usb_cam/image_raw", image_queue_size_,
                              &BarcodeQrDetector::imageCallback, this);
+  scan_target_sub_ = nh_.subscribe("/barcode_scan/target_bed", 1, &BarcodeQrDetector::scanTargetCallback, this);
+  scan_session_sub_ = nh_.subscribe("/barcode_scan/session", 1, &BarcodeQrDetector::scanSessionCallback, this);
 
   // ── 发布者 ──
-  qr_result_pub_     = nh_.advertise<robot_navigation::QrResult>("/qr_result", 1, true);
-  barcode_bed1_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed1", 1, true);
-  barcode_bed3_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed3", 1, true);
-  display_text_pub_  = nh_.advertise<std_msgs::String>(display_topic_, 1, true);
+  qr_result_pub_     = nh_.advertise<robot_navigation::QrResult>("/qr_result", 1);
+  barcode_bed1_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed1", 1);
+  barcode_bed3_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed3", 1);
+  display_text_pub_  = nh_.advertise<std_msgs::String>(display_topic_, 1);
 
   // ── 初始化时间戳 ──
   qr_scan_start_time_ = ros::Time::now();
+  barcode_scan_start_time_ = ros::Time::now();
 
   ROS_INFO("[barcode_qr_detector] 初始化完成");
   ROS_INFO("[barcode_qr_detector]   订阅: /usb_cam/image_raw");
@@ -56,6 +61,22 @@ bool BarcodeQrDetector::init() {
            qr_timeout_sec_, barcode_timeout_sec_);
 
   return true;
+}
+
+void BarcodeQrDetector::scanTargetCallback(const std_msgs::Int8::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (msg->data != 0 && msg->data != 1 && msg->data != 3) return;
+  scan_target_bed_ = msg->data;
+  barcode_bed1_detected_ = false; barcode_bed3_detected_ = false;
+  barcode_scan_start_time_ = ros::Time::now();
+}
+
+void BarcodeQrDetector::scanSessionCallback(const std_msgs::UInt32::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (msg->data == scan_session_id_) return;
+  scan_session_id_ = msg->data;
+  qr_detected_ = false; barcode_bed1_detected_ = false; barcode_bed3_detected_ = false;
+  scan_target_bed_ = 0; qr_scan_start_time_ = ros::Time::now(); barcode_scan_start_time_ = ros::Time::now();
 }
 
 // ── 图像回调 ───────────────────────────────────────────────
@@ -124,7 +145,8 @@ void BarcodeQrDetector::imageCallback(const sensor_msgs::Image::ConstPtr& msg) {
       // 发布到 /barcode_bed1 和 /barcode_bed3 —— 实际分配由 mission_controller 根据
       // 当前上下文决定，这里我们同时发布两个话题；mission_controller 按需取用。
       // 如果已有一个检测到，则分配给另一个话题。
-      if (!barcode_bed1_detected_) {
+      if (scan_target_bed_ == 0) continue;
+      if (scan_target_bed_ == 1 && !barcode_bed1_detected_) {
         barcode_bed1_pub_.publish(barcode_msg);
         barcode_bed1_detected_ = true;
         barcode_scan_start_time_ = ros::Time::now();  // 重置条码扫描计时
@@ -134,37 +156,25 @@ void BarcodeQrDetector::imageCallback(const sensor_msgs::Image::ConstPtr& msg) {
         std_msgs::String display_msg;
         display_msg.data = "1床药品:" + data;
         display_text_pub_.publish(display_msg);
-      } else if (!barcode_bed3_detected_) {
+      } else if (scan_target_bed_ == 3 && !barcode_bed3_detected_) {
         barcode_bed3_pub_.publish(barcode_msg);
         barcode_bed3_detected_ = true;
         ROS_INFO("[barcode_qr_detector] 条形码已发布到 /barcode_bed3: \"%s\"", data.c_str());
 
         // 追加到屏幕显示
         std_msgs::String display_msg;
-        display_msg.data = "1床药品:" + data + " | 3床药品:" + data;
+        display_msg.data = std::to_string(scan_target_bed_) + "床药品:" + data;
         display_text_pub_.publish(display_msg);
       }
     }
   }
 
   // ── 条形码超时 ──
-  if ((!barcode_bed1_detected_ || !barcode_bed3_detected_)) {
+  if (scan_target_bed_ != 0 && ((scan_target_bed_ == 1 && !barcode_bed1_detected_) || (scan_target_bed_ == 3 && !barcode_bed3_detected_))) {
     const double bc_elapsed = (ros::Time::now() - barcode_scan_start_time_).toSec();
     if (bc_elapsed > barcode_timeout_sec_) {
       ROS_WARN("[barcode_qr_detector] 条形码检测超时 (%.1f s)", barcode_timeout_sec_);
-      // 对未检测到的发布空消息
-      std_msgs::String empty_msg;
-      empty_msg.data = "";
-      if (!barcode_bed1_detected_) {
-        barcode_bed1_pub_.publish(empty_msg);
-        barcode_bed1_detected_ = true;
-        ROS_WARN("[barcode_qr_detector] /barcode_bed1 发布空消息（超时）");
-      }
-      if (!barcode_bed3_detected_) {
-        barcode_bed3_pub_.publish(empty_msg);
-        barcode_bed3_detected_ = true;
-        ROS_WARN("[barcode_qr_detector] /barcode_bed3 发布空消息（超时）");
-      }
+      barcode_scan_start_time_ = ros::Time::now();
     }
   }
 }

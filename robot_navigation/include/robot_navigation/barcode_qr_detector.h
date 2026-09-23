@@ -6,6 +6,8 @@
 
 #include <robot_navigation/QrResult.h>
 #include <std_msgs/String.h>
+#include <std_msgs/Int8.h>
+#include <std_msgs/UInt32.h>
 
 #include <zbar.h>
 
@@ -34,6 +36,8 @@ class BarcodeQrDetector {
  private:
   // ── 回调 ──
   void imageCallback(const sensor_msgs::Image::ConstPtr& msg);
+  void scanTargetCallback(const std_msgs::Int8::ConstPtr& msg);
+  void scanSessionCallback(const std_msgs::UInt32::ConstPtr& msg);
 
   // ── 辅助 ──
   bool parseQrCode(const std::string& data, QrResult& result);
@@ -44,10 +48,14 @@ class BarcodeQrDetector {
   ros::NodeHandle pnh_;
 
   ros::Subscriber      image_sub_;
+  ros::Subscriber      scan_target_sub_;
+  ros::Subscriber      scan_session_sub_;
   ros::Publisher       qr_result_pub_;
   ros::Publisher       barcode_bed1_pub_;
   ros::Publisher       barcode_bed3_pub_;
   ros::Publisher       display_text_pub_;
+  int8_t scan_target_bed_;
+  uint32_t scan_session_id_;
 
   // ── 状态 ──
   bool qr_detected_;

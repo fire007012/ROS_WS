@@ -34,6 +34,7 @@
   <arg name="enable_servo"        default="false"/>
   <!-- 比赛默认必须扫描床头柜条形码；无摄像头联调时显式传 true。 -->
   <arg name="skip_bedside_scan"   default="false"/>
+  <arg name="competition_mode" default="true"/>
   <arg name="bedside_scan_skip_wait_s" default="1.0"/>
   <arg name="enable_open_medicine_box" default="true"/>
   <arg name="medicine_box_can_device" default="can1"/>
@@ -60,7 +61,7 @@
   <!-- Required when use_dynamic_navigation:=true. -->
   <arg name="dynamic_map_file" default="/absolute/path/to/arena.yaml"/>
   <arg name="enable_physical_start" default="true"/>
-  <arg name="enable_can_start_signal" default="true"/>
+  <arg name="enable_can_start_signal" default="false"/>
   <arg name="enable_emergency_stop" default="true"/>
   <arg name="enable_audio_video" default="true"/>
   <arg name="audio_role" default="slave"/>
@@ -253,7 +254,7 @@
   <!-- 7.3 物理启动按钮（GPIO 直连） -->
   <group if="$(arg enable_physical_start)">
     <node pkg="robot_navigation" type="start_button_node"
-          name="start_button_node" output="screen" required="false">
+          name="start_button_node" output="screen" required="true">
       <param name="button_pin" value="17"/>
       <param name="led_pin" value="27"/>
       <param name="debounce_ms" value="50"/>
@@ -317,7 +318,7 @@
   <!-- 8.3 急停按钮（GPIO 直连） -->
   <group if="$(arg enable_emergency_stop)">
     <node pkg="robot_navigation" type="emergency_stop_node"
-          name="emergency_stop_node" output="screen" required="false">
+          name="emergency_stop_node" output="screen" required="true">
       <param name="estop_pin" value="22"/>
       <param name="led_pin" value="23"/>
       <param name="debounce_ms" value="30"/>
@@ -354,6 +355,8 @@
   <node pkg="robot_navigation" type="mission_controller_node"
         name="mission_controller_node" output="screen" required="true">
       <param name="skip_bedside_scan" value="$(arg skip_bedside_scan)"/>
+      <param name="competition_mode" value="$(arg competition_mode)"/>
+      <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>
       <param name="bedside_scan_skip_wait_s" value="$(arg bedside_scan_skip_wait_s)"/>
       <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
       <param name="heart_rate_topic" value="$(arg heart_rate_topic)"/>

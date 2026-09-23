@@ -121,9 +121,9 @@ class EmergencyStopNode {
     led_gpio_.exportPin(led_pin_, "out");
 
     // 发布者
-    estop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 1, true);
-    estop_state_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop/state", 1, true);
-    estop_event_pub_ = nh_.advertise<std_msgs::Empty>("/emergency_stop/event", 1, true);
+    estop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 1, false);
+    estop_state_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop/state", 1, false);
+    estop_event_pub_ = nh_.advertise<std_msgs::Empty>("/emergency_stop/event", 1, false);
 
     // 立即发布初始状态（正常）
     publishEstopState(false);

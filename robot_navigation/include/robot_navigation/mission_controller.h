@@ -12,6 +12,9 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/Int8.h>
+#include <std_msgs/UInt32.h>
+#include <std_msgs/Int32.h>
 #include <std_srvs/Trigger.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Range.h>
@@ -75,7 +78,7 @@ class MissionController {
   void qrResultCallback(const robot_navigation::QrResult::ConstPtr& msg);
   void barcodeBed1Callback(const std_msgs::String::ConstPtr& msg);
   void barcodeBed3Callback(const std_msgs::String::ConstPtr& msg);
-  void startSignalCallback(const std_msgs::Empty::ConstPtr& msg);
+  void startSignalCallback(const std_msgs::UInt32::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
@@ -83,6 +86,8 @@ class MissionController {
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg);
+  void audioReadyCallback(const std_msgs::Int32::ConstPtr& msg);
+  void audioActiveCallback(const std_msgs::Bool::ConstPtr& msg);
   void missionTimerCallback(const ros::TimerEvent& event);
   void stateMachineTimerCallback(const ros::TimerEvent& event);
 
@@ -134,6 +139,7 @@ class MissionController {
 
   // ── 床号视觉校验 ──
   bool verifyBedNumber(int expected_bed);
+  bool isValidBarcode(const std::string& value) const;
 
   // ── 事件等待 ──
   bool isStageTimedOut() const;
@@ -173,6 +179,8 @@ class MissionController {
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
   ros::Subscriber medicine_release_done_sub_;
+  ros::Subscriber audio_ready_sub_;
+  ros::Subscriber audio_active_sub_;
 
   // 发布
   ros::Publisher mission_finished_pub_;
@@ -180,6 +188,8 @@ class MissionController {
   ros::Publisher stop_all_pub_;
   ros::Publisher display_text_pub_;
   ros::Publisher chassis_lock_pub_;      // 底盘锁死信号
+  ros::Publisher scan_target_bed_pub_;
+  ros::Publisher scan_session_pub_;
 
   // 服务客户端
   ros::ServiceClient path_select_client_;
@@ -244,6 +254,7 @@ class MissionController {
 
   // ── 参数 ──
   double stage_timeout_sec_;       // 单阶段超时 (默认 30s)
+  double stage_timeout_default_sec_;
   double mission_timeout_sec_;     // 全局超时 (默认 180s)
   double state_machine_rate_hz_;   // 状态机循环频率
 
@@ -278,6 +289,12 @@ class MissionController {
 
   // ── 超时恢复：是否已尝试跳过当前阶段 ──
   bool stage_skip_attempted_;
+  bool competition_mode_;
+  bool audio_video_enabled_;
+  bool audio_ready_;
+  bool audio_active_;
+  uint32_t scan_session_id_;
+  uint32_t start_auth_token_;
 
   // ── 底盘锁死标志 ──
   bool chassis_locked_;

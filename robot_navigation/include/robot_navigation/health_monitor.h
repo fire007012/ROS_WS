@@ -2,9 +2,14 @@
 
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Empty.h>
 #include <std_srvs/Trigger.h>
+#include <nav_msgs/Odometry.h>
+#include <sensor_msgs/Range.h>
+#include <std_msgs/Bool.h>
+#include <std_msgs/Float32MultiArray.h>
 
 #include <map>
 #include <string>
@@ -43,12 +48,24 @@ class HealthMonitor {
 
   std::string generateHealthReport() const;
   void checkCriticalTopics();
+  void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
+  void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void pathCallback(const std_msgs::Bool::ConstPtr& msg);
+  void motorStateCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
 
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
 
   // 订阅 /stop_all（转发给所有需要知道的组件）
   ros::Subscriber stop_all_sub_;
+  ros::Subscriber odom_sub_;
+  ros::Subscriber front_range_sub_;
+  ros::Subscriber left_range_sub_;
+  ros::Subscriber right_range_sub_;
+  ros::Subscriber path_sub_;
+  ros::Subscriber motor_state_sub_;
 
   // 发布
   ros::Publisher health_pub_;
@@ -72,6 +89,7 @@ class HealthMonitor {
     double timeout_sec;
   };
   std::map<std::string, TopicStatus> topic_status_;
+  std::map<std::string, ros::Time> last_message_time_;
   bool system_ok_;
   int consecutive_failures_;
   int max_consecutive_failures_;

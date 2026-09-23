@@ -7,6 +7,8 @@
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
+#include <std_msgs/Empty.h>
+#include <std_msgs/UInt32.h>
 
 namespace motion_planner {
 
@@ -21,6 +23,7 @@ class CmdVelMuxNode {
   void safetyCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void estopCallback(const std_msgs::Bool::ConstPtr& msg);
   void chassisLockCallback(const std_msgs::Bool::ConstPtr& msg);
+  void physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg);
   void timerCallback(const ros::TimerEvent& event);
   void updateSourceCommand(const std::string& source_name, const geometry_msgs::Twist& msg);
   bool sourceActive(const std::string& source_name, const ros::Time& now) const;
@@ -45,6 +48,7 @@ class CmdVelMuxNode {
   ros::Subscriber safety_sub_;
   ros::Subscriber estop_sub_;
   ros::Subscriber chassis_lock_sub_;
+  ros::Subscriber physical_start_sub_;
   ros::Publisher cmd_vel_pub_;
   ros::Publisher selected_source_pub_;
   ros::Publisher estop_state_pub_;
@@ -60,6 +64,8 @@ class CmdVelMuxNode {
   double max_linear_accel_;
   double max_angular_accel_;
   bool estop_active_;
+  bool estop_latched_;
+  uint32_t start_auth_token_;
   bool chassis_locked_;
 };
 
