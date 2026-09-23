@@ -19,10 +19,10 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 # ── Opus 音频编解码库 (audio_chat_node) ───────────────────
-find_package(PkgConfig)
-if(PKG_CONFIG_FOUND)
-  pkg_check_modules(OPUS opus)
-endif()
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(OPUS REQUIRED opus)
+find_package(Threads REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # ── 消息定义 ───────────────────────────────────────────────
 add_message_files(
@@ -207,6 +207,7 @@ add_dependencies(video_stream_node
 target_link_libraries(video_stream_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBS}
+  Threads::Threads
 )
 
 # ── 双向音频聊天节点 ──────────────────────────────────────
@@ -224,6 +225,7 @@ target_compile_definitions(audio_chat_node PRIVATE HAS_OPUS)
 target_link_libraries(audio_chat_node
   ${catkin_LIBRARIES}
   ${OPUS_LIBRARIES}
+  Threads::Threads
 )
 
 # ── 物理启动按钮节点 (GPIO) ────────────────────────────────
@@ -248,6 +250,12 @@ add_dependencies(emergency_stop_node
 )
 target_link_libraries(emergency_stop_node
   ${catkin_LIBRARIES}
+)
+
+catkin_install_python(PROGRAMS
+  scripts/esp32_vitals_bridge_node.py
+  scripts/robot_status_display_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 # ── 安装 ───────────────────────────────────────────────────
@@ -297,3 +305,10 @@ catkin_install_python(PROGRAMS
   scripts/test_camera.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+# Transport/queue tests require neither audio devices nor ROS master.
+if(CATKIN_ENABLE_TESTING)
+  add_executable(test_audio_queue test/test_audio_queue.cpp)
+  target_include_directories(test_audio_queue PRIVATE include/robot_navigation)
+  add_test(NAME audio_packet_queue COMMAND test_audio_queue)
+endif()
