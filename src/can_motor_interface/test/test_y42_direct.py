@@ -28,6 +28,22 @@ class TestProtocol(unittest.TestCase):
         self.assertIn('address 2',f.problem(11.1,1))
         f.update((2,'status',0),10);self.assertIn('disabled',f.problem(10.5,1))
         f.update((2,'status',0x0D),10);self.assertIn('fault',f.problem(10.5,1))
+    def test_power_history_is_not_live_fault(self):
+        f=m.Feedback([1,2,3,4])
+        for flags in (0x81, 0x83):
+            for a in f.ids:
+                f.update((a,'speed',0),10)
+                f.update((a,'status',flags),10)
+            self.assertEqual(f.problem(10.5,1), '')
+            self.assertEqual(f.status[1], flags)  # preserve raw diagnostic bits
+        for flags in (0x85,0x89,0x8D):
+            f.update((1,'status',flags),10)
+            self.assertIn('fault',f.problem(10.5,1))
+        f.update((1,'status',0x80),10)
+        self.assertIn('disabled',f.problem(10.5,1))
+        f.update((1,'status',0x83),10)
+        self.assertIn('stale',f.problem(12,1))
+
     def test_frame(self):
         frame=m.FRAME.pack(m.CAN_EFF_FLAG|0x100,4,m.STOP.ljust(8,b'\0'))
         self.assertEqual(len(frame),16)
@@ -52,6 +68,12 @@ class TestArmGuard(unittest.TestCase):
         n=self.node();n.feedback.seen.pop((4,'status'));self.assertFalse(n.arm(None).success)
         n=self.node();n.cmd_time-=2;self.assertFalse(n.arm(None).success)
         n=self.node();n.feedback.speed[2]=10;self.assertFalse(n.arm(None).success)
+    def test_arm_with_83_feedback(self):
+        n=self.node()
+        for a in n.ids:
+            n.feedback.update((a,'status',0x83),m.time.monotonic())
+        self.assertTrue(n.arm(None).success)
+
     def test_no_clear_hard_fault_or_external_estop(self):
         n=self.node();n.external_stop=True;self.assertFalse(n.arm(None).success)
         n=self.node();n.fault='bus fault';self.assertFalse(n.arm(None).success)

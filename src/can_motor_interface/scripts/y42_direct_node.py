@@ -59,7 +59,11 @@ class Feedback:
             for kind in ('speed', 'status'):
                 if (addr, kind) not in self.seen or now - self.seen[addr, kind] > timeout:
                     return 'address %d: missing/stale %s reply' % (addr, kind)
-            if self.status[addr] & 0x8C:  # stall, stall protection, power loss
+            # Vendor manual V1.1 section 5.5.15: bit7 Oac_TF is a
+            # sticky power-cycle record, DEFAULT 1, not a live power fault.
+            # 0x83 is explicitly illustrated as enabled + reached + history.
+            # Keep stall/stall-protection blocking; never clear driver flags.
+            if self.status[addr] & 0x0C:  # stall and stall protection
                 return 'address %d: fault flags 0x%02X' % (addr, self.status[addr])
             if not self.status[addr] & 1:
                 return 'address %d: motor disabled (enable on driver before arming)' % addr
