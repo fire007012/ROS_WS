@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Native Y42 X firmware, fixed 6B checksum, standard angle/speed scaling.
+Only chassis addresses 1..4 are permitted. No broadcast or auto-enable.
+"""
+import math
+import struct
+import time
+import threading
+import socket
+import select
+
+CAN_EFF_FLAG = 0x80000000
+CAN_RTR_FLAG = 0x40000000
+CAN_ERR_FLAG = 0x20000000
+FRAME = struct.Struct('=IB3x8s')
+STOP = bytes.fromhex('FE 98 00 6B')
+
+
+def speed_payload(rpm, accel=50, limit=30):
+    if not math.isfinite(rpm):
+        raise ValueError('nonfinite RPM')
+    rpm = max(-limit, min(limit, rpm))
+    raw = int(abs(rpm) * 10 + 0.5)
+    return bytes([0xF6, int(rpm < 0), accel >> 8, accel & 255,
+                  raw >> 8, raw & 255, 0, 0x6B])
+
+
+def parse_reply(can_id, payload):
+    if not can_id & CAN_EFF_FLAG or can_id & (CAN_RTR_FLAG | CAN_ERR_FLAG):
+        return None
+    raw_id = can_id & 0x1FFFFFFF
+    addr = raw_id >> 8
+    if raw_id & 255 or addr not in (1, 2, 3, 4):
+        return None
+    if len(payload) == 5 and payload[0] == 0x35 and payload[1] in (0, 1) and payload[-1] == 0x6B:
+        rpm = ((payload[2] << 8) | payload[3]) / 10.0
+        return addr, 'speed', -rpm if payload[1] else rpm
+    if len(payload) == 3 and payload[0] == 0x3A and payload[-1] == 0x6B:
+        return addr, 'status', payload[1]
+    return None
+
+
+class Feedback:
+    def __init__(self, ids):
+        self.ids = ids
+        self.speed = {i: 0.0 for i in ids}
+        self.status = {i: 0 for i in ids}
+        self.seen = {}
+
+    def update(self, reply, now):
+        if reply is None or reply[0] not in self.ids:
+            return
+        addr, kind, value = reply
+        (self.speed if kind == 'speed' else self.status)[addr] = value
+        self.seen[addr, kind] = now
+
+    def problem(self, now, timeout):
+        for addr in self.ids:
+            for kind in ('speed', 'status'):
+                if (addr, kind) not in self.seen or now - self.seen[addr, kind] > timeout:
+                    return 'address %d: missing/stale %s reply' % (addr, kind)
+            if self.status[addr] & 0x8C:  # stall, stall protection, power loss
+                return 'address %d: fault flags 0x%02X' % (addr, self.status[addr])
+            if not self.status[addr] & 1:
+                return 'address %d: motor disabled (enable on driver before arming)' % addr
+        return ''
+
+
+class DirectNode:
+    def __init__(self):
+        import rospy
+        from std_msgs.msg import Float32MultiArray, UInt8MultiArray, Bool, String
+        from std_srvs.srv import Trigger, TriggerResponse
+        self.ros = rospy
+        self.FloatArray, self.ByteArray, self.Bool, self.String = Float32MultiArray, UInt8MultiArray, Bool, String
+        self.Response = TriggerResponse
+        self.lock = threading.RLock()
+        self.ids = rospy.get_param('~motor_ids', [1, 2, 3, 4])
+        self.signs = rospy.get_param('~direction_signs', [1, 1, 1, 1])
+        self.limit = float(rospy.get_param('~max_rpm', 30.0))
+        self.accel = int(rospy.get_param('~acceleration_rpm_s', 50))
+        self.timeout = float(rospy.get_param('~feedback_timeout', 1.0))
+        self.cmd_timeout = float(rospy.get_param('~command_timeout', 0.5))
+        if (len(self.ids) != 4 or set(self.ids) != {1, 2, 3, 4}
+                or len(self.signs) != 4 or any(s not in (-1, 1) for s in self.signs)
+                or not 0 < self.limit <= 3000 or not 0 <= self.accel <= 65535
+                or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1):
+            raise ValueError('Invalid IDs/signs/limits/timeouts; chassis IDs must be a permutation of 1..4')
+        self.feedback = Feedback(self.ids)
+        self.target = [0.0] * 4
+        self.cmd_time = None
+        self.armed = False
+        self.external_stop = False
+        self.fault = ''
+        self.running = True
+        self.reason = 'disarmed: wait for all feedback, then call /y42_direct/arm with zero keyboard input'
+        self.rpm_pub = rospy.Publisher('/motor_state', Float32MultiArray, queue_size=1)
+        self.flags_pub = rospy.Publisher('/motor_status_flags', UInt8MultiArray, queue_size=1)
+        self.ready_pub = rospy.Publisher('/y42_direct/ready', Bool, queue_size=1, latch=True)
+        self.status_pub = rospy.Publisher('/y42_direct/status', String, queue_size=1, latch=True)
+        self.sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+        # Do not treat locally transmitted queries (including other sockets) as feedback.
+        self.sock.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_RECV_OWN_MSGS, 0)
+        self.sock.bind((rospy.get_param('~can_device', 'can0'),))
+        self.sock.setblocking(False)
+        rospy.Subscriber('/motor_velocity_cmd', Float32MultiArray, self.command, queue_size=1)
+        rospy.Subscriber('/emergency_stop', Bool, self.estop, queue_size=1)
+        rospy.Service('/y42_direct/arm', Trigger, self.arm)
+        rospy.Service('/y42_direct/disarm', Trigger, self.disarm)
+        rospy.logwarn('Y42 DIRECT X: IDs=%s max_rpm=%.1f, NOT armed. No auto-enable, no broadcast, no IDs 5/6.', self.ids, self.limit)
+
+    def send(self, addr, payload):
+        assert addr in self.ids and 0 < len(payload) <= 8
+        frame = FRAME.pack(CAN_EFF_FLAG | (addr << 8), len(payload), payload.ljust(8, b'\x00'))
+        try:
+            if self.sock.send(frame) != len(frame):
+                raise OSError('short CAN write')
+            return True
+        except OSError as exc:
+            self.armed = False
+            self.fault = 'CAN TX failed: ' + str(exc)
+            self.reason = self.fault
+            self.ros.logerr_throttle(2, self.fault)
+            return False
+
+    def stop_all(self):
+        for addr in self.ids:
+            self.send(addr, STOP)
+
+    def trip(self, reason):
+        self.armed = False
+        self.reason = reason
+        self.target = [0.0] * 4
+        self.stop_all()
+
+    def command(self, msg):
+        with self.lock:
+            if len(msg.data) != 4 or not all(math.isfinite(x) for x in msg.data):
+                self.fault = 'invalid wheel RPM command'
+                self.trip(self.fault)
+                return
+            self.target = list(msg.data)
+            self.cmd_time = time.monotonic()
+
+    def estop(self, msg):
+        if msg.data:
+            with self.lock:
+                self.external_stop = True
+                self.trip('external emergency stop latched: correct cause and restart test launch')
+
+    def arm(self, _):
+        with self.lock:
+            now = time.monotonic()
+            why = self.feedback.problem(now, self.timeout)
+            if self.external_stop:
+                why = 'external emergency stop latched; cannot reset via arm service'
+            elif self.fault:
+                why = self.fault + '; correct cause and restart'
+            elif self.cmd_time is None or now-self.cmd_time > self.cmd_timeout or any(abs(x)>0.01 for x in self.target):
+                why = 'need fresh ZERO command; stop keyboard before arming'
+            elif any(abs(v)>1.0 for v in self.feedback.speed.values()):
+                why = 'wheels are not stationary'
+            if why:
+                return self.Response(False, why)
+            self.armed = True
+            self.reason = 'armed'
+            return self.Response(True, 'armed: chassis IDs 1..4 only')
+
+    def disarm(self, _):
+        with self.lock:
+            self.trip('manually disarmed')
+            return self.Response(True, self.reason)
+
+    def run(self):
+        next_poll = next_control = next_report = 0
+        try:
+            with self.lock:
+                self.stop_all()
+            while not self.ros.is_shutdown():
+                readable, _, _ = select.select([self.sock], [], [], 0.01)
+                with self.lock:
+                    if readable:
+                        for _ in range(64):
+                            try:
+                                raw = self.sock.recv(16)
+                            except BlockingIOError:
+                                break
+                            if len(raw) != 16:
+                                continue
+                            cid, dlc, data = FRAME.unpack(raw)
+                            self.feedback.update(parse_reply(cid, data[:min(dlc,8)]), time.monotonic())
+                    now = time.monotonic()
+                    if now >= next_poll:
+                        next_poll = now + 0.1
+                        for addr in self.ids:
+                            self.send(addr, b'\x35\x6b')
+                            self.send(addr, b'\x3a\x6b')
+                    why = self.feedback.problem(now, self.timeout)
+                    if self.armed and why:
+                        self.trip(why + '; stopped, explicit re-arm required')
+                    if self.armed and (self.cmd_time is None or now-self.cmd_time > self.cmd_timeout):
+                        self.trip('wheel command timeout; explicit re-arm required')
+                    if now >= next_control:
+                        next_control = now + 0.05
+                        if self.armed and not self.external_stop and not self.fault:
+                            for idx, addr in enumerate(self.ids):
+                                payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(self.target[idx]*self.signs[idx], self.accel, self.limit)
+                                if not self.send(addr, payload):
+                                    self.stop_all()
+                                    break
+                        else:
+                            self.stop_all()
+                    if now >= next_report:
+                        next_report = now + 0.2
+                        ready = not why and not self.external_stop and not self.fault
+                        self.ready_pub.publish(self.Bool(data=ready))
+                        text = 'armed' if self.armed else (self.fault or why or self.reason)
+                        self.status_pub.publish(self.String(data=text))
+                        if not ready:
+                            self.ros.logwarn_throttle(2, text)
+                        # Never publish stale RPM as valid odometry feedback.
+                        if not why:
+                            self.rpm_pub.publish(self.FloatArray(data=[self.feedback.speed[a]*self.signs[i] for i,a in enumerate(self.ids)]))
+                            self.flags_pub.publish(self.ByteArray(data=[self.feedback.status[a] for a in self.ids]))
+        finally:
+            with self.lock:
+                self.stop_all()
+                self.sock.close()
+
+
+if __name__ == '__main__':
+    import rospy
+    rospy.init_node('y42_direct_node')
+    try:
+        DirectNode().run()
+    except (OSError, ValueError) as exc:
+        rospy.logfatal('Y42 direct startup/runtime failed: %s', exc)
+        raise SystemExit(1)

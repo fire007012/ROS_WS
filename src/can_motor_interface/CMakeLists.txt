@@ -37,3 +37,7 @@ install(TARGETS can_interface_node
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
 )
+
+catkin_install_python(PROGRAMS scripts/y42_direct_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

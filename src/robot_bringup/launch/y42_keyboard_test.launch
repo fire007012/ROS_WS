@@ -1,0 +1,17 @@
+<launch>
+  <!-- Chassis bench test, no mission, no STM32 bridge, no arm. Keyboard in another terminal. -->
+  <arg name="can_device" default="can0"/>
+  <arg name="max_rpm" default="30.0"/>
+  <arg name="motor_ids" default="[1, 2, 3, 4]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
+  <include file="$(find motion_planner)/launch/planner.launch">
+    <arg name="enable_twist_test" value="false"/>
+    <arg name="enable_fixed_route" value="false"/>
+  </include>
+  <include file="$(find can_motor_interface)/launch/y42_direct.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="max_rpm" value="$(arg max_rpm)"/>
+    <arg name="motor_ids" value="$(arg motor_ids)"/>
+    <arg name="direction_signs" value="$(arg direction_signs)"/>
+  </include>
+</launch>
