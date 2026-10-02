@@ -96,6 +96,7 @@ class TestArmGuard(unittest.TestCase):
         n=m.DirectNode.__new__(m.DirectNode)
         n.lock=threading.RLock();n.ids=[1,2,3,4];n.feedback=m.Feedback(n.ids)
         n.timeout=1;n.cmd_timeout=0.5;n.external_stop=False;n.fault='';n.armed=False
+        n.tx_schedule=m.TxSchedule(n.ids)
         n.Response=lambda success,message:SimpleNamespace(success=success,message=message)
         n.target=[0]*4;n.cmd_time=m.time.monotonic()
         for a in n.ids:
@@ -123,7 +124,56 @@ class TestArmGuard(unittest.TestCase):
         n=self.node();n.fault='bus fault';self.assertFalse(n.arm(None).success)
     def test_stop_only_chassis(self):
         n=self.node();sent=[];n.send=lambda addr,data:sent.append((addr,data))
-        n.stop_all();self.assertEqual(sent,[(a,m.STOP) for a in (1,2,3,4)])
+        n.stop_all();self.assertFalse(sent)  # asynchronous, no burst
+        jobs=[]
+        for i in range(8):jobs.append(n.tx_schedule.next(i*0.01,False))
+        self.assertEqual(jobs,[(a,'stop') for a in (1,2,3,4,1,2,3,4)])
         n.armed=True;n.target=[10]*4;n.trip('test');self.assertFalse(n.armed);self.assertEqual(n.target,[0]*4)
-if __name__=='__main__':unittest.main()
 
+class TestTxSchedule(unittest.TestCase):
+    def test_one_per_slot_no_catchup(self):
+        q=m.TxSchedule([1,2,3,4]);self.assertIsNotNone(q.next(10,True))
+        self.assertIsNone(q.next(10,True));self.assertIsNone(q.next(10.003,True))
+        self.assertIsNotNone(q.next(50,True));self.assertIsNone(q.next(50,True))
+    def test_queries_and_controls_distributed(self):
+        q=m.TxSchedule([1,2,3,4]);counts={};times=[]
+        for i in range(1000):
+            job=q.next(i*0.002,True)
+            if job:counts[job]=counts.get(job,0)+1;times.append(i*0.002)
+        for a in (1,2,3,4):
+            self.assertGreater(counts[a,'control'],20)
+            for func in (0x35,0x3A):self.assertGreater(counts[a,func],10)
+        self.assertTrue(all(b-a>=0.004-1e-8 for a,b in zip(times,times[1:])))
+    def test_stop_priority_and_coalescing(self):
+        q=m.TxSchedule([1,2,3,4]);q.request_stop();q.request_stop()
+        self.assertEqual(len(q.pending_stops),8)
+        self.assertEqual(q.next(0,True),(1,'stop'))
+    def test_failure_stops_bounded_no_query_or_motion(self):
+        q=m.TxSchedule([1,2,3,4]);q.failed(0)
+        self.assertIsNone(q.next(0.01,True))
+        jobs=[]
+        for i in range(1,25):
+            job=q.next(i*0.1,True)
+            if job:jobs.append(job);q.failed(i*0.1)
+        self.assertEqual(jobs,[(a,'stop') for a in (1,2,3,4,1,2,3,4)])
+        q.request_stop();self.assertIsNone(q.next(100,True))
+    def test_latest_command_not_saved_in_scheduler(self):
+        n=TestArmGuard().node();n.signs=[1]*4;n.accel=50;n.limit=30;n.armed=True
+        sent=[];n.send=lambda addr,data:sent.append((addr,data))
+        n.target=[10]*4;n.transmit_one(10)
+        n.target=[0]*4;n.transmit_one(10.02)
+        self.assertEqual(sent[0],(1,m.speed_payload(10)))
+        self.assertEqual(sent[1],(2,m.STOP))
+    def test_real_send_enobufs_latches(self):
+        import errno
+        from types import SimpleNamespace
+        n=TestArmGuard().node();n.armed=True
+        class Broken:
+            def send(self, frame):raise OSError(errno.ENOBUFS,'No buffer space available')
+        n.sock=Broken();n.ros=SimpleNamespace(logerr_throttle=lambda *args:None)
+        self.assertFalse(n.send(1,m.STOP));self.assertFalse(n.armed)
+        self.assertIn('backpressure',n.fault);self.assertTrue(n.tx_schedule.tx_fault)
+        self.assertFalse(n.arm(None).success)
+        for _ in range(4):n.send(1,m.STOP)
+        self.assertEqual(len(n.tx_schedule.pending_stops),8)  # not replenished
+if __name__=='__main__':unittest.main()

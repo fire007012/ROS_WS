@@ -8,6 +8,8 @@ import time
 import threading
 import socket
 import select
+import errno
+from collections import deque
 
 CAN_EFF_FLAG = 0x80000000
 CAN_RTR_FLAG = 0x40000000
@@ -88,6 +90,57 @@ class Feedback:
         return ''
 
 
+class TxSchedule:
+    """No queued velocity commands, no catch-up bursts. One CAN frame per slot.
+
+    Running: each motor speed ~20 Hz; each of eight queries ~10 Hz.
+    Disarmed: each motor stop ~4 Hz. TX fault: only two bounded stop rounds,
+    no queries/motion until process restart. App pacing cannot repair a dead bus.
+    """
+    def __init__(self, ids):
+        self.ids = list(ids)
+        self.queries = [(a, func) for a in ids for func in (0x35, 0x3A)]
+        self.control_index = self.query_index = 0
+        self.next_slot = self.next_control = self.next_query = 0.0
+        self.pending_stops = deque()
+        self.tx_fault = False
+        self.failures = 0
+
+    def request_stop(self):
+        if not self.pending_stops and not self.tx_fault:
+            self.pending_stops.extend(self.ids * 2)
+
+    def failed(self, now):
+        self.failures += 1
+        if not self.tx_fault:
+            self.tx_fault = True
+            self.pending_stops = deque(self.ids * 2)
+        # On a full queue never immediately retry another send.
+        self.next_slot = now + 0.05
+
+    def next(self, now, armed):
+        if now < self.next_slot:
+            return None
+        if self.pending_stops:
+            self.next_slot = now + (0.05 if self.tx_fault else 0.004)
+            return self.pending_stops.popleft(), 'stop'
+        if self.tx_fault:
+            return None
+        if now >= self.next_control:
+            self.next_slot = now + 0.004
+            self.next_control = now + (0.0125 if armed else 0.0625)
+            addr = self.ids[self.control_index]
+            self.control_index = (self.control_index + 1) % len(self.ids)
+            return addr, 'control' if armed else 'stop'
+        if now >= self.next_query:
+            self.next_slot = now + 0.004
+            self.next_query = now + 0.0125
+            addr, func = self.queries[self.query_index]
+            self.query_index = (self.query_index + 1) % len(self.queries)
+            return addr, func
+        return None
+
+
 class DirectNode:
     def __init__(self):
         import rospy
@@ -110,6 +163,7 @@ class DirectNode:
                 or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1):
             raise ValueError('Invalid IDs/signs/limits/timeouts; chassis IDs must be a permutation of 1..4')
         self.feedback = Feedback(self.ids, self.stall_warning_timeout, self.timeout)
+        self.tx_schedule = TxSchedule(self.ids)
         self.target = [0.0] * 4
         self.cmd_time = None
         self.armed = False
@@ -142,14 +196,35 @@ class DirectNode:
             return True
         except OSError as exc:
             self.armed = False
-            self.fault = 'CAN TX failed: ' + str(exc)
+            self.tx_schedule.failed(time.monotonic())
+            # Preserve the FIRST failure for diagnostics and never clear via /arm.
+            if not self.fault:
+                self.fault = 'CAN TX failed: ' + str(exc)
+                if exc.errno in (errno.ENOBUFS, errno.EAGAIN, errno.EWOULDBLOCK):
+                    self.fault += '; TX backpressure: no motion replay; check link/ACK/USB, restart after repair'
             self.reason = self.fault
             self.ros.logerr_throttle(2, self.fault)
             return False
 
     def stop_all(self):
-        for addr in self.ids:
-            self.send(addr, STOP)
+        # Schedule stops, rather than bursting four additional writes into a
+        # possibly full queue. Motion is disabled by caller before this request.
+        self.tx_schedule.request_stop()
+
+    def transmit_one(self, now):
+        job = self.tx_schedule.next(now, self.armed and not self.external_stop and not self.fault)
+        if job is None:
+            return
+        addr, kind = job
+        if kind == 'control':
+            idx = self.ids.index(addr)
+            payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(
+                self.target[idx]*self.signs[idx], self.accel, self.limit)
+        elif kind == 'stop':
+            payload = STOP
+        else:
+            payload = bytes([kind, 0x6B])
+        self.send(addr, payload)
 
     def trip(self, reason):
         self.armed = False
@@ -196,12 +271,12 @@ class DirectNode:
             return self.Response(True, self.reason)
 
     def run(self):
-        next_poll = next_control = next_report = 0
+        next_report = 0
         try:
             with self.lock:
                 self.stop_all()
             while not self.ros.is_shutdown():
-                readable, _, _ = select.select([self.sock], [], [], 0.01)
+                readable, _, _ = select.select([self.sock], [], [], 0.002)
                 with self.lock:
                     if readable:
                         for _ in range(64):
@@ -214,26 +289,12 @@ class DirectNode:
                             cid, dlc, data = FRAME.unpack(raw)
                             self.feedback.update(parse_reply(cid, data[:min(dlc,8)]), time.monotonic())
                     now = time.monotonic()
-                    if now >= next_poll:
-                        next_poll = now + 0.1
-                        for addr in self.ids:
-                            self.send(addr, b'\x35\x6b')
-                            self.send(addr, b'\x3a\x6b')
                     why = self.feedback.problem(now, self.timeout)
                     if self.armed and why:
                         self.trip(why + '; stopped, explicit re-arm required')
                     if self.armed and (self.cmd_time is None or now-self.cmd_time > self.cmd_timeout):
                         self.trip('wheel command timeout; explicit re-arm required')
-                    if now >= next_control:
-                        next_control = now + 0.05
-                        if self.armed and not self.external_stop and not self.fault:
-                            for idx, addr in enumerate(self.ids):
-                                payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(self.target[idx]*self.signs[idx], self.accel, self.limit)
-                                if not self.send(addr, payload):
-                                    self.stop_all()
-                                    break
-                        else:
-                            self.stop_all()
+                    self.transmit_one(now)
                     if now >= next_report:
                         next_report = now + 0.2
                         strict_problem = self.feedback.problem(now, self.timeout, strict_warning=True)
@@ -257,7 +318,15 @@ class DirectNode:
                             self.flags_pub.publish(self.ByteArray(data=[self.feedback.status[a] for a in self.ids]))
         finally:
             with self.lock:
+                self.armed = False
+                self.target = [0.0] * 4
                 self.stop_all()
+                # Bounded best-effort shutdown. A disconnected CAN cannot be
+                # stopped by software; use the hardware emergency stop.
+                deadline = time.monotonic() + 0.6
+                while self.tx_schedule.pending_stops and time.monotonic() < deadline:
+                    self.transmit_one(time.monotonic())
+                    time.sleep(0.004)
                 self.sock.close()
 
 
