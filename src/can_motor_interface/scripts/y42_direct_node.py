@@ -41,7 +41,12 @@ def parse_reply(can_id, payload):
 
 
 class Feedback:
-    def __init__(self, ids):
+    def __init__(self, ids, stall_warning_timeout=0.5, feedback_timeout=1.0):
+        if not math.isfinite(stall_warning_timeout) or not 0 <= stall_warning_timeout <= 1.0:
+            raise ValueError('stall_warning_timeout must be finite and within 0..1 seconds')
+        self.stall_warning_timeout = stall_warning_timeout
+        self.feedback_timeout = feedback_timeout
+        self.stall_since = {}
         self.ids = ids
         self.speed = {i: 0.0 for i in ids}
         self.status = {i: 0 for i in ids}
@@ -51,10 +56,17 @@ class Feedback:
         if reply is None or reply[0] not in self.ids:
             return
         addr, kind, value = reply
+        if kind == 'status':
+            previous = self.seen.get((addr, kind))
+            if value & 0x04:
+                if addr not in self.stall_since or previous is None or now - previous > self.feedback_timeout:
+                    self.stall_since[addr] = now
+            else:
+                self.stall_since.pop(addr, None)
         (self.speed if kind == 'speed' else self.status)[addr] = value
         self.seen[addr, kind] = now
 
-    def problem(self, now, timeout):
+    def problem(self, now, timeout, strict_warning=False):
         for addr in self.ids:
             for kind in ('speed', 'status'):
                 if (addr, kind) not in self.seen or now - self.seen[addr, kind] > timeout:
@@ -62,11 +74,17 @@ class Feedback:
             # Vendor manual V1.1 section 5.5.15: bit7 Oac_TF is a
             # sticky power-cycle record, DEFAULT 1, not a live power fault.
             # 0x83 is explicitly illustrated as enabled + reached + history.
-            # Keep stall/stall-protection blocking; never clear driver flags.
-            if self.status[addr] & 0x0C:  # stall and stall protection
-                return 'address %d: fault flags 0x%02X' % (addr, self.status[addr])
+            # Driver protection is immediate. Only raw stall detection gets a
+            # bounded confirmation window while already armed; no driver writes.
+            if self.status[addr] & 0x08:
+                return 'address %d: driver stall PROTECTION fault flags 0x%02X' % (addr, self.status[addr])
             if not self.status[addr] & 1:
                 return 'address %d: motor disabled (enable on driver before arming)' % addr
+            if self.status[addr] & 0x04:
+                duration = max(0.0, now - self.stall_since.get(addr, now))
+                if strict_warning or duration >= self.stall_warning_timeout:
+                    return ('address %d: stall warning fault flags 0x%02X, continuous %.3fs (limit %.3fs)'
+                            % (addr, self.status[addr], duration, self.stall_warning_timeout))
         return ''
 
 
@@ -85,12 +103,13 @@ class DirectNode:
         self.accel = int(rospy.get_param('~acceleration_rpm_s', 50))
         self.timeout = float(rospy.get_param('~feedback_timeout', 1.0))
         self.cmd_timeout = float(rospy.get_param('~command_timeout', 0.5))
+        self.stall_warning_timeout = float(rospy.get_param('~stall_warning_timeout', 0.5))
         if (len(self.ids) != 4 or set(self.ids) != {1, 2, 3, 4}
                 or len(self.signs) != 4 or any(s not in (-1, 1) for s in self.signs)
                 or not 0 < self.limit <= 3000 or not 0 <= self.accel <= 65535
                 or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1):
             raise ValueError('Invalid IDs/signs/limits/timeouts; chassis IDs must be a permutation of 1..4')
-        self.feedback = Feedback(self.ids)
+        self.feedback = Feedback(self.ids, self.stall_warning_timeout, self.timeout)
         self.target = [0.0] * 4
         self.cmd_time = None
         self.armed = False
@@ -111,6 +130,7 @@ class DirectNode:
         rospy.Subscriber('/emergency_stop', Bool, self.estop, queue_size=1)
         rospy.Service('/y42_direct/arm', Trigger, self.arm)
         rospy.Service('/y42_direct/disarm', Trigger, self.disarm)
+        rospy.logwarn('Stall warning grace %.3fs; 0x08 protection remains immediate; driver settings unchanged.', self.stall_warning_timeout)
         rospy.logwarn('Y42 DIRECT X: IDs=%s max_rpm=%.1f, NOT armed. No auto-enable, no broadcast, no IDs 5/6.', self.ids, self.limit)
 
     def send(self, addr, payload):
@@ -155,7 +175,7 @@ class DirectNode:
     def arm(self, _):
         with self.lock:
             now = time.monotonic()
-            why = self.feedback.problem(now, self.timeout)
+            why = self.feedback.problem(now, self.timeout, strict_warning=True)
             if self.external_stop:
                 why = 'external emergency stop latched; cannot reset via arm service'
             elif self.fault:
@@ -216,12 +236,21 @@ class DirectNode:
                             self.stop_all()
                     if now >= next_report:
                         next_report = now + 0.2
-                        ready = not why and not self.external_stop and not self.fault
+                        strict_problem = self.feedback.problem(now, self.timeout, strict_warning=True)
+                        ready = not strict_problem and not self.external_stop and not self.fault
                         self.ready_pub.publish(self.Bool(data=ready))
-                        text = 'armed' if self.armed else (self.fault or why or self.reason)
+                        warnings = []
+                        for i, addr in enumerate(self.ids):
+                            if self.feedback.status[addr] & 0x04:
+                                warnings.append('id=%d flags=0x%02X target=%.1f actual=%.1f RPM duration=%.3fs/%.3fs' % (
+                                    addr, self.feedback.status[addr], self.target[i]*self.signs[i],
+                                    self.feedback.speed[addr], max(0.0, now-self.feedback.stall_since.get(addr, now)),
+                                    self.feedback.stall_warning_timeout))
+                        text = ('armed; transient stall WARNING: ' + '; '.join(warnings)) if self.armed and warnings else (
+                            'armed' if self.armed else (self.fault or strict_problem or self.reason))
                         self.status_pub.publish(self.String(data=text))
                         if not ready:
-                            self.ros.logwarn_throttle(2, text)
+                            self.ros.logwarn_throttle(0.5 if self.armed else 2, text)
                         # Never publish stale RPM as valid odometry feedback.
                         if not why:
                             self.rpm_pub.publish(self.FloatArray(data=[self.feedback.speed[a]*self.signs[i] for i,a in enumerate(self.ids)]))

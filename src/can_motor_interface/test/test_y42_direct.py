@@ -49,6 +49,46 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(len(frame),16)
         self.assertEqual(m.FRAME.unpack(frame)[0],0x80000100)
 
+class TestStallGrace(unittest.TestCase):
+    def feedback(self, grace=0.5):
+        f=m.Feedback([1,2,3,4],grace)
+        for a in f.ids:
+            f.update((a,'speed',0),10)
+            f.update((a,'status',0x83),10)
+        return f
+    def test_warning_window_and_strict_arm(self):
+        f=self.feedback();f.update((2,'status',0x85),10)
+        self.assertFalse(f.problem(10.49,1))
+        self.assertTrue(f.problem(10.01,1,strict_warning=True))
+        self.assertIn('continuous',f.problem(10.51,1))
+    def test_repeated_warning_does_not_restart_timer(self):
+        f=self.feedback()
+        for t in (10,10.1,10.2,10.3,10.4,10.5):f.update((2,'status',0x85),t)
+        self.assertTrue(f.problem(10.51,1))
+    def test_clear_resets_only_affected_motor(self):
+        f=self.feedback();f.update((1,'status',0x85),10);f.update((2,'status',0x85),10)
+        f.update((1,'status',0x83),10.3);f.update((1,'status',0x85),10.4)
+        self.assertIn('address 2',f.problem(10.51,1))
+    def test_protection_immediate_even_with_grace(self):
+        for flag in (0x89,0x8D):
+            f=self.feedback(1.0);f.update((2,'status',flag),10)
+            self.assertIn('PROTECTION',f.problem(10,1))
+    def test_disabled_and_timeout_still_immediate(self):
+        f=self.feedback(1.0);f.update((2,'status',0x84),10)
+        self.assertIn('disabled',f.problem(10,1))
+        f=self.feedback(1.0);f.update((2,'status',0x85),10)
+        self.assertIn('stale',f.problem(11.01,1))
+    def test_zero_grace_and_validation(self):
+        f=self.feedback(0);f.update((2,'status',0x85),10);self.assertTrue(f.problem(10,1))
+        for v in (-1,1.01,float('nan'),float('inf')):
+            with self.assertRaises(ValueError):self.feedback(v)
+    def test_status_gap_breaks_continuity(self):
+        f=self.feedback();f.update((2,'status',0x85),10)
+        for a in f.ids:
+            f.update((a,'speed',0),12)
+            f.update((a,'status',0x85 if a==2 else 0x83),12)
+        self.assertFalse(f.problem(12.1,1))
+
 class TestArmGuard(unittest.TestCase):
     def node(self):
         import threading
@@ -68,6 +108,10 @@ class TestArmGuard(unittest.TestCase):
         n=self.node();n.feedback.seen.pop((4,'status'));self.assertFalse(n.arm(None).success)
         n=self.node();n.cmd_time-=2;self.assertFalse(n.arm(None).success)
         n=self.node();n.feedback.speed[2]=10;self.assertFalse(n.arm(None).success)
+    def test_arm_rejects_transient_warning(self):
+        n=self.node();n.feedback.update((2,'status',0x85),m.time.monotonic())
+        self.assertFalse(n.arm(None).success)
+
     def test_arm_with_83_feedback(self):
         n=self.node()
         for a in n.ids:

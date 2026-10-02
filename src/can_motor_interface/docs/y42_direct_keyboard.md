@@ -41,7 +41,7 @@ rosservice call /y42_direct/disarm '{}'
 查询：35 6B（转速）、3A 6B（状态）。
 预期回复：35 sign speed_hi speed_lo 6B；3A flags 6B，扩展ID地址<<8。
 只接受地址1..4包序号0的合法长度/校验回复；F6 ACK不算速度/状态心跳。
-反馈必须每个电机两类都新鲜；使能bit0必须为1；0x0C（堵转/堵转保护）阻止运动。bit7/0x80 是默认置1的掉电记录，不单独阻止启动；0x83表示已使能、已到位及掉电记录，并非当前堵转故障。
+反馈必须每个电机两类都新鲜；使能bit0必须为1；0x08堵转保护立即阻止运动；0x04堵转标志按文末确认窗口处理。bit7/0x80 是默认置1的掉电记录，不单独阻止启动；0x83表示已使能、已到位及掉电记录，并非当前堵转故障。
 若实际回复与上述不同，先保留candump定位，不允许通过关反馈检查绕过。
 
 ## 保护与限幅
@@ -77,3 +77,19 @@ rostopic echo /cmd_vel_mux/selected_source
 python3 src/can_motor_interface/test/test_y42_direct.py
 ```
 未做Linux catkin编译、vcan集成或实机验证。不声明已保证四轮实机能转。
+
+
+## 2026-10-02：短暂堵转标志确认窗口
+默认 `stall_warning_timeout:=0.5` 秒，范围0..1秒（0恢复立即停止）。
+- 已armed：0x04连续存在达到窗口才停止；每个电机独立计时，重复状态包不重置计时，标志清除才结束本次计时。
+- 0x08堵转保护立即停止；0x89/0x8D不会等待窗口。
+- 未使能、反馈超时、命令超时、CAN失败、外部急停逻辑保留。
+- /arm仍拒绝正在报告0x04的电机；不会靠重复arm绕过检测。
+- 短暂0x04期间ready=false（不满足新解锁条件），但已armed可继续至确认窗口。status会明确输出armed + WARNING。
+- 日志包含地址、目标/实际RPM及标志持续时间。帧轮询和调度引入额外检测时间，窗口不是硬实时保证。
+- 不修改电机电流、最大转速、加速度、硬件堵转参数，不声称驱动保护在所有情况下必然有效。
+```bash
+roslaunch robot_bringup y42_keyboard_test.launch can_device:=can0 max_rpm:=30 stall_warning_timeout:=0.5
+```
+按实际验证过的轮位另加motor_ids；本次未改映射。
+仍然需要硬件急停，软件/USB-CAN断开时不能保证停止命令送达。
