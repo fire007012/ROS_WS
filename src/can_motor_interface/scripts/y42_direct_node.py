@@ -157,16 +157,19 @@ class DirectNode:
         self.timeout = float(rospy.get_param('~feedback_timeout', 1.0))
         self.cmd_timeout = float(rospy.get_param('~command_timeout', 0.5))
         self.stall_warning_timeout = float(rospy.get_param('~stall_warning_timeout', 0.5))
+        self.startup_zero_duration = float(rospy.get_param('~startup_zero_duration', 1.0))
         if (len(self.ids) != 4 or set(self.ids) != {1, 2, 3, 4}
                 or len(self.signs) != 4 or any(s not in (-1, 1) for s in self.signs)
                 or not 0 < self.limit <= 3000 or not 0 <= self.accel <= 65535
-                or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1):
+                or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1
+                or not 0.0 <= self.startup_zero_duration <= 5.0):
             raise ValueError('Invalid IDs/signs/limits/timeouts; chassis IDs must be a permutation of 1..4')
         self.feedback = Feedback(self.ids, self.stall_warning_timeout, self.timeout)
         self.tx_schedule = TxSchedule(self.ids)
         self.target = [0.0] * 4
         self.cmd_time = None
         self.armed = False
+        self.zero_init_until = 0.0
         self.external_stop = False
         self.fault = ''
         self.running = True
@@ -218,8 +221,14 @@ class DirectNode:
         addr, kind = job
         if kind == 'control':
             idx = self.ids.index(addr)
-            payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(
-                self.target[idx]*self.signs[idx], self.accel, self.limit)
+            if now < self.zero_init_until:
+                # Initialize Y42's X-firmware speed loop with an explicit F6
+                # zero-speed command after arming. FE 98 is an immediate-stop
+                # command, not a speed-mode initialization.
+                payload = speed_payload(0.0, self.accel, self.limit)
+            else:
+                payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(
+                    self.target[idx]*self.signs[idx], self.accel, self.limit)
         elif kind == 'stop':
             payload = STOP
         else:
@@ -228,6 +237,7 @@ class DirectNode:
 
     def trip(self, reason):
         self.armed = False
+        self.zero_init_until = 0.0
         self.reason = reason
         self.target = [0.0] * 4
         self.stop_all()
@@ -262,7 +272,10 @@ class DirectNode:
             if why:
                 return self.Response(False, why)
             self.armed = True
-            self.reason = 'armed'
+            self.zero_init_until = now + self.startup_zero_duration
+            self.reason = 'armed; initializing zero-speed control for %.2fs' % self.startup_zero_duration
+            self.ros.loginfo('Y42 speed-loop initialization: sending F6 zero-speed commands for %.2fs',
+                             self.startup_zero_duration)
             return self.Response(True, 'armed: chassis IDs 1..4 only')
 
     def disarm(self, _):
