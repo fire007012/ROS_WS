@@ -65,6 +65,7 @@ class CmdVelMuxNode {
   double max_angular_accel_;
   bool estop_active_;
   bool estop_latched_;
+  bool timeout_reported_;
   uint32_t start_auth_token_;
   bool chassis_locked_;
 };

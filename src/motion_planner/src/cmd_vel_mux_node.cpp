@@ -16,6 +16,7 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       max_angular_accel_(2.0),
       estop_active_(false),
       estop_latched_(false),
+      timeout_reported_(false),
       start_auth_token_(0x5A17),
       chassis_locked_(false) {
   nh_.param("/robot/max_linear_vel", max_linear_vel_, max_linear_vel_);
@@ -110,10 +111,19 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
     const bool is_safety_source = std::string(source_name) == "safety";
     const geometry_msgs::Twist clamped = clampTwist(
         sources_[source_name].twist, dt, is_safety_source);
+    if (timeout_reported_) {
+      ROS_INFO("[cmd_vel_mux] command source recovered: %s", source_name);
+      timeout_reported_ = false;
+    }
     publishSelected(clamped, source_name);
     return;
   }
 
+  if (!timeout_reported_) {
+    ROS_WARN("[cmd_vel_mux] command timeout: no active cmd_vel source for %.3f s; publishing zero velocity",
+             cmd_timeout_sec_);
+    timeout_reported_ = true;
+  }
   publishStop("timeout_stop");
 }
 

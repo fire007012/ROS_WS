@@ -1,9 +1,9 @@
 <launch>
   <!-- Direct USB-CAN -> Y42 X firmware. NEVER start can_interface_node alongside it. -->
   <arg name="can_device" default="can0"/>
-  <arg name="max_rpm" default="30.0"/>
+  <arg name="max_rpm" default="120.0"/>
   <arg name="stall_warning_timeout" default="0.5"/>
-  <arg name="motor_ids" default="[1, 2, 3, 4]"/>
+  <arg name="motor_ids" default="[2, 1, 4, 3]"/>
   <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <arg name="feedback_timeout" default="1.0"/>
   <node pkg="can_motor_interface" type="y42_direct_node.py" name="y42_direct_node" output="screen" required="true">
