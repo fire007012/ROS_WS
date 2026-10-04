@@ -6,6 +6,8 @@
   <arg name="motor_ids" default="[1, 2, 3, 4]"/>
   <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <arg name="startup_zero_duration" default="1.0"/>
+  <!-- X firmware acceleration in RPM/s; preserve the existing default. -->
+  <arg name="acceleration_rpm_s" default="50"/>
   <include file="$(find motion_planner)/launch/planner.launch">
     <arg name="enable_twist_test" value="false"/>
     <arg name="enable_fixed_route" value="false"/>
@@ -17,5 +19,6 @@
     <arg name="motor_ids" value="$(arg motor_ids)"/>
     <arg name="direction_signs" value="$(arg direction_signs)"/>
     <arg name="startup_zero_duration" value="$(arg startup_zero_duration)"/>
+    <arg name="acceleration_rpm_s" value="$(arg acceleration_rpm_s)"/>
   </include>
 </launch>
