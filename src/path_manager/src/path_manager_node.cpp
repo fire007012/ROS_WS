@@ -19,6 +19,8 @@ struct PointDef {
   double x;
   double y;
   double tolerance;
+  bool has_yaw;
+  double yaw;
 };
 
 struct PathDef {
@@ -72,6 +74,8 @@ class PathManager {
   // ── 配置 ──
   double publish_rate_hz_;
   std::string yaml_file_path_;
+  std::string frame_id_;
+  std::string default_path_;
   uint32_t path_revision_;
 
   // ── 内部方法 ──
@@ -95,6 +99,8 @@ bool PathManager::init() {
   pnh_.param<std::string>("yaml_file_path", yaml_file_path_,
                           ros::package::getPath("robot_bringup") + "/config/paths.yaml");
   pnh_.param<double>("publish_rate_hz", publish_rate_hz_, 10.0);
+  pnh_.param<std::string>("frame_id", frame_id_, "odom");
+  pnh_.param<std::string>("default_path", default_path_, "");
 
   // 发布者
   path_pub_ = nh_.advertise<path_manager::PathPoint>("/path_points", 10);
@@ -122,6 +128,13 @@ bool PathManager::init() {
 
   ROS_INFO("[path_manager] 初始化完成，已加载 %zu 条路径", paths_.size());
   publishPathState();
+  if (!default_path_.empty()) {
+    path_manager::SelectPath::Request req;
+    path_manager::SelectPath::Response res;
+    req.path_name = default_path_;
+    handleSelectPath(req, res);
+    if (!res.success) ROS_ERROR("[path_manager] 默认路径选择失败: %s", res.message.c_str());
+  }
   return true;
 }
 
@@ -177,6 +190,8 @@ bool PathManager::loadPathsFromParam() {
       pt.y         = static_cast<double>(p["y"]);
       pt.tolerance = p.hasMember("tolerance")
                        ? static_cast<double>(p["tolerance"]) : 0.05;
+      pt.has_yaw   = p.hasMember("yaw");
+      pt.yaw       = pt.has_yaw ? static_cast<double>(p["yaw"]) : 0.0;
       pd.points.push_back(pt);
     }
 
@@ -237,13 +252,18 @@ void PathManager::publishTimerCallback(const ros::TimerEvent& /*event*/) {
     msg.y         = override_y_;
     msg.tolerance = override_tolerance_;
     msg.has_next  = active_point_idx_ + 1 < static_cast<int>(path.points.size());
+    msg.has_yaw   = false;
+    msg.yaw       = 0.0;
   } else {
     const PointDef& pt = path.points[active_point_idx_];
     msg.x         = pt.x;
     msg.y         = pt.y;
     msg.tolerance = pt.tolerance;
     msg.has_next  = active_point_idx_ + 1 < static_cast<int>(path.points.size());
+    msg.has_yaw   = pt.has_yaw;
+    msg.yaw       = pt.yaw;
   }
+  msg.frame_id = frame_id_;
 
   path_pub_.publish(msg);
 }
@@ -256,6 +276,8 @@ bool PathManager::handleLoadPath(
 
   if (loadPathsFromFile(file)) {
     yaml_file_path_ = file;
+    ++path_revision_;
+    publishPathState();
     res.success = true;
     res.message = "成功加载: " + file;
     ROS_INFO("[path_manager] %s", res.message.c_str());

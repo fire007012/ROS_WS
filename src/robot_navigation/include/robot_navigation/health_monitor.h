@@ -71,6 +71,7 @@ class HealthMonitor {
   ros::Publisher health_pub_;
   ros::Publisher health_ok_pub_;
   ros::Publisher emergency_stop_pub_;
+  ros::Publisher emergency_reset_pub_;
 
   // 服务
   ros::ServiceServer reset_srv_;

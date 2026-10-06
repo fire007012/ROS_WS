@@ -32,6 +32,7 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
   safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
   estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CmdVelMuxNode::estopCallback, this);
+  emergency_reset_sub_ = nh_.subscribe("/emergency_stop/reset", 2, &CmdVelMuxNode::emergencyResetCallback, this);
   chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10, &CmdVelMuxNode::chassisLockCallback, this);
   physical_start_sub_ = nh_.subscribe("/start_signal/physical", 1, &CmdVelMuxNode::physicalStartCallback, this);
 
@@ -71,6 +72,16 @@ void CmdVelMuxNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
   state.data = estop_active_;
   estop_state_pub_.publish(state);
   if (estop_active_) { publishStop("emergency_stop"); }
+}
+
+void CmdVelMuxNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data) return;
+  estop_latched_ = false;
+  estop_active_ = false;
+  for (auto& source : sources_) source.second.has_msg = false;
+  last_output_ = geometry_msgs::Twist();
+  std_msgs::Bool state; state.data = false; estop_state_pub_.publish(state);
+  ROS_WARN("[cmd_vel_mux] ESTOP reset accepted by upper safety policy");
 }
 
 void CmdVelMuxNode::physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg) {

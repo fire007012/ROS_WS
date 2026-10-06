@@ -134,8 +134,12 @@ bool MissionController::init() {
                                      &MissionController::barcodeBed3Callback, this);
   start_signal_sub_  = nh_.subscribe("/start_signal/physical", 1,
                                      &MissionController::startSignalCallback, this);
-  emergency_stop_sub_ = nh_.subscribe("/emergency_stop", 10,
-                                      &MissionController::emergencyStopCallback, this);
+  emergency_stop_sub_ = nh_.subscribe(
+      "/emergency_stop", 10,
+      &MissionController::emergencyStopCallback, this);
+  emergency_reset_sub_ = nh_.subscribe(
+      "/emergency_stop/reset", 2,
+      &MissionController::emergencyResetCallback, this);
   odom_sub_          = nh_.subscribe("/odom", 10,
                                      &MissionController::odomCallback, this);
   front_range_sub_   = nh_.subscribe(front_range_topic_, 10,
@@ -314,6 +318,18 @@ void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& ms
   std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
   std_msgs::Empty stop; stop_all_pub_.publish(stop);
   std_msgs::String display; display.data = "急停: 任务已停止"; display_text_pub_.publish(display);
+}
+
+void MissionController::emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data || !estop_latched_) return;
+  estop_latched_ = false;
+  mission_started_.store(false);
+  mission_completed_.store(false);
+  current_state_ = State::IDLE;
+  chassis_locked_ = false;
+  std_msgs::Bool lock; lock.data = false; chassis_lock_pub_.publish(lock);
+  std_msgs::String display; display.data = "急停已复位，等待启动"; display_text_pub_.publish(display);
+  ROS_WARN("[mission_controller] ESTOP reset accepted by upper safety policy");
 }
 
 // ── 回调: 里程计 ───────────────────────────────────────────

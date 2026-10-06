@@ -27,6 +27,7 @@ FineTuningController::FineTuningController(ros::NodeHandle& nh, ros::NodeHandle&
     , is_moving_(false)
     , is_settling_(false)
     , path_finished_received_(false)
+    , auto_start_on_path_finished_(false)
 {}
 
 // ── 初始化 ─────────────────────────────────────────────────
@@ -43,6 +44,7 @@ bool FineTuningController::init() {
   pnh_.param<double>("max_fine_tuning_time", max_fine_tuning_time_, 30.0);
   pnh_.param<double>("kp_distance", kp_distance_, 0.0005);
   pnh_.param<int>("max_steps", max_steps_, 50);
+  pnh_.param<bool>("auto_start_on_path_finished", auto_start_on_path_finished_, false);
 
   // 也支持从全局参数读取（与 robot_params.yaml 一致）
   nh_.param("/robot/max_linear_vel", step_velocity_,
@@ -92,7 +94,7 @@ void FineTuningController::pathFinishedCallback(const std_msgs::Bool::ConstPtr& 
   if (msg->data && !path_finished_received_) {
     path_finished_received_ = true;
 
-    if (state_ == State::IDLE && has_distance_) {
+    if (auto_start_on_path_finished_ && state_ == State::IDLE && has_distance_) {
       ROS_INFO("[fine_tuning] ====== 收到路径完成信号，开始位置微调 ======");
       state_ = State::FINE_TUNING;
       tuning_start_time_ = ros::Time::now();
@@ -113,7 +115,7 @@ void FineTuningController::distanceCallback(const std_msgs::Float32::ConstPtr& m
   has_distance_ = true;
 
   // 如果之前因缺少距离数据而未进入微调，现在触发
-  if (path_finished_received_ && state_ == State::IDLE && has_distance_) {
+  if (auto_start_on_path_finished_ && path_finished_received_ && state_ == State::IDLE && has_distance_) {
     ROS_INFO("[fine_tuning] ====== 距离数据就绪，开始位置微调 ======");
     state_ = State::FINE_TUNING;
     tuning_start_time_ = ros::Time::now();

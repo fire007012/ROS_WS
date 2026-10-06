@@ -39,7 +39,8 @@ class PathTracker {
                       double current_x, double current_y, double current_yaw,
                       double& cmd_vx, double& cmd_omega);
   bool isPointReached(const path_manager::PathPoint& target,
-                      double current_x, double current_y) const;
+                      double current_x, double current_y,
+                      double current_yaw) const;
   double normalizeAngle(double angle) const;
   double clamp(double val, double min_val, double max_val) const;
 

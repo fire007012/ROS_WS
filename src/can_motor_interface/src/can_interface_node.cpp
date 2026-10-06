@@ -20,6 +20,7 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       socket_fd_(-1),
       running_(true),
       estop_latched_(false),
+      have_command_(false),
       tx_can_id_(0x100),
       rx_can_id_(0x101),
       rx_can_id_filter_enable_(true),
@@ -32,7 +33,9 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       max_rpm_(3000.0f),
       motor_count_(4),
       heartbeat_timeout_sec_(1.0),
-      event_dedup_window_sec_(0.5) {
+      event_dedup_window_sec_(0.5),
+      command_publish_rate_hz_(50.0),
+      command_timeout_sec_(0.5) {
   pnh_.param<std::string>("can_device", can_device_, "can0");
 
   int tx_can_id_i = static_cast<int>(tx_can_id_);
@@ -42,7 +45,10 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   tx_can_id_ = static_cast<uint32_t>(tx_can_id_i);
   rx_can_id_ = static_cast<uint32_t>(rx_can_id_i);
   pnh_.param("rx_can_id_filter_enable", rx_can_id_filter_enable_, rx_can_id_filter_enable_);
-  pnh_.param("use_extended_frame", use_extended_frame_, use_extended_frame_);
+  bool requested_extended_frame = false;
+  pnh_.param("use_extended_frame", requested_extended_frame, false);
+  if (requested_extended_frame) ROS_WARN("Standard CAN frames are mandatory; ignoring use_extended_frame=true.");
+  use_extended_frame_ = false;
 
   pnh_.param("payload_little_endian", payload_little_endian_, payload_little_endian_);
   pnh_.param("checksum_use_sum8", checksum_use_sum8_, checksum_use_sum8_);
@@ -64,6 +70,10 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param("motor_count", motor_count_, motor_count_);
   pnh_.param("heartbeat_timeout_sec", heartbeat_timeout_sec_, heartbeat_timeout_sec_);
   pnh_.param("event_dedup_window_sec", event_dedup_window_sec_, event_dedup_window_sec_);
+  pnh_.param("command_publish_rate_hz", command_publish_rate_hz_, command_publish_rate_hz_);
+  pnh_.param("command_timeout_sec", command_timeout_sec_, command_timeout_sec_);
+  command_publish_rate_hz_ = std::max(1.0, command_publish_rate_hz_);
+  command_timeout_sec_ = std::max(0.05, command_timeout_sec_);
 
   motor_count_ = std::max(1, std::min(255, motor_count_));
   motor_ids_.clear();
@@ -74,22 +84,25 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   motor_state_rpm_.assign(motor_ids_.size(), 0.0f);
   motor_status_flags_.assign(motor_ids_.size(), 0);
+  target_rpm_.assign(motor_ids_.size(), 0.0f);
 
   cmd_sub_ = nh_.subscribe("/motor_velocity_cmd", 20, &CanInterfaceNode::cmdCallback, this);
   software_estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CanInterfaceNode::softwareEstopCallback, this);
+  emergency_reset_sub_ = nh_.subscribe("/emergency_stop/reset", 2, &CanInterfaceNode::emergencyResetCallback, this);
   remote_start_sub_ = nh_.subscribe("/start_signal/remote", 2, &CanInterfaceNode::remoteStartCallback, this);
   motor_state_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("/motor_state", 20);
   motor_status_flag_pub_ = nh_.advertise<std_msgs::UInt8MultiArray>("/motor_status_flags", 20);
   emergency_stop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 10, true);
   robot_state_pub_ = nh_.advertise<std_msgs::String>("/robot_state", 10, true);
   display_pub_ = nh_.advertise<std_msgs::String>("/robot_display", 10, true);
-  start_signal_pub_ = nh_.advertise<std_msgs::UInt32>("/start_signal/physical", 2, false);
   stop_all_pub_ = nh_.advertise<std_msgs::Empty>("/stop_all", 2, true);
   chassis_lock_pub_ = nh_.advertise<std_msgs::Bool>("/chassis_lock", 2, true);
   fixed_route_hold_pub_ = nh_.advertise<std_msgs::Bool>("/fixed_route/hold", 2, true);
-  move_base_cancel_pub_ = nh_.advertise<actionlib_msgs::GoalID>("/move_base/cancel", 2, true);
+  move_base_cancel_pub_ = nh_.advertise<actionlib_msgs::GoalID>("/move_base/cancel", 2, false);
   can_rx_pub_ = nh_.advertise<can_msgs::Frame>("/can_rx", 50);
   monitor_timer_ = nh_.createTimer(ros::Duration(0.2), &CanInterfaceNode::timerCallback, this);
+  command_timer_ = nh_.createTimer(ros::Duration(1.0 / command_publish_rate_hz_),
+      &CanInterfaceNode::commandTimerCallback, this);
 
   if (!openSocket()) {
     ROS_WARN("CAN socket open failed at startup, will retry in timer.");
@@ -116,7 +129,7 @@ bool CanInterfaceNode::openSocket() {
 
   int fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
   if (fd < 0) {
-    ROS_ERROR("socket(PF_CAN, SOCK_RAW) failed: %s", std::strerror(errno));
+    ROS_ERROR_THROTTLE(1.0, "socket(PF_CAN, SOCK_RAW) failed: %s", std::strerror(errno));
     return false;
   }
 
@@ -124,7 +137,7 @@ bool CanInterfaceNode::openSocket() {
   std::memset(&ifr, 0, sizeof(ifr));
   std::snprintf(ifr.ifr_name, IFNAMSIZ, "%s", can_device_.c_str());
   if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0) {
-    ROS_ERROR("ioctl(SIOCGIFINDEX) failed for %s: %s", can_device_.c_str(), std::strerror(errno));
+    ROS_ERROR_THROTTLE(1.0, "ioctl(SIOCGIFINDEX) failed for %s: %s", can_device_.c_str(), std::strerror(errno));
     close(fd);
     return false;
   }
@@ -135,7 +148,7 @@ bool CanInterfaceNode::openSocket() {
   addr.can_ifindex = ifr.ifr_ifindex;
 
   if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-    ROS_ERROR("bind() failed on %s: %s", can_device_.c_str(), std::strerror(errno));
+    ROS_ERROR_THROTTLE(1.0, "bind() failed on %s: %s", can_device_.c_str(), std::strerror(errno));
     close(fd);
     return false;
   }
@@ -153,7 +166,7 @@ void CanInterfaceNode::closeSocket() {
 }
 
 bool CanInterfaceNode::sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_t dlc) {
-  if (socket_fd_ < 0 && !openSocket()) {
+  if (socket_fd_ < 0) {
     return false;
   }
 
@@ -237,16 +250,21 @@ void CanInterfaceNode::softwareEstopCallback(const std_msgs::Bool::ConstPtr& msg
   if (msg->data) triggerEmergencyStop("software estop");
 }
 
+void CanInterfaceNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data || !estop_latched_.exchange(false)) return;
+  ROS_WARN("[can_interface] ESTOP reset accepted by upper safety policy");
+  std_msgs::Bool estop; estop.data = false; emergency_stop_pub_.publish(estop);
+  std_msgs::String state; state.data = "RUNNING"; robot_state_pub_.publish(state);
+  std_msgs::Bool lock; lock.data = false; chassis_lock_pub_.publish(lock);
+  std_msgs::Bool hold; hold.data = false; fixed_route_hold_pub_.publish(hold);
+}
+
 void CanInterfaceNode::remoteStartCallback(const std_msgs::Empty::ConstPtr&) {
   ROS_INFO("[can_interface] remote synchronous start requested; sending command 0x05");
   sendControlCommand(0x05);
 }
 
 void CanInterfaceNode::cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
-  if (estop_latched_.load()) {
-    for (int i = 0; i < motor_count_; ++i) sendSpeedCommand(static_cast<uint8_t>(i), 0.0f);
-    return;
-  }
   if (msg->data.empty()) {
     ROS_WARN_THROTTLE(1.0, "Received empty /motor_velocity_cmd.");
     return;
@@ -259,12 +277,37 @@ void CanInterfaceNode::cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& 
                       motor_count_, msg->data.size(), n);
   }
 
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  std::fill(target_rpm_.begin(), target_rpm_.end(), 0.0f);
   for (size_t i = 0; i < n; ++i) {
-    sendSpeedCommand(static_cast<uint8_t>(i), msg->data[i]);
+    target_rpm_[i] = msg->data[i];
+  }
+  last_command_time_ = ros::Time::now();
+  have_command_ = true;
+}
+
+void CanInterfaceNode::commandTimerCallback(const ros::TimerEvent&) {
+  std::vector<float> targets;
+  bool command_fresh = false;
+  bool command_received = false;
+  {
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    targets = target_rpm_;
+    command_received = have_command_;
+    command_fresh = have_command_ &&
+                    (ros::Time::now() - last_command_time_).toSec() <= command_timeout_sec_;
   }
 
-  for (size_t i = n; i < static_cast<size_t>(motor_count_); ++i) {
-    sendSpeedCommand(static_cast<uint8_t>(i), 0.0f);
+  if (!command_received) {
+    return;
+  }
+
+  // Keep the latest target on the wire at a fixed cadence; expire to an explicit stop.
+  if (estop_latched_.load() || !command_fresh) {
+    std::fill(targets.begin(), targets.end(), 0.0f);
+  }
+  for (size_t i = 0; i < targets.size(); ++i) {
+    sendSpeedCommand(static_cast<uint8_t>(i), targets[i]);
   }
 }
 
@@ -302,7 +345,6 @@ void CanInterfaceNode::handleCanEvent(const CanEvent& event) {
     case CanEventType::PHYSICAL_START: {
       if (isDuplicateEvent(0x12, ros::Time::now())) return;
       ROS_INFO("[can_interface] physical start button pressed; STM32 already executed 0x05");
-      std_msgs::UInt32 start; start.data = 0x5A17; start_signal_pub_.publish(start);
       std_msgs::String state; state.data = estop_latched_.load() ? "ESTOP" : "RUNNING"; robot_state_pub_.publish(state);
       std_msgs::String display; display.data = estop_latched_.load() ? "急停中" : "物理启动"; display_pub_.publish(display);
       break;
@@ -453,15 +495,18 @@ void CanInterfaceNode::canReceiveThread() {
       continue;
     }
 
-    last_rx_time_ = ros::Time::now();
+    const ros::Time frame_time = ros::Time::now();
 
     can_msgs::Frame frame_msg;
-    frame_msg.header.stamp = last_rx_time_;
+    frame_msg.header.stamp = frame_time;
     frame_msg.id = (raw_frame.can_id & CAN_EFF_FLAG) ? (raw_frame.can_id & CAN_EFF_MASK)
                              : (raw_frame.can_id & CAN_SFF_MASK);
     frame_msg.is_rtr = (raw_frame.can_id & CAN_RTR_FLAG) != 0;
     frame_msg.is_extended = (raw_frame.can_id & CAN_EFF_FLAG) != 0;
     frame_msg.is_error = (raw_frame.can_id & CAN_ERR_FLAG) != 0;
+    const bool is_stm32_frame = !frame_msg.is_extended &&
+        (frame_msg.id == (rx_can_id_ & CAN_SFF_MASK) || frame_msg.id == 0x112U);
+    if (is_stm32_frame) last_rx_time_ = frame_time;
     frame_msg.dlc = raw_frame.can_dlc;
     std::copy(raw_frame.data, raw_frame.data + 8, frame_msg.data.begin());
     can_rx_pub_.publish(frame_msg);

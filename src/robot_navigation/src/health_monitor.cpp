@@ -53,6 +53,7 @@ bool HealthMonitor::init() {
   health_pub_ = nh_.advertise<std_msgs::String>("/system_health", 10, true);
   health_ok_pub_ = nh_.advertise<std_msgs::Bool>("/system_health/ok", 10, true);
   emergency_stop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 10, false);
+  emergency_reset_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop/reset", 2, false);
 
   reset_srv_ = nh_.advertiseService("/system_health/reset",
                                     &HealthMonitor::resetCallback, this);
@@ -206,10 +207,11 @@ bool HealthMonitor::resetCallback(std_srvs::Trigger::Request& /*req*/,
     pair.second.last_seen = ros::Time::now();
   }
 
-  // 清除紧急停止
-  std_msgs::Bool estop;
-  estop.data = false;
-  emergency_stop_pub_.publish(estop);
+  // Explicit reset is handled by the safety consumers; a false estop event alone
+  // must never clear their latched state.
+  std_msgs::Bool reset;
+  reset.data = true;
+  emergency_reset_pub_.publish(reset);
 
   res.success = true;
   res.message = "系统监控已重置，紧急停止已解除";

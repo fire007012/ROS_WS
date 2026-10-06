@@ -93,6 +93,7 @@ class FineTuningController {
   bool      is_moving_;            // 是否正在执行步进移动
   bool      is_settling_;          // 是否正在等待测量稳定
   bool      path_finished_received_; // 是否已收到终点完成信号
+  bool      auto_start_on_path_finished_; // 是否由路径完成信号自动触发
   ros::Time tuning_start_time_;    // 微调开始时刻
 };
 

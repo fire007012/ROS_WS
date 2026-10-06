@@ -21,5 +21,9 @@
 
     <param name="heartbeat_timeout_sec" value="1.0"/>
     <param name="event_dedup_window_sec" value="0.5"/>
+
+    <!-- Repeat the latest speed target independently of ROS command arrival jitter. -->
+    <param name="command_publish_rate_hz" value="50.0"/>
+    <param name="command_timeout_sec" value="0.5"/>
   </node>
 </launch>

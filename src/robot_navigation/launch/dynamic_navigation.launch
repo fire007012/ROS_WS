@@ -79,6 +79,7 @@
           name="path_manager_node" output="screen" required="true">
       <param name="yaml_file_path" value="$(arg paths_file)"/>
       <param name="publish_rate_hz" value="10.0"/>
+      <param name="frame_id" value="map"/>
     </node>
     <node pkg="path_manager" type="move_base_path_adapter_node"
           name="move_base_path_adapter_node" output="screen" required="true">

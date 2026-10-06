@@ -9,6 +9,7 @@
   <arg name="enable_arm_and_gripper" default="false"/>
   <arg name="fixed_route_file" default="$(find robot_bringup)/config/fixed_route.yaml"/>
   <arg name="paths_file" default="$(find robot_bringup)/config/paths.yaml"/>
+  <arg name="default_path" default=""/>
   <arg name="fine_tuning_config" default="$(find fine_tuning)/config/fine_tuning.yaml"/>
   <arg name="arm_and_gripper_config" default="$(find arm_and_gripper)/config/arm_and_gripper.yaml"/>
 
@@ -38,6 +39,7 @@
   <group if="$(arg enable_path_manager)">
     <include file="$(find path_manager)/launch/path_manager.launch">
       <arg name="paths_file" value="$(arg paths_file)"/>
+      <arg name="default_path" value="$(arg default_path)"/>
     </include>
   </group>
 

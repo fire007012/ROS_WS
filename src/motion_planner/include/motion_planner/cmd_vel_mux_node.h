@@ -22,6 +22,7 @@ class CmdVelMuxNode {
   void externalCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void safetyCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void estopCallback(const std_msgs::Bool::ConstPtr& msg);
+  void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
   void chassisLockCallback(const std_msgs::Bool::ConstPtr& msg);
   void physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg);
   void timerCallback(const ros::TimerEvent& event);
@@ -47,6 +48,7 @@ class CmdVelMuxNode {
   ros::Subscriber external_sub_;
   ros::Subscriber safety_sub_;
   ros::Subscriber estop_sub_;
+  ros::Subscriber emergency_reset_sub_;
   ros::Subscriber chassis_lock_sub_;
   ros::Subscriber physical_start_sub_;
   ros::Publisher cmd_vel_pub_;

@@ -91,6 +91,14 @@ bool PathTracker::init() {
 
 // ── /path_points 回调 ──────────────────────────────────────
 void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& msg) {
+  if (!msg->frame_id.empty() && msg->frame_id != "odom") {
+    ROS_ERROR_THROTTLE(2.0, "[path_tracker] 拒绝非 odom 路径点 frame_id=%s", msg->frame_id.c_str());
+    has_target_ = false;
+    waiting_for_next_point_ = false;
+    state_ = State::STOPPED;
+    publishStop();
+    return;
+  }
   path_has_next_point_ = msg->has_next;
   const bool target_changed = !has_target_ ||
       std::abs(current_target_.x - msg->x) >= 1e-6 ||
@@ -112,10 +120,15 @@ void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& ms
 
   geometry_msgs::PoseStamped target_pose;
   target_pose.header.stamp = ros::Time::now();
-  target_pose.header.frame_id = "odom";
+  target_pose.header.frame_id = current_target_.frame_id.empty() ? "odom" : current_target_.frame_id;
   target_pose.pose.position.x = current_target_.x;
   target_pose.pose.position.y = current_target_.y;
-  target_pose.pose.orientation.w = 1.0;
+  if (current_target_.has_yaw) {
+    target_pose.pose.orientation.z = std::sin(current_target_.yaw * 0.5);
+    target_pose.pose.orientation.w = std::cos(current_target_.yaw * 0.5);
+  } else {
+    target_pose.pose.orientation.w = 1.0;
+  }
   current_target_pub_.publish(target_pose);
   ROS_INFO("[path_tracker] 跟踪目标 (x=%.3f, y=%.3f), has_next=%s",
            current_target_.x, current_target_.y, path_has_next_point_ ? "true" : "false");
@@ -178,7 +191,7 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
   const path_manager::PathPoint& target = current_target_;
 
   // 检查是否到达
-  bool reached = isPointReached(target, current_x_, current_y_);
+  bool reached = isPointReached(target, current_x_, current_y_, current_yaw_);
 
   // ── 状态机 ──
   switch (state_) {
@@ -278,8 +291,15 @@ void PathTracker::computeControl(const path_manager::PathPoint& target,
   double dy = target.y - current_y;
   double distance = std::sqrt(dx * dx + dy * dy);
 
-  double target_heading = std::atan2(dy, dx);
+  double target_heading = (target.has_yaw && distance <= ((target.tolerance > 0.0) ? target.tolerance : position_tolerance_))
+      ? target.yaw : std::atan2(dy, dx);
   double heading_err = normalizeAngle(target_heading - current_yaw);
+
+  if (target.has_yaw && distance <= ((target.tolerance > 0.0) ? target.tolerance : position_tolerance_)) {
+    cmd_vx = 0.0;
+    cmd_omega = clamp(kp_angular_ * heading_err, -max_angular_vel_, max_angular_vel_);
+    return;
+  }
 
   if (use_turn_then_move_) {
     // 先转向后前进：如果朝向误差大则仅旋转
@@ -295,7 +315,7 @@ void PathTracker::computeControl(const path_manager::PathPoint& target,
     // 同时控制：线速度随朝向偏差衰减（越对准越快）
     double heading_factor = std::cos(heading_err);
     // 确保不会因为没对准而完全不动（至少保留一点前进分量）
-    heading_factor = std::max(0.2, heading_factor);
+    heading_factor = std::max(0.0, heading_factor);
 
     cmd_vx = kp_linear_ * distance * heading_factor;
     cmd_omega = kp_angular_ * heading_err;
@@ -317,13 +337,16 @@ void PathTracker::computeControl(const path_manager::PathPoint& target,
 
 // ── 到达判定 ───────────────────────────────────────────────
 bool PathTracker::isPointReached(const path_manager::PathPoint& target,
-                                 double current_x, double current_y) const {
+                                 double current_x, double current_y,
+                                 double current_yaw) const {
   double dx = target.x - current_x;
   double dy = target.y - current_y;
   double dist = std::sqrt(dx * dx + dy * dy);
 
   double tolerance = (target.tolerance > 0.0) ? target.tolerance : position_tolerance_;
-  return dist < tolerance;
+  if (dist >= tolerance) return false;
+  if (!target.has_yaw) return true;
+  return std::abs(normalizeAngle(target.yaw - current_yaw)) < heading_tolerance_;
 }
 
 // ── 角度归一化 ─────────────────────────────────────────────

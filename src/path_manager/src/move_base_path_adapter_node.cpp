@@ -74,10 +74,15 @@ class MoveBasePathAdapter {
 
     move_base_msgs::MoveBaseGoal goal;
     goal.target_pose.header.stamp = goal_start_time_;
-    goal.target_pose.header.frame_id = goal_frame_;
+    goal.target_pose.header.frame_id = target_.frame_id.empty() ? goal_frame_ : target_.frame_id;
     goal.target_pose.pose.position.x = target_.x;
     goal.target_pose.pose.position.y = target_.y;
-    goal.target_pose.pose.orientation.w = 1.0;
+    if (target_.has_yaw) {
+      goal.target_pose.pose.orientation.z = std::sin(target_.yaw * 0.5);
+      goal.target_pose.pose.orientation.w = std::cos(target_.yaw * 0.5);
+    } else {
+      goal.target_pose.pose.orientation.w = 1.0;
+    }
 
     std_msgs::Bool finished;
     finished.data = false;
