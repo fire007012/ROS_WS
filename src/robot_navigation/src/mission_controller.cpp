@@ -26,6 +26,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , pnh_(pnh)
     , current_state_(State::IDLE)
     , mission_started_(false)
+    , estop_latched_(false)
     , mission_completed_(false)
     , action_initiated_(false)
     , qr_received_(false)
@@ -133,6 +134,8 @@ bool MissionController::init() {
                                      &MissionController::barcodeBed3Callback, this);
   start_signal_sub_  = nh_.subscribe("/start_signal/physical", 1,
                                      &MissionController::startSignalCallback, this);
+  emergency_stop_sub_ = nh_.subscribe("/emergency_stop", 10,
+                                      &MissionController::emergencyStopCallback, this);
   odom_sub_          = nh_.subscribe("/odom", 10,
                                      &MissionController::odomCallback, this);
   front_range_sub_   = nh_.subscribe(front_range_topic_, 10,
@@ -275,6 +278,7 @@ void MissionController::barcodeBed3Callback(const std_msgs::String::ConstPtr& ms
 // ── 回调: 启动信号 ─────────────────────────────────────────
 void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& msg) {
   if (msg->data != start_auth_token_) { ROS_WARN("unauthenticated start signal"); return; }
+  if (estop_latched_) { ROS_WARN("[mission_controller] start ignored while ESTOP is latched"); return; }
   // 如果上次任务已完成/失败/超时，允许重新启动
   if (mission_completed_.load()) {
     ROS_INFO("[mission_controller] 上次任务已结束，准备重新启动");
@@ -295,6 +299,21 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
   std_msgs::String display;
   display.data = "任务开始";
   display_text_pub_.publish(display);
+}
+
+void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data || estop_latched_) return;
+  ROS_ERROR("[mission_controller] physical/software ESTOP: cancelling mission and navigation");
+  estop_latched_ = true;
+  mission_started_.store(false);
+  mission_completed_.store(true);
+  mission_timer_.stop();
+  action_initiated_ = false;
+  current_state_ = State::STOP;
+  chassis_locked_ = true;
+  std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
+  std_msgs::Empty stop; stop_all_pub_.publish(stop);
+  std_msgs::String display; display.data = "急停: 任务已停止"; display_text_pub_.publish(display);
 }
 
 // ── 回调: 里程计 ───────────────────────────────────────────

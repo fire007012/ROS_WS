@@ -12,14 +12,12 @@ old_servo_close_angle: 0
 old_servo_move_duration_s: 0.5
 old_servo_return_duration_s: 1.0
 
-# 新连续旋转型 SG90：PD14；控制值不是绝对角度
-# 当前STM32映射：0=逆时针，180=顺时针，88约为1.50ms停止
-new_servo_open_control: 0
-new_servo_close_control: 180
-new_servo_stop_control: 88
-new_servo_open_duration_s: 0.235
-new_servo_close_duration_s: 0.235
-servo_settle_duration_s: 0.05
+# 第二路位置型 SG90：PD14/TIM4_CH3，与 PB0 相同的 0..180°绝对位置控制
+# 必须使用已更换的 180°位置型舵机，不能继续连接连续旋转舵机。
+new_servo_open_angle: 180
+new_servo_close_angle: 0
+new_servo_move_duration_s: 0.5
+new_servo_return_duration_s: 1.0
 
 # 正式流程由 mission_controller 在选定药箱后调用 /arm_place_medicine
 auto_start_on_fine_tuning: false
