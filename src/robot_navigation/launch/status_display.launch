@@ -1,20 +1,24 @@
 <launch>
-  <arg name="fullscreen" default="true"/>
-  <arg name="transport" default="serial"/>
-  <arg name="serial_device" default="/dev/ttyUSB0"/>
-  <arg name="baudrate" default="115200"/>
-  <arg name="vitals_timeout_s" default="3.0"/>
-  <!-- TCP is opt-in; new firmware uses USB and does not connect over WiFi. -->
-  <arg name="tcp_port" default="8899"/>
+  <arg name="config_file" default="$(find robot_navigation)/config/status_display.yaml"/>
+  <!-- Empty arguments use YAML defaults; explicit arguments override them. -->
+  <arg name="fullscreen" default=""/>
+  <arg name="transport" default=""/>
+  <arg name="serial_device" default=""/>
+  <arg name="baudrate" default=""/>
+  <arg name="vitals_timeout_s" default=""/>
+  <arg name="tcp_port" default=""/>
+
+  <rosparam command="load" file="$(arg config_file)"/>
+
   <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen">
-    <param name="transport" value="$(arg transport)"/>
-    <param name="serial_device" value="$(arg serial_device)"/>
-    <param name="baudrate" value="$(arg baudrate)"/>
-    <param name="tcp_port" value="$(arg tcp_port)"/>
-    <param name="client_timeout_s" value="$(arg vitals_timeout_s)"/>
+    <param if="$(eval arg('transport') != '')" name="transport" value="$(arg transport)"/>
+    <param if="$(eval arg('serial_device') != '')" name="serial_device" value="$(arg serial_device)"/>
+    <param if="$(eval arg('baudrate') != '')" name="baudrate" value="$(arg baudrate)" type="int"/>
+    <param if="$(eval arg('tcp_port') != '')" name="tcp_port" value="$(arg tcp_port)" type="int"/>
+    <param if="$(eval arg('vitals_timeout_s') != '')" name="client_timeout_s" value="$(arg vitals_timeout_s)" type="double"/>
   </node>
   <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node" output="screen">
-    <param name="fullscreen" value="$(arg fullscreen)"/>
-    <param name="vitals_timeout_s" value="$(arg vitals_timeout_s)"/>
+    <param if="$(eval arg('fullscreen') != '')" name="fullscreen" value="$(arg fullscreen)" type="bool"/>
+    <param if="$(eval arg('vitals_timeout_s') != '')" name="vitals_timeout_s" value="$(arg vitals_timeout_s)" type="double"/>
   </node>
 </launch>
