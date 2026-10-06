@@ -45,6 +45,7 @@ class CmdVelMuxNode {
 
   ros::Subscriber fixed_route_sub_;
   ros::Subscriber teleop_sub_;
+  ros::Subscriber direct_cmd_sub_;  // Backward-compatible direct /cmd_vel teleop input.
   ros::Subscriber external_sub_;
   ros::Subscriber safety_sub_;
   ros::Subscriber estop_sub_;

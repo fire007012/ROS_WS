@@ -257,6 +257,7 @@ target_link_libraries(emergency_stop_node
 catkin_install_python(PROGRAMS
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
+  scripts/button_autostart.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -286,6 +287,10 @@ install(DIRECTORY launch/
 
 install(DIRECTORY config/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
+)
+
+install(DIRECTORY systemd/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/systemd
 )
 
 if(CATKIN_ENABLE_TESTING)

@@ -64,8 +64,8 @@ bool DistanceSafetyNode::init() {
   distance_sub_ = nh_.subscribe("/vl53l1x_distance", 10,
                                 &DistanceSafetyNode::distanceCallback, this);
 
-  // 订阅最终下发的 cmd_vel（经过 mux 后），用于判断运动方向
-  cmd_vel_sub_ = nh_.subscribe("/cmd_vel", 10,
+  // 订阅 mux 的最终输出，用于判断运动方向
+  cmd_vel_sub_ = nh_.subscribe("/cmd_vel_muxed", 10,
                                &DistanceSafetyNode::cmdVelCallback, this);
 
   // ── 发布 ──

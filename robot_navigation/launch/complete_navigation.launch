@@ -210,7 +210,9 @@
   <!-- [可选] 键盘遥控 -->
   <group if="$(arg enable_teleop)">
     <node pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py"
-          name="teleop_twist_keyboard" output="screen"/>
+          name="teleop_twist_keyboard" output="screen">
+      <remap from="cmd_vel" to="/cmd_vel_teleop"/>
+    </node>
   </group>
 
   <!-- ============================================================ -->

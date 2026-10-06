@@ -18,7 +18,9 @@
     <param name="print_debug_log" value="true"/>
   </node>
 
-  <node if="$(arg enable_twist_test)" pkg="motion_planner" type="twist_test_node" name="twist_test_node" output="screen"/>
+  <node if="$(arg enable_twist_test)" pkg="motion_planner" type="twist_test_node" name="twist_test_node" output="screen">
+    <remap from="cmd_vel" to="/cmd_vel_teleop"/>
+  </node>
 
   <node if="$(arg enable_fixed_route)" pkg="motion_planner" type="fixed_route_runner_node" name="fixed_route_runner_node" output="screen">
     <rosparam command="load" file="$(arg fixed_route_file)"/>

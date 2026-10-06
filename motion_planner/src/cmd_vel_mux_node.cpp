@@ -28,6 +28,9 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   fixed_route_sub_ = nh_.subscribe("/cmd_vel_fixed_route", 10, &CmdVelMuxNode::fixedRouteCallback, this);
   teleop_sub_ = nh_.subscribe("/cmd_vel_teleop", 10, &CmdVelMuxNode::teleopCallback, this);
+  // Keep /cmd_vel as an input alias for rosrun teleop_twist_keyboard and manual tests.
+  // The mux output is published on /cmd_vel_muxed, so this cannot form a feedback loop.
+  direct_cmd_sub_ = nh_.subscribe("/cmd_vel", 10, &CmdVelMuxNode::teleopCallback, this);
   external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
   safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
   estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CmdVelMuxNode::estopCallback, this);
@@ -35,7 +38,7 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10, &CmdVelMuxNode::chassisLockCallback, this);
   physical_start_sub_ = nh_.subscribe("/start_signal/physical", 1, &CmdVelMuxNode::physicalStartCallback, this);
 
-  cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
+  cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_muxed", 10);
   selected_source_pub_ = nh_.advertise<std_msgs::String>("/cmd_vel_mux/selected_source", 10, true);
   estop_state_pub_ = nh_.advertise<std_msgs::Bool>("/cmd_vel_mux/estop_active", 10, true);
 

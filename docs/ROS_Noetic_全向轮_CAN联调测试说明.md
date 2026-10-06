@@ -2,7 +2,7 @@
 
 本文档用于验证以下链路：
 
-1. `/cmd_vel` -> `motion_planner` 全向轮解算
+1. `/cmd_vel`（直接遥控输入）-> `cmd_vel_mux` -> `/cmd_vel_muxed` -> `motion_planner` 全向轮解算
 2. `/motor_velocity_cmd` -> `can_motor_interface` 自定义 CAN 速度帧
 3. STM32 收到后转发给驱动器，并回传状态帧
 
