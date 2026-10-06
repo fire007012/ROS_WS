@@ -1,0 +1,17 @@
+[Unit]
+Description=Robot complete ROS stack hardware-button autostart
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/fire/ros_ws
+Environment=ROS_HOME=/root/.ros
+ExecStart=/bin/bash -lc 'source /opt/ros/noetic/setup.bash && source /home/fire/ros_ws/devel/setup.bash && exec /home/fire/ros_ws/devel/lib/robot_navigation/button_autostart.py'
+Restart=on-failure
+RestartSec=3
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

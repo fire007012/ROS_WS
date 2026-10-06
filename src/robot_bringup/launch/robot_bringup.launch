@@ -64,6 +64,8 @@
 
   <!-- 键盘控制（可选） -->
   <group if="$(arg enable_teleop)">
-    <node name="teleop_twist_keyboard" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" output="screen"/>
+    <node name="teleop_twist_keyboard" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" output="screen">
+      <remap from="cmd_vel" to="/cmd_vel_teleop"/>
+    </node>
   </group>
 </launch>
