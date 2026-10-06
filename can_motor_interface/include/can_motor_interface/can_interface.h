@@ -31,6 +31,7 @@ class CanInterfaceNode {
   void timerCallback(const ros::TimerEvent& event);
   void canReceiveThread();
   void softwareEstopCallback(const std_msgs::Bool::ConstPtr& msg);
+  void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
   void remoteStartCallback(const std_msgs::Empty::ConstPtr& msg);
 
   bool openSocket();
@@ -53,13 +54,13 @@ class CanInterfaceNode {
 
   ros::Subscriber cmd_sub_;
   ros::Subscriber software_estop_sub_;
+  ros::Subscriber emergency_reset_sub_;
   ros::Subscriber remote_start_sub_;
   ros::Publisher motor_state_pub_;
   ros::Publisher motor_status_flag_pub_;
   ros::Publisher emergency_stop_pub_;
   ros::Publisher robot_state_pub_;
   ros::Publisher display_pub_;
-  ros::Publisher start_signal_pub_;
   ros::Publisher stop_all_pub_;
   ros::Publisher chassis_lock_pub_;
   ros::Publisher fixed_route_hold_pub_;

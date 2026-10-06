@@ -80,6 +80,7 @@ class MissionController {
   void barcodeBed3Callback(const std_msgs::String::ConstPtr& msg);
   void startSignalCallback(const std_msgs::UInt32::ConstPtr& msg);
   void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
+  void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
@@ -174,6 +175,7 @@ class MissionController {
   ros::Subscriber barcode_bed3_sub_;
   ros::Subscriber start_signal_sub_;
   ros::Subscriber emergency_stop_sub_;
+  ros::Subscriber emergency_reset_sub_;
   ros::Subscriber odom_sub_;
   ros::Subscriber front_range_sub_;
   ros::Subscriber left_range_sub_;
