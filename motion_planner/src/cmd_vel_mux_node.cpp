@@ -74,9 +74,7 @@ void CmdVelMuxNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
 
 void CmdVelMuxNode::physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg) {
   if (msg->data != start_auth_token_) return;
-  estop_latched_ = false;
-  estop_active_ = false;
-  std_msgs::Bool state; state.data = false; estop_state_pub_.publish(state);
+  ROS_INFO("[cmd_vel_mux] physical start received; ESTOP latch remains unchanged");
 }
 
 void CmdVelMuxNode::chassisLockCallback(const std_msgs::Bool::ConstPtr& msg) {

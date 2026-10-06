@@ -79,6 +79,7 @@ class MissionController {
   void barcodeBed1Callback(const std_msgs::String::ConstPtr& msg);
   void barcodeBed3Callback(const std_msgs::String::ConstPtr& msg);
   void startSignalCallback(const std_msgs::UInt32::ConstPtr& msg);
+  void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
@@ -172,6 +173,7 @@ class MissionController {
   ros::Subscriber barcode_bed1_sub_;
   ros::Subscriber barcode_bed3_sub_;
   ros::Subscriber start_signal_sub_;
+  ros::Subscriber emergency_stop_sub_;
   ros::Subscriber odom_sub_;
   ros::Subscriber front_range_sub_;
   ros::Subscriber left_range_sub_;
@@ -205,6 +207,7 @@ class MissionController {
   // ── 状态机变量 ──
   State current_state_;
   std::atomic<bool> mission_started_;
+  bool estop_latched_;
   std::atomic<bool> mission_completed_;
 
   // ── 状态动作保护（防止重复执行入口动作） ──

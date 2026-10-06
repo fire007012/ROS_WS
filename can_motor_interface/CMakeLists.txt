@@ -7,11 +7,12 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   can_msgs
+  actionlib_msgs
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs can_msgs
+  CATKIN_DEPENDS roscpp std_msgs can_msgs actionlib_msgs
 )
 
 include_directories(
@@ -37,3 +38,9 @@ install(TARGETS can_interface_node
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_can_protocol test/test_can_protocol.cpp)
+  target_include_directories(test_can_protocol PRIVATE include)
+  target_link_libraries(test_can_protocol gtest_main)
+endif()
