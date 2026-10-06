@@ -25,16 +25,19 @@
 -->
 <launch>
   <!-- ======================== 顶层开关参数 ======================== -->
-  <arg name="enable_arm"           default="true"/>
+  <arg name="enable_arm"          default="false"/>
+  <arg name="default_path" default=""/>
   <arg name="enable_teleop"        default="false"/>
   <arg name="enable_twist_test"    default="false"/>
   <arg name="enable_fixed_route"   default="false"/>
   <arg name="enable_path_manager"  default="true"/>
   <arg name="enable_path_tracker"  default="true"/>
-  <arg name="enable_fine_tuning"   default="true"/>
-  <arg name="enable_servo"         default="true"/>
-  <arg name="enable_arm_and_gripper" default="true"/>
-  <arg name="enable_vl53l1x_can" default="true"/>
+  <arg name="enable_fine_tuning"   default="false"/>
+  <arg name="enable_servo"         default="false"/>
+  <arg name="enable_arm_and_gripper" default="false"/>
+  <arg name="enable_vl53l1x_can" default="false"/>
+  <arg name="enable_emergency_stop" default="false"/>
+  <arg name="enable_physical_start" default="false"/>
   <arg name="vl53l1x_can_interface" default="can0"/>
   <arg name="vl53l1x_can_config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
 
@@ -63,10 +66,10 @@
   <node pkg="can_motor_interface" type="can_interface_node"
         name="can_interface_node" output="screen" required="true">
     <param name="can_device" value="can0"/>
-    <param name="tx_can_id" value="513"/>
-    <param name="rx_can_id" value="385"/>
+    <param name="tx_can_id" value="256"/>
+    <param name="rx_can_id" value="257"/>
     <param name="rx_can_id_filter_enable" value="true"/>
-    <param name="use_extended_frame" value="true"/>
+    <param name="use_extended_frame" value="false"/>
     <param name="payload_little_endian" value="true"/>
     <param name="checksum_use_sum8" value="true"/>
     <param name="speed_cmd_code" value="1"/>
@@ -137,6 +140,8 @@
           name="path_manager_node" output="screen" required="true">
       <param name="yaml_file_path" value="$(arg paths_file)"/>
       <param name="publish_rate_hz" value="10.0"/>
+      <param name="frame_id" value="odom"/>
+      <param name="default_path" value="$(arg default_path)"/>
     </node>
   </group>
 
@@ -249,7 +254,7 @@
   <!-- ============================================================ -->
 
   <!-- 急停按钮 -->
-  <node pkg="robot_navigation" type="emergency_stop_node"
+  <node if="$(arg enable_emergency_stop)" pkg="robot_navigation" type="emergency_stop_node"
         name="emergency_stop_node" output="screen" required="false">
     <param name="estop_pin" value="22"/>
     <param name="led_pin" value="23"/>
@@ -257,7 +262,7 @@
   </node>
 
   <!-- 物理启动按钮 -->
-  <node pkg="robot_navigation" type="start_button_node"
+  <node if="$(arg enable_physical_start)" pkg="robot_navigation" type="start_button_node"
         name="start_button_node" output="screen">
     <param name="button_pin" value="17"/>
     <param name="led_pin" value="27"/>

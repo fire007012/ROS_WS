@@ -28,6 +28,7 @@ class CanInterfaceNode {
 
  private:
   void cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
+  void commandTimerCallback(const ros::TimerEvent& event);
   void timerCallback(const ros::TimerEvent& event);
   void canReceiveThread();
   void softwareEstopCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -67,6 +68,7 @@ class CanInterfaceNode {
   ros::Publisher move_base_cancel_pub_;
   ros::Publisher can_rx_pub_;
   ros::Timer monitor_timer_;
+  ros::Timer command_timer_;
 
   std::string can_device_;
   int socket_fd_;
@@ -78,6 +80,11 @@ class CanInterfaceNode {
   std::vector<float> motor_state_rpm_;
   std::vector<uint8_t> motor_status_flags_;
   std::mutex telemetry_mutex_;
+
+  std::vector<float> target_rpm_;
+  ros::Time last_command_time_;
+  bool have_command_;
+  std::mutex command_mutex_;
 
   uint32_t tx_can_id_;
   uint32_t rx_can_id_;
@@ -94,6 +101,8 @@ class CanInterfaceNode {
 
   double heartbeat_timeout_sec_;
   double event_dedup_window_sec_;
+  double command_publish_rate_hz_;
+  double command_timeout_sec_;
   ros::Time last_rx_time_;
   std::mutex event_mutex_;
   std::map<uint8_t, ros::Time> last_event_times_;

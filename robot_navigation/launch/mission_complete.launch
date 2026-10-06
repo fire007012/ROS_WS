@@ -98,8 +98,8 @@
   <node pkg="can_motor_interface" type="can_interface_node"
         name="can_interface_node" output="screen" required="true">
     <param name="can_device" value="can0"/>
-    <param name="tx_can_id" value="513"/>
-    <param name="rx_can_id" value="385"/>
+    <param name="tx_can_id" value="256"/>
+    <param name="rx_can_id" value="257"/>
     <param name="motor_count" value="4"/>
     <param name="max_rpm" value="3000.0"/>
     <param name="heartbeat_timeout_sec" value="1.0"/>
@@ -136,6 +136,8 @@
         name="path_manager_node" output="screen" required="true">
     <param name="yaml_file_path" value="$(arg paths_file)"/>
     <param name="publish_rate_hz" value="10.0"/>
+    <param if="$(arg use_dynamic_navigation)" name="frame_id" value="map"/>
+    <param unless="$(arg use_dynamic_navigation)" name="frame_id" value="odom"/>
   </node>
 
   <!-- 3.2 传统里程计路径跟踪器 -->
@@ -169,6 +171,7 @@
   <node pkg="fine_tuning" type="fine_tuning_node"
         name="fine_tuning_node" output="screen" required="true">
     <rosparam file="$(arg fine_tuning_config)" command="load"/>
+    <param name="auto_start_on_path_finished" value="false"/>
   </node>
 
   <!-- ============================================================ -->

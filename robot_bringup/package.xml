@@ -13,6 +13,8 @@
   <exec_depend>motion_planner</exec_depend>
   <exec_depend>arm_interface</exec_depend>
   <exec_depend>path_manager</exec_depend>
+  <exec_depend>fine_tuning</exec_depend>
+  <exec_depend>arm_and_gripper</exec_depend>
   <exec_depend>teleop_twist_keyboard</exec_depend>
 
   <export/>
