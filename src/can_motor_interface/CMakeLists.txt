@@ -7,11 +7,12 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   can_msgs
+  actionlib_msgs
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs can_msgs
+  CATKIN_DEPENDS roscpp std_msgs can_msgs actionlib_msgs
 )
 
 include_directories(
@@ -41,3 +42,9 @@ install(DIRECTORY launch/
 catkin_install_python(PROGRAMS scripts/y42_direct_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_can_protocol test/test_can_protocol.cpp)
+  target_include_directories(test_can_protocol PRIVATE include)
+  target_link_libraries(test_can_protocol gtest_main)
+endif()

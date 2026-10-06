@@ -5,10 +5,10 @@
     <param name="can_device" value="$(arg can_device)"/>
 
     <!-- 与 STM32 的自定义协议参数 -->
-    <param name="tx_can_id" value="513"/> <!-- 0x201: ROS->STM32 -->
-    <param name="rx_can_id" value="385"/> <!-- 0x181: STM32->ROS -->
+    <param name="tx_can_id" value="256"/> <!-- 0x100: ROS->STM32 -->
+    <param name="rx_can_id" value="257"/> <!-- 0x101: STM32->ROS -->
     <param name="rx_can_id_filter_enable" value="true"/>
-    <param name="use_extended_frame" value="true"/>
+    <param name="use_extended_frame" value="false"/>
     <param name="payload_little_endian" value="true"/>
     <param name="checksum_use_sum8" value="true"/>
 
@@ -20,5 +20,6 @@
     <param name="max_rpm" value="3000.0"/>
 
     <param name="heartbeat_timeout_sec" value="1.0"/>
+    <param name="event_dedup_window_sec" value="0.5"/>
   </node>
 </launch>
