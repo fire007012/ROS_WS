@@ -15,10 +15,10 @@ ArmAndGripperController::ArmAndGripperController(ros::NodeHandle& nh, ros::NodeH
     : nh_(nh), pnh_(pnh), can_device_("can0"), arm_can_id_(0x205), socket_fd_(-1),
       auto_start_on_fine_tuning_(false), default_reset_arm_(true), default_arm_angle_(180.0),
       arm_move_timeout_s_(3.0), servo_hold_duration_s_(1.0), old_servo_move_duration_s_(0.5),
-      old_servo_return_duration_s_(1.0), new_servo_open_duration_s_(0.235),
-      new_servo_close_duration_s_(0.235), servo_settle_duration_s_(0.05),
-      old_servo_open_angle_(180), old_servo_close_angle_(0), new_servo_open_control_(0),
-      new_servo_close_control_(180), new_servo_stop_control_(88), sequence_running_(false) {}
+      old_servo_return_duration_s_(1.0), new_servo_move_duration_s_(0.5),
+      new_servo_return_duration_s_(1.0),
+      old_servo_open_angle_(180), old_servo_close_angle_(0), new_servo_open_angle_(180),
+      new_servo_close_angle_(0), sequence_running_(false) {}
 
 ArmAndGripperController::~ArmAndGripperController(){ closeCanSocket(); }
 
@@ -32,14 +32,12 @@ bool ArmAndGripperController::init(){
   pnh_.param("servo_hold_duration_s",servo_hold_duration_s_,1.0);
   pnh_.param("old_servo_move_duration_s",old_servo_move_duration_s_,0.5);
   pnh_.param("old_servo_return_duration_s",old_servo_return_duration_s_,1.0);
-  pnh_.param("new_servo_open_duration_s",new_servo_open_duration_s_,0.235);
-  pnh_.param("new_servo_close_duration_s",new_servo_close_duration_s_,0.235);
-  pnh_.param("servo_settle_duration_s",servo_settle_duration_s_,0.05);
+  pnh_.param("new_servo_move_duration_s",new_servo_move_duration_s_,0.5);
+  pnh_.param("new_servo_return_duration_s",new_servo_return_duration_s_,1.0);
   pnh_.param("old_servo_open_angle",old_servo_open_angle_,180);
   pnh_.param("old_servo_close_angle",old_servo_close_angle_,0);
-  pnh_.param("new_servo_open_control",new_servo_open_control_,0);
-  pnh_.param("new_servo_close_control",new_servo_close_control_,180);
-  pnh_.param("new_servo_stop_control",new_servo_stop_control_,88);
+  pnh_.param("new_servo_open_angle",new_servo_open_angle_,180);
+  pnh_.param("new_servo_close_angle",new_servo_close_angle_,0);
   fine_tuning_done_sub_=nh_.subscribe("/fine_tuning_done",1,&ArmAndGripperController::fineTuningDoneCallback,this);
   medicine_release_done_pub_=nh_.advertise<std_msgs::Bool>("/medicine_release_done",1,true);
   std_msgs::Bool initial; initial.data=false; medicine_release_done_pub_.publish(initial);
@@ -83,8 +81,8 @@ bool ArmAndGripperController::sendArmAngleCommand(double angle){
   uint8_t a[8]={0xfb,static_cast<uint8_t>(angle>=0?1:0),0x01,0xf4,static_cast<uint8_t>(deg>>24),static_cast<uint8_t>(deg>>16),static_cast<uint8_t>(deg>>8),static_cast<uint8_t>(deg)};
   uint8_t b[4]={0xfb,0x02,0x00,0x6b};return sendCanFrame(addr<<8,a,8,true)&&sendCanFrame((addr<<8)|1,b,4,true);
 }
-bool ArmAndGripperController::sendServoTriggerCommand(uint8_t mask,int old_control,int new_control,int return_control,uint16_t hold_ms){
-  uint8_t d[8]={0};d[0]=0x20;d[1]=mask;d[2]=static_cast<uint8_t>(std::max(0,std::min(180,old_control)));d[3]=static_cast<uint8_t>(std::max(0,std::min(180,new_control)));d[4]=static_cast<uint8_t>(std::max(0,std::min(180,return_control)));d[5]=hold_ms&0xff;d[6]=hold_ms>>8;for(int i=0;i<7;i++)d[7]=static_cast<uint8_t>(d[7]+d[i]);
+bool ArmAndGripperController::sendServoTriggerCommand(uint8_t mask,int old_angle,int new_angle,int return_angle,uint16_t hold_ms){
+  uint8_t d[8]={0};d[0]=0x20;d[1]=mask;d[2]=static_cast<uint8_t>(std::max(0,std::min(180,old_angle)));d[3]=static_cast<uint8_t>(std::max(0,std::min(180,new_angle)));d[4]=static_cast<uint8_t>(std::max(0,std::min(180,return_angle)));d[5]=hold_ms&0xff;d[6]=hold_ms>>8;for(int i=0;i<7;i++)d[7]=static_cast<uint8_t>(d[7]+d[i]);
   return sendCanFrame(0x700,d,8,true);
 }
 bool ArmAndGripperController::executePlaceSequence(double arm_angle,int8_t box_id,bool reset_arm){
@@ -95,8 +93,9 @@ bool ArmAndGripperController::executePlaceSequence(double arm_angle,int8_t box_i
     ok=sendServoTriggerCommand(0x01,old_servo_open_angle_,0,0,0);ros::Duration(old_servo_move_duration_s_+servo_hold_duration_s_).sleep();
     ok=sendServoTriggerCommand(0x01,old_servo_close_angle_,0,0,0)&&ok;ros::Duration(old_servo_return_duration_s_).sleep();
   }else if(ok&&box_id==3){
-    ok=sendServoTriggerCommand(0x02,0,new_servo_open_control_,new_servo_stop_control_,static_cast<uint16_t>(new_servo_open_duration_s_*1000));ros::Duration(new_servo_open_duration_s_+servo_settle_duration_s_).sleep();
-    ok=sendServoTriggerCommand(0x02,0,new_servo_close_control_,new_servo_stop_control_,static_cast<uint16_t>(new_servo_close_duration_s_*1000))&&ok;ros::Duration(new_servo_close_duration_s_+servo_settle_duration_s_).sleep();
+    // PD14 now uses absolute angles, just like the PB0 positional servo.
+    ok=sendServoTriggerCommand(0x02,0,new_servo_open_angle_,0,0);ros::Duration(new_servo_move_duration_s_+servo_hold_duration_s_).sleep();
+    ok=sendServoTriggerCommand(0x02,0,new_servo_close_angle_,0,0)&&ok;ros::Duration(new_servo_return_duration_s_).sleep();
   }else ok=false;
   if(ok&&reset_arm){ok=sendArmAngleCommand(-arm_angle);ros::Duration(arm_move_timeout_s_).sleep();}
   sequence_running_.store(false);std_msgs::Bool done;done.data=ok;medicine_release_done_pub_.publish(done);return ok;

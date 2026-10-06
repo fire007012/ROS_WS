@@ -317,3 +317,9 @@ if(OPUS_FOUND)
   install(TARGETS audio_chat_node
     RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME vitals_bridge_protocol_and_gui
+    COMMAND ${PYTHON_EXECUTABLE} -m unittest discover
+      -s ${CMAKE_CURRENT_SOURCE_DIR}/test -p "test_vitals*.py")
+endif()

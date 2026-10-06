@@ -1,5 +1,32 @@
 # arm_and_gripper — 药品摆放控制包
 
+## 当前 STM32 接线与位置型舵机控制（2026-10-06）
+
+当前 `arm_and_gripper_node` 通过 CAN 扩展帧 `0x700` 控制 STM32 上的两路 **180°位置型 SG90**，不使用 pigpio：
+
+| 药箱 | 信号引脚 | 定时器 | 默认打开 / 关闭 |
+|---|---|---|---|
+| 1 | PB0 | TIM3_CH3 | 180° / 0° |
+| 3 | PD14 | TIM4_CH3 | 180° / 0° |
+
+STM32 上电两路目标均为 0°；标准板 K0（PE4）设置两路到 0°，K1（PE3）设置两路到 180°。请先把 PD14 原连续旋转舵机换成 180°位置型舵机，再烧录本次固件。
+
+配置在 `config/arm_and_gripper.yaml`：第二路使用 `new_servo_open_angle`、`new_servo_close_angle`、`new_servo_move_duration_s`、`new_servo_return_duration_s`，默认值与第一路一致。旧的 `new_servo_*_control`、`new_servo_stop_control` 和定时正反转参数不再使用。等待时间用于等待位置型舵机运动，不再用于估算转动角度。
+
+更新源码后需在树莓派 ROS 工作区重新 `catkin_make` 并重启节点；以后只调整开关角度/等待时间，修改 YAML 并重启节点即可。
+
+```bash
+roslaunch arm_and_gripper arm_and_gripper.launch
+rosservice call /arm_place_medicine "{bed_id: 1, box_id: 1}"
+rosservice call /arm_place_medicine "{bed_id: 3, box_id: 3}"
+```
+
+上面的服务会同时执行机械臂动作，请留出机构运动空间。`servo_controller.launch` 是独立的树莓派 GPIO 历史路径，不控制 STM32 的 PB0/PD14。独立 `/open_medicine_box` 节点也不在本次改动范围内，其 CAN 协议/接线仍需单独验证。
+
+> 以下为历史 GPIO/pigpio 方案说明，不能作为当前 STM32 CAN 控制接线和测试依据。
+
+---
+
 ## 概述
 
 在微调（fine_tuning）完成后，自动执行药品摆放动作序列，控制：
