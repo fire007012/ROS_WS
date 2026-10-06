@@ -193,4 +193,44 @@ class TestTxSchedule(unittest.TestCase):
         self.assertFalse(n.arm(None).success)
         for _ in range(4):n.send(1,m.STOP)
         self.assertEqual(len(n.tx_schedule.pending_stops),8)  # not replenished
+class TestSTM32BridgeEvents(unittest.TestCase):
+    def test_standard_stop_events(self):
+        p=bytes([6,255,0x81,0,0,0,0,0])
+        self.assertIn('reason=0x81',m.parse_stm32_stop(0x101,p))
+        self.assertTrue(m.parse_stm32_stop(0x101,bytes([6,255,0x80,0,0,0,0,0])))
+        self.assertTrue(m.parse_stm32_stop(0x101,bytes([6,0,0x89,0,0,0,0,0])))
+        self.assertTrue(m.parse_stm32_stop(0x112,bytes([2,1,1,0,0,0,0,0])))
+        self.assertFalse(m.parse_stm32_stop(0x112,bytes([1,1,1,0,0,0,0,0])))
+        self.assertFalse(m.parse_stm32_stop(0x101,bytes([1,0,0,0,0,0,0,0])))
+        for flag in (m.CAN_EFF_FLAG,m.CAN_RTR_FLAG,m.CAN_ERR_FLAG):
+            self.assertFalse(m.parse_stm32_stop(0x101|flag,p))
+        for size in range(8):
+            self.assertFalse(m.parse_stm32_stop(0x101,p[:size]))
+        self.assertFalse(m.parse_stm32_stop(0x101,p+b'\0'))
+
+    def test_bridge_event_latches_and_blocks_rearm(self):
+        from types import SimpleNamespace
+        n=TestArmGuard().node();n.armed=True;n.monitor_stm32_events=True
+        messages=[]
+        n.Bool=lambda **kw:SimpleNamespace(**kw)
+        n.emergency_pub=SimpleNamespace(publish=messages.append)
+        n.receive_frame(0x101,bytes([6,255,0x81,0,0,0,0,0]),m.time.monotonic())
+        self.assertFalse(n.armed);self.assertTrue(n.external_stop)
+        self.assertEqual(n.target,[0]*4)
+        self.assertTrue(messages[0].data)
+        self.assertFalse(n.arm(None).success)
+        self.assertEqual(len(n.tx_schedule.pending_stops),8)
+
+    def test_direct_mode_ignores_stm32_standard_events(self):
+        n=TestArmGuard().node();n.armed=True;n.monitor_stm32_events=False
+        n.receive_frame(0x101,bytes([6,255,0x81,0,0,0,0,0]),m.time.monotonic())
+        self.assertTrue(n.armed);self.assertFalse(n.external_stop)
+
+    def test_native_feedback_still_works_in_bridge_mode(self):
+        n=TestArmGuard().node();n.monitor_stm32_events=True
+        n.receive_frame(m.CAN_EFF_FLAG|0x200,bytes.fromhex('35 00 00 64 6B'),10)
+        self.assertEqual(n.feedback.speed[2],10)
+        n.receive_frame(m.CAN_EFF_FLAG|0x200,bytes.fromhex('3A 83 6B'),10)
+        self.assertEqual(n.feedback.status[2],0x83)
+
 if __name__=='__main__':unittest.main()

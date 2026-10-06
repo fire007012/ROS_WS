@@ -9,5 +9,9 @@ install(DIRECTORY launch config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
+catkin_install_python(PROGRAMS scripts/y42_keyboard.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 # 确保 path_manager 的消息/服务已生成
 add_custom_target(robot_bringup_check DEPENDS path_manager_generate_messages)

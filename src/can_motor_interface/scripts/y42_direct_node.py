@@ -42,6 +42,17 @@ def parse_reply(can_id, payload):
     return None
 
 
+def parse_stm32_stop(can_id, payload):
+    """STM32 standard-frame events; native Y42 replies remain separate."""
+    if can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG) or len(payload) != 8:
+        return ''
+    if can_id == 0x101 and payload[0] == 0x06:
+        return 'STM32 emergency event: motor=%d reason=0x%02X' % (payload[1], payload[2])
+    if can_id == 0x112 and payload[:3] == bytes([0x02, 0x01, 0x01]):
+        return 'STM32 physical emergency-stop button'
+    return ''
+
+
 class Feedback:
     def __init__(self, ids, stall_warning_timeout=0.5, feedback_timeout=1.0):
         if not math.isfinite(stall_warning_timeout) or not 0 <= stall_warning_timeout <= 1.0:
@@ -150,6 +161,7 @@ class DirectNode:
         self.FloatArray, self.ByteArray, self.Bool, self.String = Float32MultiArray, UInt8MultiArray, Bool, String
         self.Response = TriggerResponse
         self.lock = threading.RLock()
+        self.monitor_stm32_events = bool(rospy.get_param('~monitor_stm32_events', False))
         self.ids = rospy.get_param('~motor_ids', [1, 2, 3, 4])
         self.signs = rospy.get_param('~direction_signs', [1, 1, 1, 1])
         self.limit = float(rospy.get_param('~max_rpm', 30.0))
@@ -180,6 +192,7 @@ class DirectNode:
         self.flags_pub = rospy.Publisher('/motor_status_flags', UInt8MultiArray, queue_size=1)
         self.ready_pub = rospy.Publisher('/y42_direct/ready', Bool, queue_size=1, latch=True)
         self.status_pub = rospy.Publisher('/y42_direct/status', String, queue_size=1, latch=True)
+        self.emergency_pub = rospy.Publisher('/emergency_stop', Bool, queue_size=1, latch=True)
         self.sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
         # Do not treat locally transmitted queries (including other sockets) as feedback.
         self.sock.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_RECV_OWN_MSGS, 0)
@@ -190,7 +203,7 @@ class DirectNode:
         rospy.Service('/y42_direct/arm', Trigger, self.arm)
         rospy.Service('/y42_direct/disarm', Trigger, self.disarm)
         rospy.logwarn('Stall warning grace %.3fs; 0x08 protection remains immediate; driver settings unchanged.', self.stall_warning_timeout)
-        rospy.logwarn('Y42 DIRECT X: IDs=%s max_rpm=%.1f, NOT armed. No auto-enable, no broadcast, no IDs 5/6.', self.ids, self.limit)
+        rospy.logwarn('Y42 native X (STM32 event monitor=%s): IDs=%s max_rpm=%.1f, NOT armed. No auto-enable, no broadcast, no IDs 5/6.', self.monitor_stm32_events, self.ids, self.limit)
 
     def send(self, addr, payload):
         assert addr in self.ids and 0 < len(payload) <= 8
@@ -247,6 +260,17 @@ class DirectNode:
         self.reason = reason
         self.target = [0.0] * 4
         self.stop_all()
+
+    def receive_frame(self, can_id, payload, now):
+        if self.monitor_stm32_events:
+            reason = parse_stm32_stop(can_id, payload)
+            if reason:
+                # A one-shot STM32 stop must not be overwritten by the next F6.
+                self.external_stop = True
+                self.trip(reason + '; latched, correct cause and restart test launch')
+                self.emergency_pub.publish(self.Bool(data=True))
+                return
+        self.feedback.update(parse_reply(can_id, payload), now)
 
     def command(self, msg):
         with self.lock:
@@ -306,7 +330,8 @@ class DirectNode:
                             if len(raw) != 16:
                                 continue
                             cid, dlc, data = FRAME.unpack(raw)
-                            self.feedback.update(parse_reply(cid, data[:min(dlc,8)]), time.monotonic())
+                            if dlc <= 8:
+                                self.receive_frame(cid, data[:dlc], time.monotonic())
                     now = time.monotonic()
                     why = self.feedback.problem(now, self.timeout)
                     if self.armed and why:
