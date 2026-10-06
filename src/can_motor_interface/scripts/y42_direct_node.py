@@ -158,11 +158,13 @@ class DirectNode:
         self.cmd_timeout = float(rospy.get_param('~command_timeout', 0.5))
         self.stall_warning_timeout = float(rospy.get_param('~stall_warning_timeout', 0.5))
         self.startup_zero_duration = float(rospy.get_param('~startup_zero_duration', 1.0))
+        self.inactive_wheel_mode = rospy.get_param('~inactive_wheel_mode', 'stop')
         if (len(self.ids) != 4 or set(self.ids) != {1, 2, 3, 4}
                 or len(self.signs) != 4 or any(s not in (-1, 1) for s in self.signs)
                 or not 0 < self.limit <= 3000 or not 0 <= self.accel <= 65535
                 or not 0.2 <= self.timeout <= 5 or not 0.05 <= self.cmd_timeout <= 1
-                or not 0.0 <= self.startup_zero_duration <= 5.0):
+                or not 0.0 <= self.startup_zero_duration <= 5.0
+                or self.inactive_wheel_mode not in ('stop', 'speed_zero')):
             raise ValueError('Invalid IDs/signs/limits/timeouts; chassis IDs must be a permutation of 1..4')
         self.feedback = Feedback(self.ids, self.stall_warning_timeout, self.timeout)
         self.tx_schedule = TxSchedule(self.ids)
@@ -227,8 +229,12 @@ class DirectNode:
                 # command, not a speed-mode initialization.
                 payload = speed_payload(0.0, self.accel, self.limit)
             else:
-                payload = STOP if abs(self.target[idx]) < 0.01 else speed_payload(
-                    self.target[idx]*self.signs[idx], self.accel, self.limit)
+                if abs(self.target[idx]) < 0.01:
+                    active_others = any(abs(value) >= 0.01 for value in self.target)
+                    payload = (speed_payload(0.0, self.accel, self.limit)
+                               if self.inactive_wheel_mode == 'speed_zero' and active_others else STOP)
+                else:
+                    payload = speed_payload(self.target[idx]*self.signs[idx], self.accel, self.limit)
         elif kind == 'stop':
             payload = STOP
         else:

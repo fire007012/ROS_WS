@@ -96,6 +96,9 @@ class TestArmGuard(unittest.TestCase):
         n=m.DirectNode.__new__(m.DirectNode)
         n.lock=threading.RLock();n.ids=[1,2,3,4];n.feedback=m.Feedback(n.ids)
         n.timeout=1;n.cmd_timeout=0.5;n.external_stop=False;n.fault='';n.armed=False
+        n.inactive_wheel_mode='stop'
+        n.startup_zero_duration=0;n.zero_init_until=0
+        n.ros=SimpleNamespace(loginfo=lambda *args:None)
         n.tx_schedule=m.TxSchedule(n.ids)
         n.Response=lambda success,message:SimpleNamespace(success=success,message=message)
         n.target=[0]*4;n.cmd_time=m.time.monotonic()
@@ -164,6 +167,20 @@ class TestTxSchedule(unittest.TestCase):
         n.target=[0]*4;n.transmit_one(10.02)
         self.assertEqual(sent[0],(1,m.speed_payload(10)))
         self.assertEqual(sent[1],(2,m.STOP))
+    def test_inactive_wheel_zero_only_while_other_wheels_move(self):
+        n=TestArmGuard().node();n.signs=[1]*4;n.accel=100;n.limit=90
+        n.zero_init_until=0;n.armed=True;n.inactive_wheel_mode='speed_zero'
+        n.target=[0,10,0,-10]
+        sent=[];n.send=lambda addr,data:sent.append((addr,data))
+        for i in range(4):n.transmit_one(10+i*.02)
+        self.assertEqual(sent[0],(1,m.speed_payload(0,100,90)))
+        self.assertEqual(sent[2],(3,m.speed_payload(0,100,90)))
+        n.target=[0]*4
+        for i in range(4):n.transmit_one(11+i*.02)
+        self.assertTrue(all(data==m.STOP for addr,data in sent[4:8]))
+        n.trip('test fault')
+        self.assertFalse(n.armed)
+        self.assertEqual(n.tx_schedule.next(12,False),(1,'stop'))
     def test_real_send_enobufs_latches(self):
         import errno
         from types import SimpleNamespace

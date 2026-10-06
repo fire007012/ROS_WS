@@ -109,8 +109,15 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
     // A safety command must be able to stop immediately. Applying the normal
     // acceleration ramp here would turn a safety stop into a delayed stop.
     const bool is_safety_source = std::string(source_name) == "safety";
+    const bool is_teleop_stop = std::string(source_name) == "teleop" &&
+        sources_[source_name].twist.linear.x == 0.0 &&
+        sources_[source_name].twist.linear.y == 0.0 &&
+        sources_[source_name].twist.linear.z == 0.0 &&
+        sources_[source_name].twist.angular.x == 0.0 &&
+        sources_[source_name].twist.angular.y == 0.0 &&
+        sources_[source_name].twist.angular.z == 0.0;
     const geometry_msgs::Twist clamped = clampTwist(
-        sources_[source_name].twist, dt, is_safety_source);
+        sources_[source_name].twist, dt, is_safety_source || is_teleop_stop);
     if (timeout_reported_) {
       ROS_INFO("[cmd_vel_mux] command source recovered: %s", source_name);
       timeout_reported_ = false;
