@@ -334,3 +334,9 @@ if(CATKIN_ENABLE_TESTING)
   add_test(NAME single_canable_interface_defaults
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_can_interface_defaults.py)
 endif()
+
+# Shared AV launch defaults and real roslaunch parsing; no master/devices needed.
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME audio_video_launch_defaults
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_audio_video_launch.py)
+endif()

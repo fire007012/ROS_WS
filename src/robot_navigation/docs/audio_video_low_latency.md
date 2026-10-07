@@ -12,6 +12,77 @@
 视频保留 MJPEG：usb_cam 本地解码，发送节点 JPEG 编码后跨网络，接收节点解码显示。
 不是摄像头原生 MJPEG 零拷贝，也没有 H.264。
 
+## 单命令启动与集中配置（树莓派 + 医生端 VM）
+
+角色保持不变：`audio_video_slave.launch` 是机器人端，`audio_video_master.launch`
+是医生端；ROS Master 可以放在树莓派，这不要求对调音视频角色。
+
+默认参数集中在包内的 `config/audio_video_defaults.launch`。它是 ROS 原生 XML
+参数配置文件，不是节点 YAML；这样相机/音频开关在创建节点前就能生效，且保留
+原来的 `enable_video:=false` 等命令行覆盖功能。两端共用
+`launch/audio_video_peer.launch` 实现，原有节点名、相机命名空间及跨网话题保持不变。
+默认仍是 720p25/MJPEG、48kHz/mono/20ms、UDP 5004；HTTP 默认关闭。
+
+两边 `.bashrc` 的 ROS 部分先 source Noetic 和实际工作空间，再设置网络变量。
+以下 IP 必须替换为接入同一网络后的真实地址，`10.161.170.94` 只是 VM 示例：
+
+```bash
+# 树莓派
+export ROBOT_PI_IP=10.161.170.93
+export ROBOT_VM_IP=10.161.170.94
+unset ROS_HOSTNAME
+export ROS_MASTER_URI="http://${ROBOT_PI_IP}:11311"
+export ROS_IP="${ROBOT_PI_IP}"
+```
+
+```bash
+# 医生端 VM
+export ROBOT_PI_IP=10.161.170.93
+export ROBOT_VM_IP=10.161.170.94
+unset ROS_HOSTNAME
+export ROS_MASTER_URI="http://${ROBOT_PI_IP}:11311"
+export ROS_IP="${ROBOT_VM_IP}"
+```
+
+配置文件默认读取本终端的 `ROS_MASTER_URI`、`ROS_IP`，机器人端的对端地址取
+`ROBOT_VM_IP`，医生端取 `ROBOT_PI_IP`。必需变量缺失会在启动文件解析时直接报错，
+不会悄悄回退到旧 NAT 地址。每个终端需已 `source ~/.bashrc`；改网络后停止旧节点、
+更新地址再重启。旧 `master_uri/local_ip/remote_ip` 参数仍可临时覆盖，但
+`master_uri` 和 `local_ip` 必须与启动 roslaunch 的 shell 网络环境一致；
+launch 内的 `<env>` 不能搬迁 roslaunch 自身使用的 Master。
+
+```bash
+# 树莓派终端 1：仅此一处启动 ROS Master
+roscore
+# 树莓派终端 2
+roslaunch robot_navigation audio_video_slave.launch
+# 医生端 VM
+roslaunch robot_navigation audio_video_master.launch
+# 任一端的新终端：等两边节点启动完成再开启通话
+rostopic pub -1 /Ready std_msgs/Int32 'data: 1'
+# 停止通话
+rostopic pub -1 /Ready std_msgs/Int32 'data: 0'
+```
+
+这只简化音视频参数，不自动启动完整机器人任务，也不自动发布 `/Ready=1`。
+不要因此同时启动 `mission_complete.launch` 的音频和另一套音视频节点。
+没有桌面时，将配置中的 `enable_display` 默认值改成 `false`，如需网页接收再开启
+`enable_http`。只有一侧有摄像头时，关闭无摄像头侧的 `start_upper_cam` 或
+`start_lower_cam`；无真实摄像头测试可将 `use_test_camera` 改为 `true`。
+
+改设置时编辑对应 `<arg name="..." default="..." />`，无需改节点实现。
+例如仅测试音频仍可临时使用：
+
+```bash
+roslaunch robot_navigation audio_video_slave.launch enable_video:=false
+roslaunch robot_navigation audio_video_master.launch enable_video:=false
+```
+
+要保存另一套配置，复制默认配置文件并传
+`config_file:=/absolute/path/to/audio_video_defaults.launch`。更新两端的包文件后，
+在 devel 工作空间下仅改 XML 不需要重新编译 C++；如果使用 install 工作空间，
+需重新执行 `catkin_make install` 将 launch/config 安装更新。
+
 ## 两台 VM 编译
 ```bash
 cd ~/ROS_WS-2/ROS_WS
