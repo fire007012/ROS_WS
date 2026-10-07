@@ -1,0 +1,10 @@
+build/
+devel/
+.catkin_workspace
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+devel.old
+devel
+y42_diagnosis_20261004

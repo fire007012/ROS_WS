@@ -1,0 +1,27 @@
+<launch>
+  <!-- Native Y42 X frames via CAN1 -> STM32 -> CAN2, NOT the 0x100 protocol.
+       Keep the known-good direct-node arm/feedback guards. No mission or arm.
+       NEVER start can_interface_node or another chassis CAN writer alongside it. -->
+  <arg name="can_device" default="can0"/>
+  <arg name="max_rpm" default="90.0"/>
+  <!-- Same logical wheel order as the user's working direct bench test. -->
+  <arg name="motor_ids" default="[2, 1, 4, 3]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
+  <arg name="stall_warning_timeout" default="0.5"/>
+  <arg name="acceleration_rpm_s" default="50"/>
+  <arg name="startup_zero_duration" default="1.0"/>
+  <arg name="inactive_wheel_mode" default="stop"/>
+
+  <include file="$(find robot_bringup)/launch/y42_keyboard_test.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="max_rpm" value="$(arg max_rpm)"/>
+    <arg name="motor_ids" value="$(arg motor_ids)"/>
+    <arg name="direction_signs" value="$(arg direction_signs)"/>
+    <arg name="stall_warning_timeout" value="$(arg stall_warning_timeout)"/>
+    <arg name="acceleration_rpm_s" value="$(arg acceleration_rpm_s)"/>
+    <arg name="startup_zero_duration" value="$(arg startup_zero_duration)"/>
+    <arg name="inactive_wheel_mode" value="$(arg inactive_wheel_mode)"/>
+  </include>
+  <!-- Accept and latch local STM32 button/fault/watchdog stop events. -->
+  <param name="/y42_direct_node/monitor_stm32_events" value="true"/>
+</launch>

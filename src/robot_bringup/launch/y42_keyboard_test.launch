@@ -1,0 +1,27 @@
+<launch>
+  <!-- Chassis bench test, no mission, no STM32 bridge, no arm. Keyboard in another terminal. -->
+  <arg name="can_device" default="can0"/>
+  <arg name="max_rpm" default="30.0"/>
+  <arg name="stall_warning_timeout" default="0.5"/>
+  <arg name="motor_ids" default="[1, 2, 3, 4]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
+  <arg name="startup_zero_duration" default="1.0"/>
+  <arg name="inactive_wheel_mode" default="stop"/>
+  <!-- X firmware acceleration in RPM/s; preserve the existing default. -->
+  <arg name="acceleration_rpm_s" default="50"/>
+  <include file="$(find motion_planner)/launch/planner.launch">
+    <arg name="enable_twist_test" value="false"/>
+    <arg name="enable_fixed_route" value="false"/>
+  </include>
+  <param name="/planner_node/max_rpm" value="$(arg max_rpm)"/>
+  <include file="$(find can_motor_interface)/launch/y42_direct.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="max_rpm" value="$(arg max_rpm)"/>
+    <arg name="stall_warning_timeout" value="$(arg stall_warning_timeout)"/>
+    <arg name="motor_ids" value="$(arg motor_ids)"/>
+    <arg name="direction_signs" value="$(arg direction_signs)"/>
+    <arg name="startup_zero_duration" value="$(arg startup_zero_duration)"/>
+    <arg name="inactive_wheel_mode" value="$(arg inactive_wheel_mode)"/>
+    <arg name="acceleration_rpm_s" value="$(arg acceleration_rpm_s)"/>
+  </include>
+</launch>

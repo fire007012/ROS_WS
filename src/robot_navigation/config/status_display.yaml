@@ -1,0 +1,14 @@
+# Defaults for: roslaunch robot_navigation status_display.launch
+# Names below must match the node names in the launch file.
+esp32_vitals_bridge_node:
+  transport: serial
+  serial_device: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+  baudrate: 115200
+  client_timeout_s: 3.0
+  reconnect_interval_s: 1.0
+  bind_address: "0.0.0.0"
+  tcp_port: 8899
+
+robot_status_display_node:
+  fullscreen: false
+  vitals_timeout_s: 3.0
