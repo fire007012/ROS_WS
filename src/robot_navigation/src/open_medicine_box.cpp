@@ -18,13 +18,13 @@ class OpenMedicineBoxNode {
   OpenMedicineBoxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       : nh_(nh)
       , pnh_(pnh)
-      , can_device_("can1")
+      , can_device_("can0")
       , can_id_(0x206)
       , servo_cmd_code_(0x20)
       , open_angle_deg_(90.0)
       , hold_duration_sec_(1.0)
   {
-    pnh_.param<std::string>("can_device", can_device_, "can1");
+    pnh_.param<std::string>("can_device", can_device_, "can0");
     int can_id_int = static_cast<int>(can_id_);
     pnh_.param("can_id", can_id_int, can_id_int);
     can_id_ = static_cast<uint32_t>(can_id_int);

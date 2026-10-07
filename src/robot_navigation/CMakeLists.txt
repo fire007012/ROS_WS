@@ -328,3 +328,9 @@ if(CATKIN_ENABLE_TESTING)
     COMMAND ${PYTHON_EXECUTABLE} -m unittest discover
       -s ${CMAKE_CURRENT_SOURCE_DIR}/test -p "test_vitals*.py")
 endif()
+
+# Single-CANable defaults: no ROS master or hardware required.
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME single_canable_interface_defaults
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_can_interface_defaults.py)
+endif()

@@ -144,16 +144,15 @@ rostopic pub /fine_tuning_done std_msgs/Bool "data: true"
 ### 检查 CAN 通信
 
 ```bash
-# 监控 CAN 总线
+# 监控单个 CANable 上游总线：底盘和机械臂共用 can0
 candump can0
-candump can1
 ```
 
 ### 单独测试各节点
 
 ```bash
 # 测试药箱节点
-rosrun robot_navigation open_medicine_box_node _can_device:=can1
+rosrun robot_navigation open_medicine_box_node _can_device:=can0
 # 另一终端：
 rosservice call /open_medicine_box "box_id: 1"
 
@@ -169,6 +168,6 @@ rostopic pub /robot_display std_msgs/String "data: '1床药品: 6901234567890 | 
 
 1. **zbar 未安装**: `sudo apt install libzbar-dev`
 2. **cv_bridge 找不到**: 确认 `ros-noetic-cv-bridge` 已安装
-3. **CAN 接口不可用**: 确保 `sudo ip link set can0 up type can bitrate 1000000`
+3. **CAN 接口不可用**: 确保 `sudo ip link set can0 up type can bitrate 500000`
 4. **服务不可用**: 检查 `mission_complete.launch` 中节点启动顺序
 5. **路径选择失败**: 确认 `paths.yaml` 中定义了 `nurse_station`, `bed1_circle`, `bed3_circle`, `HOME` 路径

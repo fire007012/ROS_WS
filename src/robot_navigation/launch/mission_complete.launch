@@ -37,7 +37,7 @@
   <arg name="competition_mode" default="true"/>
   <arg name="bedside_scan_skip_wait_s" default="1.0"/>
   <arg name="enable_open_medicine_box" default="true"/>
-  <arg name="medicine_box_can_device" default="can1"/>
+  <arg name="medicine_box_can_device" default="can0"/>
   <arg name="medicine_box_can_id" default="518"/>
   <arg name="medicine_box_servo_cmd_code" default="32"/>
   <arg name="medicine_box_open_angle_deg" default="90.0"/>

@@ -19,7 +19,7 @@ namespace robot_navigation {
  *
  * 用法示例:
  *   CanInterface can;
- *   if (can.open("can1")) {
+ *   if (can.open("can0")) {
  *     can.sendFrame(0x206, data, 8);
  *   }
  */
