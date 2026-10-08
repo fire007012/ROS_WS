@@ -1,0 +1,30 @@
+<launch>
+  <!-- ROS RPM -> STM32 command parser -> motor drivers.
+       Matches STM32_Motor_Controller: standard 0x100/0x101, DLC=8, 500 kbps
+       with the firmware's 8 MHz HSE. No checksum; byte6=accel, byte7=sync.
+       Never run the native y42_* test or another chassis writer alongside it. -->
+  <arg name="can_device" default="can0"/>
+  <arg name="tx_can_id" default="256"/>
+  <arg name="rx_can_id" default="257"/>
+  <arg name="use_extended_frame" default="false"/>
+  <arg name="max_rpm" default="30.0"/>
+  <arg name="acceleration_rpm_s" default="50"/>
+  <arg name="motor_indices" default="[1, 0, 3, 2]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
+
+  <include file="$(find motion_planner)/launch/planner.launch">
+    <arg name="enable_twist_test" value="false"/>
+    <arg name="enable_fixed_route" value="false"/>
+  </include>
+  <param name="/planner_node/max_rpm" value="$(arg max_rpm)"/>
+  <include file="$(find can_motor_interface)/launch/can_interface.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="tx_can_id" value="$(arg tx_can_id)"/>
+    <arg name="rx_can_id" value="$(arg rx_can_id)"/>
+    <arg name="use_extended_frame" value="$(arg use_extended_frame)"/>
+    <arg name="max_rpm" value="$(arg max_rpm)"/>
+    <arg name="acceleration_rpm_s" value="$(arg acceleration_rpm_s)"/>
+    <arg name="motor_indices" value="$(arg motor_indices)"/>
+    <arg name="direction_signs" value="$(arg direction_signs)"/>
+  </include>
+</launch>

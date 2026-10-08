@@ -6,9 +6,8 @@
 
   <node pkg="arm_interface" type="arm_controller_node" name="arm_controller_node" output="screen">
     <param name="can_device" value="$(arg can_device)"/>
-    <param name="tx_can_base_id" value="512"/>  <!-- 0x200 -->
-    <param name="rx_can_base_id" value="768"/>  <!-- 0x300 -->
-    <param name="set_joint_cmd_code" value="16"/>
-    <param name="position_scale_counts" value="1000.0"/>
+    <!-- STM32 index 4 / address 5, absolute single-joint position in radians. -->
+    <param name="joint_name" value="joint_1"/>
+    <param name="speed_rpm" value="100"/>
   </node>
 </launch>

@@ -35,6 +35,7 @@ BaseOdometryNode::BaseOdometryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   nh_.param("/robot/wheel_base", wheel_base_, wheel_base_);
   pnh_.param("odom_publish_hz", odom_publish_hz_, odom_publish_hz_);
   pnh_.param("publish_tf", publish_tf_, publish_tf_);
+  pnh_.param("feedback_timeout_sec", feedback_timeout_sec_, feedback_timeout_sec_);
   pnh_.param("odom_frame", odom_frame_, odom_frame_);
   pnh_.param("base_frame", base_frame_, base_frame_);
 
@@ -49,7 +50,7 @@ BaseOdometryNode::BaseOdometryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 }
 
 void BaseOdometryNode::motorStateCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
-  if (msg->data.size() < 4) {
+  if (msg->data.size() != 4) {
     ROS_WARN_THROTTLE(1.0, "Expected 4 motor feedback values for odometry, got %zu.", msg->data.size());
     return;
   }
@@ -60,9 +61,13 @@ void BaseOdometryNode::motorStateCallback(const std_msgs::Float32MultiArray::Con
       static_cast<double>(msg->data[2]),
       static_cast<double>(msg->data[3]),
   };
+  for (double rpm : wheel_rpm) if (!std::isfinite(rpm)) return;
 
   const ros::Time now = ros::Time::now();
-  if (!has_feedback_) {
+  const ros::SteadyTime received = ros::SteadyTime::now();
+  const bool gap = !has_feedback_ || (received - last_feedback_time_).toSec() > feedback_timeout_sec_;
+  last_feedback_time_ = received;
+  if (gap) {
     has_feedback_ = true;
     last_wheel_rpm_ = wheel_rpm;
     last_update_time_ = now;
@@ -88,6 +93,10 @@ void BaseOdometryNode::motorStateCallback(const std_msgs::Float32MultiArray::Con
 
 void BaseOdometryNode::publishTimerCallback(const ros::TimerEvent&) {
   if (!has_feedback_) {
+    return;
+  }
+  if ((ros::SteadyTime::now() - last_feedback_time_).toSec() > feedback_timeout_sec_) {
+    ROS_WARN_THROTTLE(1.0, "Motor feedback expired; odometry/TF publication paused");
     return;
   }
   publishOdometry(ros::Time::now());

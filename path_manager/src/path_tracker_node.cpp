@@ -100,19 +100,25 @@ void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& ms
     return;
   }
   path_has_next_point_ = msg->has_next;
-  const bool target_changed = !has_target_ ||
-      std::abs(current_target_.x - msg->x) >= 1e-6 ||
-      std::abs(current_target_.y - msg->y) >= 1e-6 ||
-      std::abs(current_target_.tolerance - msg->tolerance) >= 1e-6;
+  const bool same_target =
+      std::abs(current_target_.x - msg->x) < 1e-6 &&
+      std::abs(current_target_.y - msg->y) < 1e-6 &&
+      std::abs(current_target_.tolerance - msg->tolerance) < 1e-6 &&
+      current_target_.has_yaw == msg->has_yaw &&
+      (!msg->has_yaw || std::abs(normalizeAngle(current_target_.yaw - msg->yaw)) < 1e-6);
+  // /next_point and /path_points use separate connections. A queued publication
+  // of the completed point can arrive after the service has advanced the path.
+  // Keep waiting for the new target instead of re-arming the completed point.
+  if (waiting_for_next_point_ && same_target) return;
+  const bool target_changed = !has_target_ || !same_target;
   if (!target_changed) return;
 
   current_target_ = *msg;
   has_target_ = true;
   waiting_for_next_point_ = false;
   path_completed_ = false;
-  if (state_ == State::WAITING_FOR_PATH || state_ == State::STOPPED || state_ == State::ALL_DONE) {
-    state_ = State::MOVING;
-  }
+  // A new target must never inherit the previous target's arrival hold timer.
+  state_ = State::MOVING;
 
   std_msgs::Bool unfinished;
   unfinished.data = false;
@@ -246,6 +252,12 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
     }
 
     case State::ARRIVED_AT_POINT: {
+      // Wheel feedback can move the pose outside tolerance while braking.
+      // Resume control rather than declaring a drifting target completed.
+      if (!reached) {
+        state_ = State::MOVING;
+        break;
+      }
       // 保持零速度，等待稳定
       publishStop();
 

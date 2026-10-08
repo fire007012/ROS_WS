@@ -73,6 +73,11 @@ target_link_libraries(path_tracker_node
   ${catkin_LIBRARIES}
 )
 
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest(test/path_tracker_transitions.test)
+endif()
+
 # ── move_base 路径适配器 ──────────────────────────────────────
 add_executable(move_base_path_adapter_node
   src/move_base_path_adapter_node.cpp

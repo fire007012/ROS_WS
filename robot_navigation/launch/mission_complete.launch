@@ -28,9 +28,17 @@
   ==============================================================================
 -->
 <launch>
+  <arg name="can_device" default="can0"/>
+  <arg name="tx_can_id" default="256"/>
+  <arg name="rx_can_id" default="257"/>
+  <arg name="use_extended_frame" default="false"/>
+  <arg name="motor_indices" default="[1, 0, 3, 2]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_camera"       default="true"/>
   <arg name="enable_arm"          default="true"/>
+  <!-- Select one owner for motor 5: mission sequence or JointState control. -->
+  <arg name="arm_joint_control" default="false"/>
   <arg name="enable_servo"        default="false"/>
   <!-- 比赛默认必须扫描床头柜条形码；无摄像头联调时显式传 true。 -->
   <arg name="skip_bedside_scan"   default="false"/>
@@ -97,10 +105,13 @@
   <!-- 1.1 底盘 CAN 接口 (can0) -->
   <node pkg="can_motor_interface" type="can_interface_node"
         name="can_interface_node" output="screen" required="true">
-    <param name="can_device" value="can0"/>
-    <param name="tx_can_id" value="256"/>
-    <param name="rx_can_id" value="257"/>
+    <param name="can_device" value="$(arg can_device)"/>
+    <param name="tx_can_id" value="$(arg tx_can_id)" type="int"/>
+    <param name="rx_can_id" value="$(arg rx_can_id)" type="int"/>
+    <param name="use_extended_frame" value="$(arg use_extended_frame)" type="bool"/>
     <param name="motor_count" value="4"/>
+    <rosparam param="motor_indices" subst_value="true">$(arg motor_indices)</rosparam>
+    <rosparam param="direction_signs" subst_value="true">$(arg direction_signs)</rosparam>
     <param name="max_rpm" value="3000.0"/>
     <param name="heartbeat_timeout_sec" value="1.0"/>
   </node>
@@ -183,13 +194,16 @@
   <group if="$(arg enable_arm)">
     <!-- 机械臂 CAN 接口 -->
     <node pkg="arm_interface" type="arm_controller_node"
-          name="arm_controller_node" output="screen">
+          name="arm_controller_node" output="screen" if="$(arg arm_joint_control)">
       <rosparam file="$(arg arm_params)" command="load"/>
+      <param name="can_device" value="$(arg can_device)"/>
+      <param name="joint_name" value="joint_1"/>
+      <param name="speed_rpm" value="100"/>
     </node>
 
     <!-- 机械臂动作序列控制 -->
     <node pkg="arm_and_gripper" type="arm_and_gripper_node"
-          name="arm_and_gripper_node" output="screen">
+          name="arm_and_gripper_node" output="screen" unless="$(arg arm_joint_control)">
       <rosparam file="$(arg arm_gripper_config)" command="load"/>
       <!-- 推出动作参数 -->
       <param name="push_distance_m" value="0.05"/>

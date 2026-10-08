@@ -6,11 +6,14 @@ add_compile_options(-std=c++14 -Wall -Wextra -Wpedantic)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
+  std_msgs
+  can_msgs
+  can_motor_interface
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp sensor_msgs
+  CATKIN_DEPENDS roscpp sensor_msgs std_msgs can_msgs can_motor_interface
 )
 
 include_directories(

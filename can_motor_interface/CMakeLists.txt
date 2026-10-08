@@ -38,8 +38,11 @@ install(TARGETS can_interface_node
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
 )
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)
 
-catkin_install_python(PROGRAMS scripts/y42_direct_node.py
+catkin_install_python(PROGRAMS scripts/y42_direct_node.py scripts/check_stm32_can.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

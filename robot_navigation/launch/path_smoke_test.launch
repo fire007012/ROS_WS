@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Only true on a stand: range sensing is outside the lifted-wheel test. -->
+  <arg name="wheels_lifted" default="false"/>
+  <!-- No automatic motion: select chassis_short_l only after feedback is ready. -->
+  <include file="$(find robot_navigation)/launch/complete_navigation.launch">
+    <arg name="paths_file" value="$(find robot_bringup)/config/path_smoke_test.yaml"/>
+    <arg name="enable_vl53l1x_can" value="$(eval not arg('wheels_lifted'))"/>
+    <arg name="enable_range_safety" value="$(eval not arg('wheels_lifted'))"/>
+    <arg name="enable_fixed_route" value="false"/>
+    <arg name="default_path" value=""/>
+  </include>
+  <!-- Override the included launch's parameters before nodes start. -->
+  <param name="/can_interface_node/max_rpm" value="10.0"/>
+  <param name="/robot/max_rpm" value="10.0"/>
+  <param name="/robot/max_linear_vel" value="0.03"/>
+  <!-- 0.10 rad/s rounded to only 3 RPM, where real wheel speed was uneven.
+       0.25 rad/s gives about 9 RPM; retain acceleration limits and P deceleration. -->
+  <param name="/robot/max_angular_vel" value="0.25"/>
+  <param name="/robot/max_linear_accel" value="0.10"/>
+  <param name="/robot/max_angular_accel" value="0.20"/>
+  <param name="/path_tracker_node/kp_linear" value="0.8"/>
+  <param name="/path_tracker_node/position_tolerance" value="0.01"/>
+  <param name="/path_tracker_node/use_turn_then_move" value="true"/>
+  <group if="$(arg wheels_lifted)">
+    <rosparam param="/health_monitor_node/critical_topics">[/odom, /motor_state]</rosparam>
+  </group>
+</launch>

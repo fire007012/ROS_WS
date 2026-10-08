@@ -24,6 +24,12 @@
   ==============================================================================
 -->
 <launch>
+  <arg name="can_device" default="can0"/>
+  <arg name="tx_can_id" default="256"/>
+  <arg name="rx_can_id" default="257"/>
+  <arg name="use_extended_frame" default="false"/>
+  <arg name="motor_indices" default="[1, 0, 3, 2]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_arm"          default="false"/>
   <arg name="default_path" default=""/>
@@ -36,6 +42,7 @@
   <arg name="enable_servo"         default="false"/>
   <arg name="enable_arm_and_gripper" default="false"/>
   <arg name="enable_vl53l1x_can" default="false"/>
+  <arg name="enable_range_safety" default="true"/>
   <arg name="enable_emergency_stop" default="false"/>
   <arg name="enable_physical_start" default="false"/>
   <arg name="vl53l1x_can_interface" default="can0"/>
@@ -65,17 +72,17 @@
   <!-- 1.1 底盘 CAN 接口 — 与 STM32 通信，发布/订阅电机指令 -->
   <node pkg="can_motor_interface" type="can_interface_node"
         name="can_interface_node" output="screen" required="true">
-    <param name="can_device" value="can0"/>
-    <param name="tx_can_id" value="256"/>
-    <param name="rx_can_id" value="257"/>
+    <param name="can_device" value="$(arg can_device)"/>
+    <param name="tx_can_id" value="$(arg tx_can_id)" type="int"/>
+    <param name="rx_can_id" value="$(arg rx_can_id)" type="int"/>
     <param name="rx_can_id_filter_enable" value="true"/>
-    <param name="use_extended_frame" value="false"/>
-    <param name="payload_little_endian" value="true"/>
-    <param name="checksum_use_sum8" value="true"/>
-    <param name="speed_cmd_code" value="1"/>
-    <param name="status_cmd_code" value="129"/>
+    <param name="use_extended_frame" value="$(arg use_extended_frame)" type="bool"/>
+    <param name="acceleration_rpm_s" value="50"/>
+    <param name="report_mask" value="7"/>
     <param name="broadcast_index" value="255"/>
     <param name="motor_count" value="4"/>
+    <rosparam param="motor_indices" subst_value="true">$(arg motor_indices)</rosparam>
+    <rosparam param="direction_signs" subst_value="true">$(arg direction_signs)</rosparam>
     <param name="max_rpm" value="3000.0"/>
     <param name="heartbeat_timeout_sec" value="1.0"/>
   </node>
@@ -118,14 +125,12 @@
   <!--  第3层：机械臂硬件层（可选）                                   -->
   <!-- ============================================================ -->
 
-  <group if="$(arg enable_arm)">
+  <group if="$(eval arg('enable_arm') and not arg('enable_arm_and_gripper'))">
     <node pkg="arm_interface" type="arm_controller_node"
           name="arm_controller_node" output="screen">
-      <param name="can_device" value="can0"/>
-      <param name="tx_can_base_id" value="512"/>
-      <param name="rx_can_base_id" value="768"/>
-      <param name="set_joint_cmd_code" value="16"/>
-      <param name="position_scale_counts" value="1000.0"/>
+      <param name="can_device" value="$(arg can_device)"/>
+      <param name="joint_name" value="joint_1"/>
+      <param name="speed_rpm" value="100"/>
     </node>
   </group>
 
@@ -228,7 +233,7 @@
   </group>
 
   <!-- 距离安全检测 — 近距离制动；绕障由动态导航的局部规划器完成 -->
-  <node pkg="robot_navigation" type="distance_safety_node"
+  <node if="$(arg enable_range_safety)" pkg="robot_navigation" type="distance_safety_node"
         name="distance_safety_node" output="screen" required="false">
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>

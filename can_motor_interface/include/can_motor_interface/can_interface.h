@@ -16,6 +16,7 @@
 #include <std_msgs/UInt32.h>
 
 #include "can_motor_interface/can_protocol.h"
+#include "can_motor_interface/link_health.h"
 #include <std_msgs/UInt8MultiArray.h>
 #include <std_msgs/Bool.h>
 
@@ -28,8 +29,9 @@ class CanInterfaceNode {
 
  private:
   void cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
-  void commandTimerCallback(const ros::TimerEvent& event);
-  void timerCallback(const ros::TimerEvent& event);
+  void commandTimerCallback(const ros::WallTimerEvent& event);
+  void timerCallback(const ros::WallTimerEvent& event);
+  void probeTimerCallback(const ros::WallTimerEvent& event);
   void canReceiveThread();
   void softwareEstopCallback(const std_msgs::Bool::ConstPtr& msg);
   void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -37,17 +39,20 @@ class CanInterfaceNode {
 
   bool openSocket();
   void closeSocket();
+  bool socketAvailable();
   bool sendSpeedCommand(uint8_t motor_index, float target_rpm);
-  bool sendControlCommand(uint8_t command);
+  bool sendControlCommand(uint8_t command, int32_t value = 0);
   bool sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_t dlc);
-  uint8_t calcChecksum(const uint8_t* data, uint8_t len) const;
   void parseStatusFrame(const can_msgs::Frame& frame);
   void parseSafetyEvent(const can_msgs::Frame& frame);
   void handleCanEvent(const CanEvent& event);
-  bool isDuplicateEvent(uint8_t key, const ros::Time& now);
+  bool isDuplicateEvent(uint8_t key, const ros::SteadyTime& now);
   void triggerEmergencyStop(const char* reason);
   void publishStopSignals();
   void publishTelemetry();
+  bool linkHealthy();
+  void parseDriverFrame(const can_frame& frame);
+  void parseDiagnostics(const can_frame& frame);
 
  private:
   ros::NodeHandle nh_;
@@ -67,22 +72,34 @@ class CanInterfaceNode {
   ros::Publisher fixed_route_hold_pub_;
   ros::Publisher move_base_cancel_pub_;
   ros::Publisher can_rx_pub_;
-  ros::Timer monitor_timer_;
-  ros::Timer command_timer_;
+  ros::Publisher link_ready_pub_;
+  ros::WallTimer monitor_timer_;
+  ros::WallTimer command_timer_;
+  ros::WallTimer probe_timer_;
 
   std::string can_device_;
   int socket_fd_;
+  std::mutex socket_mutex_;
   std::atomic<bool> running_;
-  std::atomic<bool> estop_latched_;
+  MotionInterlock motion_;
   std::thread rx_thread_;
 
-  std::vector<int> motor_ids_;
+  WheelMap wheel_map_;
+  DriverHealth driver_health_;
+  MotionAckHealth motion_ack_health_;
+  FirmwareStats firmware_stats_;
+  std::array<double, 3> stats_time_sec_{};
+  std::atomic<double> heartbeat_ack_time_sec_{0};
+  std::atomic<double> last_failure_time_sec_{0};
+  std::atomic<double> link_open_time_sec_{0};
+  std::atomic<bool> link_was_healthy_{false};
+  size_t probe_slot_ = 0;
   std::vector<float> motor_state_rpm_;
   std::vector<uint8_t> motor_status_flags_;
   std::mutex telemetry_mutex_;
 
   std::vector<float> target_rpm_;
-  ros::Time last_command_time_;
+  ros::SteadyTime last_command_time_;
   bool have_command_;
   std::mutex command_mutex_;
 
@@ -90,12 +107,11 @@ class CanInterfaceNode {
   uint32_t rx_can_id_;
   bool rx_can_id_filter_enable_;
   bool use_extended_frame_;
-  bool payload_little_endian_;
-  bool checksum_use_sum8_;
-
-  uint8_t speed_cmd_code_;
-  uint8_t status_cmd_code_;
   uint8_t broadcast_index_;
+  int acceleration_rpm_s_;
+  int report_mask_;
+  std::atomic<bool> report_configured_;
+  double last_report_request_sec_;
   float max_rpm_;
   int motor_count_;
 
@@ -103,9 +119,9 @@ class CanInterfaceNode {
   double event_dedup_window_sec_;
   double command_publish_rate_hz_;
   double command_timeout_sec_;
-  ros::Time last_rx_time_;
+  std::atomic<double> last_rx_time_sec_;
   std::mutex event_mutex_;
-  std::map<uint8_t, ros::Time> last_event_times_;
+  std::map<uint8_t, ros::SteadyTime> last_event_times_;
 };
 
 }  // namespace can_motor_interface

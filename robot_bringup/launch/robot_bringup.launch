@@ -1,4 +1,10 @@
 <launch>
+  <arg name="can_device" default="can0"/>
+  <arg name="tx_can_id" default="256"/>
+  <arg name="rx_can_id" default="257"/>
+  <arg name="use_extended_frame" default="false"/>
+  <arg name="motor_indices" default="[1, 0, 3, 2]"/>
+  <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <arg name="enable_arm" default="true"/>
   <arg name="enable_teleop" default="true"/>
   <arg name="enable_twist_test" default="false"/>
@@ -18,7 +24,14 @@
   <rosparam file="$(find robot_bringup)/config/arm_params.yaml" command="load"/>
 
   <!-- 底盘 CAN 接口 -->
-  <include file="$(find can_motor_interface)/launch/can_interface.launch"/>
+  <include file="$(find can_motor_interface)/launch/can_interface.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="tx_can_id" value="$(arg tx_can_id)"/>
+    <arg name="rx_can_id" value="$(arg rx_can_id)"/>
+    <arg name="use_extended_frame" value="$(arg use_extended_frame)"/>
+    <arg name="motor_indices" value="$(arg motor_indices)"/>
+    <arg name="direction_signs" value="$(arg direction_signs)"/>
+  </include>
 
   <!-- 运动规划 -->
   <include file="$(find motion_planner)/launch/planner.launch">
@@ -29,9 +42,10 @@
   </include>
 
   <!-- 机械臂接口（可选） -->
-  <group if="$(arg enable_arm)">
+  <group if="$(eval arg('enable_arm') and not arg('enable_arm_and_gripper'))">
     <include file="$(find arm_interface)/launch/arm.launch">
       <arg name="params_file" value="$(find robot_bringup)/config/arm_params.yaml"/>
+      <arg name="can_device" value="$(arg can_device)"/>
     </include>
   </group>
 

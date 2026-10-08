@@ -1,0 +1,8 @@
+# Short odometry-frame route; used by path_smoke_test.launch.
+# A stand test validates wheel-feedback closure, not actual ground travel.
+paths:
+  - name: chassis_short_l
+    points:
+      - {x: 0.0, y: 0.0, tolerance: 0.02}
+      - {x: 0.15, y: 0.0, tolerance: 0.02}
+      - {x: 0.15, y: 0.15, tolerance: 0.02, yaw: 1.57079632679}

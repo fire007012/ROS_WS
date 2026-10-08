@@ -51,6 +51,8 @@ class BaseOdometryNode {
   double body_vy_;
   double body_omega_;
   ros::Time last_update_time_;
+  ros::SteadyTime last_feedback_time_;
+  double feedback_timeout_sec_ = 1.0;
 };
 
 }  // namespace motion_planner

@@ -3,8 +3,6 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
-
-#include <linux/can.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -12,227 +10,145 @@
 #include <unistd.h>
 
 namespace arm_interface {
+using can_motor_interface::driverRead;
+using can_motor_interface::stm32Command;
 
-ArmControllerNode::ArmControllerNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
-    : nh_(nh),
-      pnh_(pnh),
-      socket_fd_(-1),
-      running_(true),
-      tx_can_base_id_(0x200),
-      rx_can_base_id_(0x300),
-      set_joint_cmd_code_(0x10),
-      position_scale_counts_(1000.0),
-      joint_count_(6) {
+ArmControllerNode::ArmControllerNode(ros::NodeHandle& nh, ros::NodeHandle& pnh) : nh_(nh), pnh_(pnh) {
   pnh_.param<std::string>("can_device", can_device_, "can0");
-  int tx_can_base_id_i = static_cast<int>(tx_can_base_id_);
-  int rx_can_base_id_i = static_cast<int>(rx_can_base_id_);
-  int set_joint_cmd_code_i = static_cast<int>(set_joint_cmd_code_);
-  pnh_.param("tx_can_base_id", tx_can_base_id_i, tx_can_base_id_i);
-  pnh_.param("rx_can_base_id", rx_can_base_id_i, rx_can_base_id_i);
-  pnh_.param("set_joint_cmd_code", set_joint_cmd_code_i, set_joint_cmd_code_i);
-  tx_can_base_id_ = static_cast<uint32_t>(tx_can_base_id_i);
-  rx_can_base_id_ = static_cast<uint32_t>(rx_can_base_id_i);
-  set_joint_cmd_code_ = static_cast<uint8_t>(set_joint_cmd_code_i);
-  pnh_.param("position_scale_counts", position_scale_counts_, position_scale_counts_);
-
-  nh_.param("/arm/joint_count", joint_count_, joint_count_);
-  pnh_.param("joint_count", joint_count_, joint_count_);
-
-  if (!nh_.getParam("/arm/joint_names", joint_names_)) {
-    pnh_.getParam("joint_names", joint_names_);
-  }
-  if (joint_names_.empty()) {
-    joint_names_.resize(joint_count_);
-    for (int i = 0; i < joint_count_; ++i) {
-      joint_names_[i] = "joint_" + std::to_string(i + 1);
-    }
-  }
-  joint_count_ = static_cast<int>(joint_names_.size());
-  joint_name_to_index_.clear();
-  for (size_t i = 0; i < joint_names_.size(); ++i) {
-    joint_name_to_index_[joint_names_[i]] = i;
-  }
-  current_positions_.assign(joint_count_, 0.0);
-
-  joint_cmd_sub_ = nh_.subscribe("/arm_joint_cmd", 20, &ArmControllerNode::armCmdCallback, this);
-  arm_state_pub_ = nh_.advertise<sensor_msgs::JointState>("/arm_state", 20);
-
-  if (!openSocket()) {
-    ROS_WARN("Arm CAN socket open failed at startup, receive thread will retry.");
-  }
-
-  rx_thread_ = std::thread(&ArmControllerNode::canReceiveThread, this);
+  pnh_.param<std::string>("joint_name", joint_name_, "joint_1");
+  pnh_.param("speed_rpm", speed_rpm_, 100);
+  if (speed_rpm_ < 1 || speed_rpm_ > 3000) throw std::invalid_argument("arm speed_rpm must be 1..3000");
+  motion_.stop([] {});
+  joint_cmd_sub_ = nh_.subscribe("/arm_joint_cmd", 2, &ArmControllerNode::armCmdCallback, this);
+  can_rx_sub_ = nh_.subscribe("/can_rx", 100, &ArmControllerNode::canRxCallback, this);
+  ready_sub_ = nh_.subscribe("/motor_link_ready", 2, &ArmControllerNode::readyCallback, this);
+  estop_sub_ = nh_.subscribe("/emergency_stop", 2, &ArmControllerNode::estopCallback, this);
+  arm_state_pub_ = nh_.advertise<sensor_msgs::JointState>("/arm_state", 10);
+  estop_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 2, true);
+  timer_ = nh_.createWallTimer(ros::WallDuration(0.1), &ArmControllerNode::timerCallback, this);
+  ROS_INFO("Arm uses STM32 standard 0x100, index=4/address=5, one absolute joint in radians");
 }
 
-ArmControllerNode::~ArmControllerNode() {
-  running_.store(false);
-  closeSocket();
-  if (rx_thread_.joinable()) {
-    rx_thread_.join();
-  }
-}
+ArmControllerNode::~ArmControllerNode() { closeSocket(); }
 
 bool ArmControllerNode::openSocket() {
-  if (socket_fd_ >= 0) {
-    return true;
-  }
-
-  int fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-  if (fd < 0) {
-    ROS_ERROR("Arm socket create failed: %s", std::strerror(errno));
-    return false;
-  }
-
-  struct ifreq ifr;
-  std::memset(&ifr, 0, sizeof(ifr));
+  if (socket_fd_ >= 0) return true;
+  int fd = socket(PF_CAN, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, CAN_RAW);
+  if (fd < 0) return false;
+  struct ifreq ifr{};
   std::snprintf(ifr.ifr_name, IFNAMSIZ, "%s", can_device_.c_str());
-  if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0) {
-    ROS_ERROR("Arm ioctl(SIOCGIFINDEX) failed for %s: %s", can_device_.c_str(), std::strerror(errno));
-    close(fd);
-    return false;
-  }
-
-  struct sockaddr_can addr;
-  std::memset(&addr, 0, sizeof(addr));
+  if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0) { close(fd); return false; }
+  struct sockaddr_can addr{};
   addr.can_family = AF_CAN;
   addr.can_ifindex = ifr.ifr_ifindex;
-
-  if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-    ROS_ERROR("Arm bind failed on %s: %s", can_device_.c_str(), std::strerror(errno));
-    close(fd);
-    return false;
-  }
-
+  if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) { close(fd); return false; }
   socket_fd_ = fd;
-  ROS_INFO("Arm SocketCAN connected on %s", can_device_.c_str());
   return true;
 }
 
 void ArmControllerNode::closeSocket() {
-  if (socket_fd_ >= 0) {
-    close(socket_fd_);
-    socket_fd_ = -1;
+  std::lock_guard<std::mutex> lock(socket_mutex_);
+  if (socket_fd_ >= 0) close(socket_fd_);
+  socket_fd_ = -1;
+}
+
+bool ArmControllerNode::send(const can_frame& frame) {
+  std::lock_guard<std::mutex> lock(socket_mutex_);
+  if (!openSocket()) return false;
+  if (write(socket_fd_, &frame, sizeof(frame)) == static_cast<ssize_t>(sizeof(frame))) return true;
+  ROS_ERROR_THROTTLE(1.0, "Arm CAN TX failed: %s", std::strerror(errno));
+  close(socket_fd_);
+  socket_fd_ = -1;
+  return false;
+}
+
+bool ArmControllerNode::ready() const {
+  const double now = ros::SteadyTime::now().toSec();
+  return !emergency_active_ && link_ready_ && now - link_ready_time_ <= 0.5 &&
+         position_time_ > 0 && now - position_time_ <= 1.0 &&
+         status_time_ > 0 && now - status_time_ <= 1.0 && (status_flags_ & 1) && !(status_flags_ & 8);
+}
+
+void ArmControllerNode::readyCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data && !motion_.latched()) fail("chassis link became unavailable");
+  link_ready_ = msg->data;
+  link_ready_time_ = ros::SteadyTime::now().toSec();
+  if (!link_ready_) motion_.stop([] {});
+  else motion_.reset([&] { return ready(); });
+}
+
+void ArmControllerNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
+  emergency_active_ = msg->data;
+  if (msg->data) {
+    link_ready_ = false;
+    motion_.stop([] {}); // chassis node owns stop transmission and retry
   }
 }
 
-bool ArmControllerNode::sendJointCommand(uint8_t joint_idx, double position_rad) {
-  if (socket_fd_ < 0 && !openSocket()) {
-    return false;
-  }
-
-  const int32_t counts = static_cast<int32_t>(std::llround(position_rad * position_scale_counts_));
-
-  struct can_frame frame;
-  std::memset(&frame, 0, sizeof(frame));
-  frame.can_id = tx_can_base_id_ + joint_idx;
-  frame.can_dlc = 8;
-  frame.data[0] = set_joint_cmd_code_;
-  frame.data[1] = joint_idx;
-  frame.data[2] = static_cast<uint8_t>(counts & 0xFF);
-  frame.data[3] = static_cast<uint8_t>((counts >> 8) & 0xFF);
-  frame.data[4] = static_cast<uint8_t>((counts >> 16) & 0xFF);
-  frame.data[5] = static_cast<uint8_t>((counts >> 24) & 0xFF);
-
-  const int nbytes = write(socket_fd_, &frame, sizeof(frame));
-  if (nbytes != static_cast<int>(sizeof(frame))) {
-    ROS_ERROR_THROTTLE(1.0, "Arm CAN write failed: %s", std::strerror(errno));
-    closeSocket();
-    return false;
-  }
-  return true;
+void ArmControllerNode::fail(const char* reason) {
+  emergency_active_ = true;
+  motion_.stop([&] { send(stm32Command(0x100, false, 3, 0xFF)); });
+  std_msgs::Bool stop; stop.data = true; estop_pub_.publish(stop);
+  ROS_ERROR("Arm ESTOP: %s", reason);
 }
 
 void ArmControllerNode::armCmdCallback(const sensor_msgs::JointState::ConstPtr& msg) {
-  if (msg->position.empty()) {
+  if (msg->position.size() != 1 || (!msg->name.empty() &&
+      (msg->name.size() != 1 || msg->name[0] != joint_name_))) {
+    ROS_ERROR("This firmware accepts one arm joint (%s) only; refusing multi-axis command", joint_name_.c_str());
     return;
   }
+  if (!ready() || motion_.latched()) { ROS_WARN("Arm command refused: link/arm feedback not ready or ESTOP"); return; }
+  try {
+    const auto position = can_motor_interface::stm32ArmPosition(msg->position[0]);
+    if (!motion_.run([&] {
+      return send(stm32Command(0x100, false, 4, 4, speed_rpm_)) && send(position);
+    })) fail("arm transmit failure");
+  } catch (const std::exception& error) { ROS_ERROR("Arm command refused: %s", error.what()); }
+}
 
-  // 优先按关节名映射，避免上游 JointState 顺序变化导致控制错轴。
-  if (!msg->name.empty() && msg->name.size() == msg->position.size()) {
-    for (size_t i = 0; i < msg->name.size(); ++i) {
-      const auto it = joint_name_to_index_.find(msg->name[i]);
-      if (it == joint_name_to_index_.end()) {
-        continue;
-      }
-      const uint8_t joint_idx = static_cast<uint8_t>(it->second);
-      if (!sendJointCommand(joint_idx, msg->position[i])) {
-        ROS_WARN_THROTTLE(1.0, "Failed to send arm command for joint %s", msg->name[i].c_str());
-      }
-    }
+void ArmControllerNode::canRxCallback(const can_msgs::Frame::ConstPtr& msg) {
+  if (msg->is_extended && !msg->is_rtr && !msg->is_error && msg->id == 0x500 &&
+      msg->dlc == 3 && msg->data[0] == 0x3A && msg->data[2] == 0x6B &&
+      msg->data[1] != 0xE2 && msg->data[1] != 0xEE) {
+    status_flags_ = msg->data[1];
+    status_time_ = ros::SteadyTime::now().toSec();
+    if ((!(status_flags_ & 1) || (status_flags_ & 8)) && !emergency_active_)
+      fail("arm driver disabled or faulted");
     return;
   }
-
-  const size_t count = std::min(static_cast<size_t>(joint_count_), msg->position.size());
-  for (size_t i = 0; i < count; ++i) {
-    if (!sendJointCommand(static_cast<uint8_t>(i), msg->position[i])) {
-      ROS_WARN_THROTTLE(1.0, "Failed to send arm command for index %zu", i);
-    }
-  }
+  // Driver 0x36 replies use degrees*10, not the command's pulse units.
+  if (!msg->is_extended || msg->is_rtr || msg->is_error || msg->id != 0x500 || msg->dlc != 7 ||
+      msg->data[0] != 0x36 || msg->data[1] > 1 || msg->data[6] != 0x6B) return;
+  uint32_t raw = (static_cast<uint32_t>(msg->data[2]) << 24) |
+      (static_cast<uint32_t>(msg->data[3]) << 16) | (static_cast<uint32_t>(msg->data[4]) << 8) | msg->data[5];
+  double radians = raw * (std::acos(-1.0) / 1800.0);
+  if (msg->data[1]) radians = -radians;
+  position_time_ = ros::SteadyTime::now().toSec();
+  sensor_msgs::JointState state;
+  state.header.stamp = ros::Time::now();
+  state.name = {joint_name_};
+  state.position = {radians};
+  arm_state_pub_.publish(state);
 }
 
-void ArmControllerNode::canReceiveThread() {
-  while (running_.load() && ros::ok()) {
-    if (socket_fd_ < 0) {
-      openSocket();
-      ros::Duration(0.2).sleep();
-      continue;
-    }
-
-    struct can_frame raw;
-    const int nbytes = read(socket_fd_, &raw, sizeof(raw));
-    if (nbytes < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      ROS_ERROR_THROTTLE(1.0, "Arm CAN read failed: %s", std::strerror(errno));
-      closeSocket();
-      ros::Duration(0.2).sleep();
-      continue;
-    }
-    if (nbytes != static_cast<int>(sizeof(raw))) {
-      continue;
-    }
-
-    const uint32_t id = raw.can_id & CAN_EFF_MASK;
-    if (id < rx_can_base_id_ || id >= rx_can_base_id_ + static_cast<uint32_t>(joint_count_)) {
-      continue;
-    }
-    if (raw.can_dlc < 4) {
-      continue;
-    }
-
-    const uint8_t joint_idx = static_cast<uint8_t>(id - rx_can_base_id_);
-    const int32_t counts =
-        static_cast<int32_t>(static_cast<uint32_t>(raw.data[0]) |
-                             (static_cast<uint32_t>(raw.data[1]) << 8) |
-                             (static_cast<uint32_t>(raw.data[2]) << 16) |
-                             (static_cast<uint32_t>(raw.data[3]) << 24));
-    const double pos_rad = static_cast<double>(counts) / position_scale_counts_;
-
-    sensor_msgs::JointState state;
-    state.header.stamp = ros::Time::now();
-    state.name = joint_names_;
-
-    {
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      if (joint_idx < current_positions_.size()) {
-        current_positions_[joint_idx] = pos_rad;
-      }
-      state.position = current_positions_;
-    }
-
-    arm_state_pub_.publish(state);
+void ArmControllerNode::timerCallback(const ros::WallTimerEvent&) {
+  if (!ready()) {
+    const bool was_active = !motion_.latched();
+    if (was_active) fail("arm feedback or chassis readiness expired");
   }
+  if (!send(driverRead(5, query_status_ ? 0x3A : 0x36)) && !motion_.latched())
+    fail("arm feedback query transmit failure");
+  query_status_ = !query_status_;
 }
-
 }  // namespace arm_interface
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "arm_controller_node");
-  ros::NodeHandle nh;
-  ros::NodeHandle pnh("~");
-
-  arm_interface::ArmControllerNode node(nh, pnh);
-  ros::spin();
+  ros::NodeHandle nh, pnh("~");
+  try {
+    arm_interface::ArmControllerNode node(nh, pnh);
+    ros::spin();
+  } catch (const std::exception& error) { ROS_FATAL("Arm configuration failed: %s", error.what()); return 1; }
   return 0;
 }
