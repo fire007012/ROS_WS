@@ -40,6 +40,7 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   physical_start_sub_ = nh_.subscribe("/start_signal/physical", 1, &CmdVelMuxNode::physicalStartCallback, this);
 
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_muxed", 10);
+  requested_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_requested", 1);
   selected_source_pub_ = nh_.advertise<std_msgs::String>("/cmd_vel_mux/selected_source", 10, true);
   estop_state_pub_ = nh_.advertise<std_msgs::Bool>("/cmd_vel_mux/estop_active", 10, true);
 
@@ -103,6 +104,19 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
   const ros::Time now = ros::Time::now();
   const double dt = std::max(1e-3, (event.current_real - event.last_real).toSec());
 
+  // Safety must inspect the requested motion, never its own reduced/stopped
+  // output. Otherwise a stop releases itself and a warning compounds to zero.
+  geometry_msgs::Twist requested;
+  if (!estop_active_ && !chassis_locked_) {
+    for (const char* source : {"external", "teleop", "fixed_route"}) {
+      if (sourceActive(source, now)) {
+        requested = clampTwist(sources_[source].twist, dt, true);
+        break;
+      }
+    }
+  }
+  requested_vel_pub_.publish(requested);
+
   if (estop_active_) {
     publishStop("emergency_stop");
     return;
@@ -148,7 +162,14 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
 
 void CmdVelMuxNode::updateSourceCommand(const std::string& source_name, const geometry_msgs::Twist& msg) {
   SourceState& source = sources_[source_name];
-  source.twist = msg;
+  // Invalid commands must never turn into maximum speed through std::min/max.
+  source.twist = geometry_msgs::Twist();
+  if (std::isfinite(msg.linear.x) && std::isfinite(msg.linear.y) &&
+      std::isfinite(msg.angular.z)) {
+    source.twist.linear.x = msg.linear.x;
+    source.twist.linear.y = msg.linear.y;
+    source.twist.angular.z = msg.angular.z;
+  }
   source.stamp = ros::Time::now();
   source.has_msg = true;
 }

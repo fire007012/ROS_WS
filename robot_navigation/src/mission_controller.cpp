@@ -50,11 +50,11 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , voice_timing_active_(false)
     , stage_skip_attempted_(false)
     , competition_mode_(true)
-    , scan_session_id_(0)
-    , start_auth_token_(0x5A17)
     , audio_video_enabled_(false)
     , audio_ready_(false)
     , audio_active_(false)
+    , scan_session_id_(0)
+    , start_auth_token_(0x5A17)
     , chassis_locked_(false)
     , bed_verified_(false)
     , enable_vl53_circle_check_(true)
@@ -69,10 +69,16 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , right_range_topic_("/right/range")
 {
   // ── 参数读取 ──
-  pnh_.param<double>("stage_timeout_sec", stage_timeout_sec_, 30.0);
+  // mission_params.yaml keeps task settings under "mission". Accept legacy
+  // flat private parameters as well (standalone rosrun/test deployments).
+  const ros::NodeHandle mission_nh = pnh_.hasParam("mission")
+      ? ros::NodeHandle(pnh_, "mission") : pnh_;
+  mission_nh.param<double>("stage_timeout_sec", stage_timeout_sec_, 30.0);
   stage_timeout_default_sec_ = stage_timeout_sec_;
-  pnh_.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
-  pnh_.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
+  mission_nh.param<double>("navigation_stage_timeout_sec", navigation_stage_timeout_sec_, 75.0);
+  mission_nh.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
+  mission_nh.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
+  mission_nh.param("odom_timeout_sec", odom_timeout_sec_, 0.5);
   pnh_.param<bool>("competition_mode", competition_mode_, true);
   pnh_.param<bool>("audio_video_enabled", audio_video_enabled_, false);
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
@@ -92,25 +98,29 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   full_projection_radius_m_ = std::max(base_projection_radius_m_, full_projection_radius_m_);
   circle_boundary_margin_m_ = std::max(0.0, circle_boundary_margin_m_);
 
-  pnh_.param<std::string>("path_nurse_station", path_nurse_station_, "nurse_station");
-  pnh_.param<std::string>("path_bed1_circle", path_bed1_circle_, "bed1_circle");
-  pnh_.param<std::string>("path_bed3_circle", path_bed3_circle_, "bed3_circle");
-  pnh_.param<std::string>("path_home", path_home_, "HOME");
+  mission_nh.param<std::string>("path_nurse_station", path_nurse_station_, "nurse_station");
+  mission_nh.param<std::string>("path_bed1_circle", path_bed1_circle_, "bed1_circle");
+  mission_nh.param<std::string>("path_bed3_circle", path_bed3_circle_, "bed3_circle");
+  mission_nh.param<std::string>("path_bed1_to_bed3", path_bed1_to_bed3_, "bed1_to_bed3");
+  mission_nh.param<std::string>("path_bed3_to_bed1", path_bed3_to_bed1_, "bed3_to_bed1");
+  mission_nh.param<std::string>("path_bed1_to_home", path_bed1_to_home_, "bed1_to_home");
+  mission_nh.param<std::string>("path_bed3_to_home", path_bed3_to_home_, "bed3_to_home");
+  mission_nh.param<std::string>("path_home", path_home_, "HOME");
 
   // 圆圈参数
-  pnh_.param<double>("circle_bed1_x", circle_bed1_.center_x, 0.0);
-  pnh_.param<double>("circle_bed1_y", circle_bed1_.center_y, 0.0);
-  pnh_.param<double>("circle_bed1_radius", circle_bed1_.radius, 0.3);
+  mission_nh.param<double>("circle_bed1_x", circle_bed1_.center_x, 0.0);
+  mission_nh.param<double>("circle_bed1_y", circle_bed1_.center_y, 0.0);
+  mission_nh.param<double>("circle_bed1_radius", circle_bed1_.radius, 0.3);
 
-  pnh_.param<double>("circle_bed3_x", circle_bed3_.center_x, 0.0);
-  pnh_.param<double>("circle_bed3_y", circle_bed3_.center_y, 0.0);
-  pnh_.param<double>("circle_bed3_radius", circle_bed3_.radius, 0.3);
+  mission_nh.param<double>("circle_bed3_x", circle_bed3_.center_x, 0.0);
+  mission_nh.param<double>("circle_bed3_y", circle_bed3_.center_y, 0.0);
+  mission_nh.param<double>("circle_bed3_radius", circle_bed3_.radius, 0.3);
 
-  pnh_.param<double>("home_hold_sec", home_hold_sec_, 5.0);
+  mission_nh.param<double>("home_hold_sec", home_hold_sec_, 5.0);
 
   // 起始区多边形顶点（从参数加载）
   XmlRpc::XmlRpcValue home_vertices;
-  if (pnh_.getParam("home_zone_vertices", home_vertices) &&
+  if (mission_nh.getParam("home_zone_vertices", home_vertices) &&
       home_vertices.getType() == XmlRpc::XmlRpcValue::TypeArray) {
     for (int i = 0; i < home_vertices.size(); ++i) {
       Point2D pt;
@@ -153,6 +163,8 @@ bool MissionController::init() {
 
   fine_tuning_done_sub_ = nh_.subscribe("/fine_tuning_done", 1,
                                         &MissionController::fineTuningDoneCallback, this);
+  fine_tuning_failed_sub_ = nh_.subscribe("/fine_tuning_failed", 1,
+                                        &MissionController::fineTuningFailedCallback, this);
 
   medicine_release_done_sub_ = nh_.subscribe("/medicine_release_done", 1, &MissionController::medicineReleaseDoneCallback, this);
   audio_ready_sub_ = nh_.subscribe("/Ready", 1, &MissionController::audioReadyCallback, this);
@@ -162,6 +174,8 @@ bool MissionController::init() {
   mission_finished_pub_ = nh_.advertise<std_msgs::Bool>("/mission_finished", 1, true);
   mission_timeout_pub_  = nh_.advertise<std_msgs::Bool>("/mission_timeout", 1, true);
   stop_all_pub_         = nh_.advertise<std_msgs::Empty>("/stop_all", 1, true);
+  cancel_pub_           = nh_.advertise<std_msgs::Empty>("/mission/cancel", 1);
+  actions_enabled_pub_  = nh_.advertise<std_msgs::Bool>("/mission/actions_enabled", 1, true);
   display_text_pub_     = nh_.advertise<std_msgs::String>("/robot_display", 1, true);
   chassis_lock_pub_     = nh_.advertise<std_msgs::Bool>("/chassis_lock", 1, true);
   scan_target_bed_pub_ = nh_.advertise<std_msgs::Int8>("/barcode_scan/target_bed", 1, true);
@@ -283,6 +297,14 @@ void MissionController::barcodeBed3Callback(const std_msgs::String::ConstPtr& ms
 void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& msg) {
   if (msg->data != start_auth_token_) { ROS_WARN("unauthenticated start signal"); return; }
   if (estop_latched_) { ROS_WARN("[mission_controller] start ignored while ESTOP is latched"); return; }
+  if (mission_started_ && !mission_completed_) return;
+  if (service_future_.valid()) {
+    if (service_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      ROS_WARN("[mission_controller] start ignored until cancelled service has returned");
+      return;
+    }
+    service_future_.get();  // Discard a result from the cancelled generation.
+  }
   // 如果上次任务已完成/失败/超时，允许重新启动
   if (mission_completed_.load()) {
     ROS_INFO("[mission_controller] 上次任务已结束，准备重新启动");
@@ -292,6 +314,11 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
   if (mission_started_.load()) return;
 
   resetMissionState();
+  ++mission_generation_;
+  std_msgs::Bool enabled;
+  enabled.data = true;
+  actions_enabled_pub_.publish(enabled);
+  unlockChassis();
   mission_started_.store(true);
   enterState(State::GOTO_NURSE);
 
@@ -309,6 +336,7 @@ void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& ms
   if (!msg->data || estop_latched_) return;
   ROS_ERROR("[mission_controller] physical/software ESTOP: cancelling mission and navigation");
   estop_latched_ = true;
+  cancelMissionActions();
   mission_started_.store(false);
   mission_completed_.store(true);
   mission_timer_.stop();
@@ -316,7 +344,6 @@ void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& ms
   current_state_ = State::STOP;
   chassis_locked_ = true;
   std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
-  std_msgs::Empty stop; stop_all_pub_.publish(stop);
   std_msgs::String display; display.data = "急停: 任务已停止"; display_text_pub_.publish(display);
 }
 
@@ -326,8 +353,8 @@ void MissionController::emergencyResetCallback(const std_msgs::Bool::ConstPtr& m
   mission_started_.store(false);
   mission_completed_.store(false);
   current_state_ = State::IDLE;
-  chassis_locked_ = false;
-  std_msgs::Bool lock; lock.data = false; chassis_lock_pub_.publish(lock);
+  chassis_locked_ = true;
+  std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
   std_msgs::String display; display.data = "急停已复位，等待启动"; display_text_pub_.publish(display);
   ROS_WARN("[mission_controller] ESTOP reset accepted by upper safety policy");
 }
@@ -335,8 +362,19 @@ void MissionController::emergencyResetCallback(const std_msgs::Bool::ConstPtr& m
 // ── 回调: 里程计 ───────────────────────────────────────────
 void MissionController::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
   std::lock_guard<std::mutex> lock(odom_mutex_);
+  const double age = msg->header.stamp.isZero() ? 0.0 :
+      (ros::Time::now() - msg->header.stamp).toSec();
+  const auto& p = msg->pose.pose.position;
+  const auto& q = msg->pose.pose.orientation;
+  const auto& v = msg->twist.twist;
+  odom_received_ = age >= -0.05 && age <= odom_timeout_sec_ &&
+      std::isfinite(p.x) && std::isfinite(p.y) &&
+      std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w) &&
+      (q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w) > 1e-9 &&
+      std::isfinite(v.linear.x) && std::isfinite(v.linear.y) && std::isfinite(v.angular.z);
+  if (!odom_received_) return;
   current_odom_ = *msg;
-  odom_received_ = true;
+  last_odom_time_ = ros::SteadyTime::now();
 }
 
 // ── 回调: 路径完成信号 ─────────────────────────────────────
@@ -348,9 +386,17 @@ void MissionController::pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg
 
 // ── 回调: 微调完成信号 ─────────────────────────────────────
 void MissionController::fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
-  if (msg->data) {
+  if (msg->data && (current_state_ == State::POSITION_IN_CIRCLE_A ||
+                    current_state_ == State::POSITION_IN_CIRCLE_B)) {
     fine_tuning_done_received_.store(true);
     ROS_INFO("[mission_controller] 收到微调完成信号");
+  }
+}
+
+void MissionController::fineTuningFailedCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (msg->data && (current_state_ == State::POSITION_IN_CIRCLE_A ||
+                    current_state_ == State::POSITION_IN_CIRCLE_B)) {
+    enterFailedState("床旁微调失败，保持停车");
   }
 }
 
@@ -363,24 +409,12 @@ void MissionController::audioActiveCallback(const std_msgs::Bool::ConstPtr& msg)
 
 // ── 全局超时回调 ───────────────────────────────────────────
 void MissionController::missionTimerCallback(const ros::TimerEvent& /*event*/) {
+  if (!mission_started_ || mission_completed_) return;
   ROS_ERROR("[mission_controller] ====== 全局任务超时！(%.0f s) ======",
             mission_timeout_sec_);
 
-  // 如果尚未在回归途中，尝试直接返回起始区（仍可得回归分）
-  if (current_state_ != State::RETURN_HOME &&
-      current_state_ != State::HOME_CHECK &&
-      current_state_ != State::STOP &&
-      current_state_ != State::TIMEOUT &&
-      current_state_ != State::FAILED) {
-    ROS_WARN("[mission_controller] 超时恢复: 跳过当前任务，直接返回起始区");
-    unlockChassis();
-    enterState(State::RETURN_HOME);
-    // 重新设置一个短超时用于回归
-    stage_start_time_ = ros::Time::now();
-    stage_timeout_sec_ = 60.0;  // 给回归60秒
-    return;
-  }
-
+  // Bedside return routes are valid only from their specified origins.
+  // An arbitrary mid-route timeout must cancel and stop in place.
   enterTimeoutState();
 }
 
@@ -430,6 +464,8 @@ void MissionController::processState() {
     enterFailedState("阶段超时: " + stateToString(current_state_));
     return;
   }
+
+  if (pollServiceCall()) return;
 
   // ── 首次进入：执行入口动作 ──
   if (!action_initiated_) {
@@ -484,7 +520,7 @@ void MissionController::processState() {
       if (checkHomeCheckComplete()) return;
       break;
 
-    // OPEN_BOX / PLACE_MEDICINE / VOICE 在入口动作中已同步完成并切换状态
+    // Service results are consumed by pollServiceCall without blocking callbacks.
     default:
       break;
   }
@@ -493,6 +529,10 @@ void MissionController::processState() {
 // ── 进入新状态 ─────────────────────────────────────────────
 void MissionController::enterState(State new_state) {
   current_state_ = new_state;
+  const bool navigating = new_state == State::GOTO_NURSE ||
+      new_state == State::GOTO_BED_A || new_state == State::GOTO_BED_B ||
+      new_state == State::RETURN_HOME;
+  stage_timeout_sec_ = navigating ? navigation_stage_timeout_sec_ : stage_timeout_default_sec_;
   action_initiated_ = false;
   stage_start_time_ = ros::Time::now();
   stage_skip_attempted_ = false;
@@ -506,9 +546,7 @@ void MissionController::enterState(State new_state) {
 void MissionController::actionGotoNurse() {
   ROS_INFO("[mission_controller] 动作: 导航到护士台");
   path_finished_received_.store(false);
-  if (!callSelectPath(path_nurse_station_)) {
-    enterFailedState("选择路径失败: " + path_nurse_station_);
-  }
+  callSelectPath(path_nurse_station_);
 }
 
 void MissionController::actionScanQr() {
@@ -523,20 +561,14 @@ void MissionController::actionGotoBedA() {
   std::string path = (bed == 1) ? path_bed1_circle_ : path_bed3_circle_;
   ROS_INFO("[mission_controller] 动作: 导航到 %d 床 (%s)", bed, path.c_str());
   path_finished_received_.store(false);
-  if (!callSelectPath(path)) {
-    enterFailedState("选择路径失败: " + path);
-  }
+  callSelectPath(path);
 }
 
 void MissionController::actionPositionInCircleA() {
   ROS_INFO("[mission_controller] 动作: 启动微调（A床）");
   fine_tuning_done_received_.store(false);
   medicine_release_done_received_.store(false);
-  if (!callFineTuningStart()) {
-    // 微调失败不致命，继续流程
-    ROS_WARN("[mission_controller] 微调启动失败，跳过微调继续执行");
-    fine_tuning_done_received_.store(true);
-  }
+  callFineTuningStart();
 }
 
 void MissionController::actionScanBarcodeA() {
@@ -556,29 +588,13 @@ void MissionController::actionScanBarcodeA() {
 void MissionController::actionOpenBoxA() {
   ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.first_box);
   lockChassis();
-  if (!callOpenMedicineBox(qr_result_.first_box)) {
-    unlockChassis();
-    enterFailedState("打开药箱失败");
-    return;
-  }
-  enterState(State::PLACE_MEDICINE_A);
+  callOpenMedicineBox(qr_result_.first_box);
 }
 
 void MissionController::actionPlaceMedicineA() {
   int bed = qr_result_.first_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
-  if (!callArmPlaceMedicine(bed, qr_result_.first_box)) {
-    ROS_ERROR("[mission_controller] 放置药品到 %d 床失败", bed);
-    unlockChassis();
-    enterFailedState("放置药品失败");
-    return;
-  }
-
-  // ── 记录放置完成时间（用于语音5秒校验 P2-1） ──
-  medicine_placed_time_ = ros::Time::now();
-  voice_timing_active_ = true;
-
-  enterState(State::VOICE_A);
+  callArmPlaceMedicine(bed, qr_result_.first_box);
 }
 
 void MissionController::actionVoiceA() {
@@ -600,32 +616,22 @@ void MissionController::actionVoiceA() {
   }
   std::string text = std::to_string(bed) + "床病人请取药";
   ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  if (!callSpeak(text)) { enterFailedState("语音播报失败"); return; }
-
-  // ── 语音播报完成后解锁底盘（P1-4） ──
-  unlockChassis();
-
-  enterState(State::GOTO_BED_B);
+  callSpeak(text);
 }
 
 void MissionController::actionGotoBedB() {
   int bed = qr_result_.second_bed;
-  std::string path = (bed == 1) ? path_bed1_circle_ : path_bed3_circle_;
+  std::string path = (bed == 1) ? path_bed3_to_bed1_ : path_bed1_to_bed3_;
   ROS_INFO("[mission_controller] 动作: 导航到 %d 床 (%s)", bed, path.c_str());
   path_finished_received_.store(false);
-  if (!callSelectPath(path)) {
-    enterFailedState("选择路径失败: " + path);
-  }
+  callSelectPath(path);
 }
 
 void MissionController::actionPositionInCircleB() {
   ROS_INFO("[mission_controller] 动作: 启动微调（B床）");
   fine_tuning_done_received_.store(false);
   medicine_release_done_received_.store(false);
-  if (!callFineTuningStart()) {
-    ROS_WARN("[mission_controller] 微调启动失败，跳过微调继续执行");
-    fine_tuning_done_received_.store(true);
-  }
+  callFineTuningStart();
 }
 
 void MissionController::actionScanBarcodeB() {
@@ -645,27 +651,13 @@ void MissionController::actionScanBarcodeB() {
 void MissionController::actionOpenBoxB() {
   ROS_INFO("[mission_controller] 准备执行放药，药箱=%d（护士台二维码指定）", qr_result_.second_box);
   lockChassis();
-  if (!callOpenMedicineBox(qr_result_.second_box)) {
-    unlockChassis();
-    enterFailedState("打开药箱失败");
-    return;
-  }
-  enterState(State::PLACE_MEDICINE_B);
+  callOpenMedicineBox(qr_result_.second_box);
 }
 
 void MissionController::actionPlaceMedicineB() {
   int bed = qr_result_.second_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
-  if (!callArmPlaceMedicine(bed, qr_result_.second_box)) {
-    unlockChassis();
-    enterFailedState("放置药品失败");
-    return;
-  }
-
-  medicine_placed_time_ = ros::Time::now();
-  voice_timing_active_ = true;
-
-  enterState(State::VOICE_B);
+  callArmPlaceMedicine(bed, qr_result_.second_box);
 }
 
 void MissionController::actionVoiceB() {
@@ -686,30 +678,21 @@ void MissionController::actionVoiceB() {
   }
   std::string text = std::to_string(bed) + "床病人请取药";
   ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  if (!callSpeak(text)) { enterFailedState("语音播报失败"); return; }
-
-  // 解锁底盘
-  unlockChassis();
-
-  enterState(State::RETURN_HOME);
+  callSpeak(text);
 }
 
 void MissionController::actionReturnHome() {
   // 根据最后访问的病床选择专用返回路径（更高效）
   int last_bed = qr_result_.second_bed;
-  std::string home_path = (last_bed == 1) ? "bed1_to_home" :
-                          (last_bed == 3) ? "bed3_to_home" : path_home_;
+  std::string home_path = (last_bed == 1) ? path_bed1_to_home_ :
+                          (last_bed == 3) ? path_bed3_to_home_ : path_home_;
 
   ROS_INFO("[mission_controller] 动作: 返回起始区 (使用路径: %s)", home_path.c_str());
   path_finished_received_.store(false);
 
-  // 先尝试病床专用路径，失败则回退到通用 HOME 路径
-  if (!callSelectPath(home_path) && home_path != path_home_) {
-    ROS_WARN("[mission_controller] 专用返回路径 '%s' 失败，回退到通用 HOME 路径", home_path.c_str());
-    if (!callSelectPath(path_home_)) {
-      enterFailedState("选择返回路径失败");
-    }
-  }
+  // HOME starts at P7; falling back to it from a bedside could cut through
+  // the nurse station. A missing dedicated route must stop the mission.
+  callSelectPath(home_path);
 }
 
 void MissionController::actionHomeCheck() {
@@ -740,6 +723,8 @@ bool MissionController::checkScanQrComplete() {
   if (qr_received_.load()) {
     if ((qr_result_.first_bed != 1 && qr_result_.first_bed != 3) ||
         (qr_result_.first_box != 1 && qr_result_.first_box != 3) ||
+        (qr_result_.second_bed != 1 && qr_result_.second_bed != 3) ||
+        (qr_result_.second_box != 1 && qr_result_.second_box != 3) ||
         qr_result_.second_bed == qr_result_.first_bed ||
         qr_result_.second_box == qr_result_.first_box) {
       enterFailedState("QR 结果为空");
@@ -753,14 +738,15 @@ bool MissionController::checkScanQrComplete() {
 
 bool MissionController::checkPositionInCircleComplete() {
   if (fine_tuning_done_received_.load()) {
-    const bool is_bed1 = current_state_ == State::POSITION_IN_CIRCLE_A;
-    const CircleDef& circle = is_bed1 ? circle_bed1_ : circle_bed3_;
+    const bool is_first_visit = current_state_ == State::POSITION_IN_CIRCLE_A;
+    const int bed = is_first_visit ? qr_result_.first_bed : qr_result_.second_bed;
+    const CircleDef& circle = (bed == 1) ? circle_bed1_ : circle_bed3_;
     // The bed circle excludes the arm: only the complete chassis footprint is
     // required to be inside it. VL53 freshness/clearance is checked as well.
     if (!isProjectionInsideCircle(circle, false) || !areVl53RangesValid()) {
       return false;
     }
-    if (is_bed1) {
+    if (is_first_visit) {
       enterState(State::SCAN_BARCODE_A);
     } else {
       enterState(State::SCAN_BARCODE_B);
@@ -806,12 +792,29 @@ bool MissionController::checkScanBarcodeComplete() {
 
 bool MissionController::checkHomeCheckComplete() {
   if (!odom_received_.load()) return false;
+  if ((ros::SteadyTime::now() - last_odom_time_).toSec() > odom_timeout_sec_) {
+    home_arrived_ = false;
+    return false;
+  }
 
   ros::Time now = ros::Time::now();
 
   if (!isRobotInHomeZone() || !areVl53RangesValid()) {
     home_arrived_ = false;
     return false;
+  }
+
+  // Count the five-second hold only while the entire vehicle is stationary.
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    const auto& velocity = current_odom_.twist.twist;
+    if (!std::isfinite(velocity.linear.x) || !std::isfinite(velocity.linear.y) ||
+        !std::isfinite(velocity.angular.z) ||
+        std::hypot(velocity.linear.x, velocity.linear.y) > 0.01 ||
+        std::abs(velocity.angular.z) > 0.02) {
+      home_arrived_ = false;
+      return false;
+    }
   }
 
   if (!home_arrived_) {
@@ -829,8 +832,8 @@ bool MissionController::checkHomeCheckComplete() {
     enterState(State::STOP);
     mission_completed_.store(true);
 
-    std_msgs::Empty stop;
-    stop_all_pub_.publish(stop);
+    mission_timer_.stop();
+    lockChassis();
 
     std_msgs::Bool done;
     done.data = true;
@@ -858,112 +861,70 @@ bool MissionController::isStageTimedOut() const {
 // ======================================================================
 //  服务调用辅助
 // ======================================================================
-bool MissionController::callSelectPath(const std::string& path_name) {
-  if (!path_select_client_.exists()) {
-    ROS_ERROR("[mission_controller] /select_path 服务不可用");
-    return false;
-  }
-
+void MissionController::callSelectPath(const std::string& path_name) {
   path_manager::SelectPath srv;
   srv.request.path_name = path_name;
-
-  if (!path_select_client_.call(srv)) {
-    ROS_ERROR("[mission_controller] 调用 /select_path('%s') 失败", path_name.c_str());
-    return false;
-  }
-  if (!srv.response.success) {
-    ROS_ERROR("[mission_controller] /select_path('%s') 返回失败: %s",
-              path_name.c_str(), srv.response.message.c_str());
-    return false;
-  }
-
-  ROS_INFO("[mission_controller] 路径 '%s' 选择成功", path_name.c_str());
-  return true;
+  beginServiceCall(path_select_client_, srv);
 }
 
-bool MissionController::callFineTuningStart() {
-  if (!fine_tuning_client_.exists()) {
-    ROS_ERROR("[mission_controller] /fine_tuning/start 服务不可用");
-    return false;
-  }
-
+void MissionController::callFineTuningStart() {
   std_srvs::Trigger srv;
-  if (!fine_tuning_client_.call(srv)) {
-    ROS_ERROR("[mission_controller] 调用 /fine_tuning/start 失败");
-    return false;
-  }
-  if (!srv.response.success) {
-    ROS_ERROR("[mission_controller] /fine_tuning/start 返回失败: %s",
-              srv.response.message.c_str());
-    return false;
-  }
-
-  ROS_INFO("[mission_controller] 微调已启动（等待 /fine_tuning_done 信号）");
-  return true;
+  beginServiceCall(fine_tuning_client_, srv);
 }
 
-bool MissionController::callOpenMedicineBox(int8_t box_id) {
-  if (!open_box_client_.exists()) {
-    ROS_ERROR("[mission_controller] /open_medicine_box 服务不可用");
-    return false;
-  }
-
+void MissionController::callOpenMedicineBox(int8_t box_id) {
   robot_navigation::OpenMedicineBox srv;
   srv.request.box_id = box_id;
-
-  if (!open_box_client_.call(srv)) {
-    ROS_ERROR("[mission_controller] 调用 /open_medicine_box(%d) 失败", box_id);
-    return false;
-  }
-  if (!srv.response.success) {
-    ROS_ERROR("[mission_controller] /open_medicine_box(%d) 返回失败: %s",
-              box_id, srv.response.message.c_str());
-    return false;
-  }
-
-  ROS_INFO("[mission_controller] 药箱 %d 已打开", box_id);
-  return true;
+  beginServiceCall(open_box_client_, srv);
 }
 
-bool MissionController::callArmPlaceMedicine(int8_t bed_id, int8_t box_id) {
-  if (!arm_place_client_.exists()) {
-    ROS_ERROR("[mission_controller] /arm_place_medicine 服务不可用");
-    return false;
-  }
-
+void MissionController::callArmPlaceMedicine(int8_t bed_id, int8_t box_id) {
   arm_and_gripper::ArmPlaceMedicine srv;
   srv.request.bed_id = bed_id;
   srv.request.box_id = box_id;
+  beginServiceCall(arm_place_client_, srv);
+}
 
-  if (!arm_place_client_.call(srv)) {
-    ROS_ERROR("[mission_controller] 调用 /arm_place_medicine(%d) 失败", bed_id);
-    return false;
-  }
-  if (!srv.response.success) {
-    ROS_ERROR("[mission_controller] /arm_place_medicine(%d) 返回失败: %s",
-              bed_id, srv.response.message.c_str());
-    return false;
-  }
+void MissionController::callSpeak(const std::string& text) {
+  robot_navigation::Speak srv;
+  srv.request.text = text;
+  beginServiceCall(speak_client_, srv);
+}
 
-  ROS_INFO("[mission_controller] 药品已放置到 %d 床", bed_id);
+bool MissionController::pollServiceCall() {
+  if (!service_future_.valid()) return false;
+  if (service_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
+  const auto result = service_future_.get();
+  if (service_generation_ != mission_generation_ || service_state_ != current_state_) return true;
+  if (!result.success) {
+    enterFailedState("服务失败 (" + stateToString(service_state_) + "): " + result.message);
+    return true;
+  }
+  switch (service_state_) {
+    case State::OPEN_BOX_A: enterState(State::PLACE_MEDICINE_A); break;
+    case State::OPEN_BOX_B: enterState(State::PLACE_MEDICINE_B); break;
+    case State::PLACE_MEDICINE_A:
+    case State::PLACE_MEDICINE_B:
+      medicine_placed_time_ = ros::Time::now();
+      voice_timing_active_ = true;
+      enterState(service_state_ == State::PLACE_MEDICINE_A ? State::VOICE_A : State::VOICE_B);
+      break;
+    case State::VOICE_A: unlockChassis(); enterState(State::GOTO_BED_B); break;
+    case State::VOICE_B: unlockChassis(); enterState(State::RETURN_HOME); break;
+    default: break;  // Navigation/fine tuning complete through their event topics.
+  }
   return true;
 }
 
-bool MissionController::callSpeak(const std::string& text) {
-  if (!speak_client_.exists()) {
-    ROS_WARN("[mission_controller] /speak 服务不可用，跳过语音播报");
-    return false;
-  }
-
-  robot_navigation::Speak srv;
-  srv.request.text = text;
-
-  if (!speak_client_.call(srv)) {
-    ROS_WARN("[mission_controller] 调用 /speak 失败");
-    return false;
-  }
-  ROS_INFO("[mission_controller] 语音播报: \"%s\"", text.c_str());
-  return srv.response.success;
+void MissionController::cancelMissionActions() {
+  ++mission_generation_;
+  mission_timer_.stop();
+  lockChassis();
+  std_msgs::Bool enabled;
+  enabled.data = false;
+  actions_enabled_pub_.publish(enabled);
+  std_msgs::Empty cancel;
+  cancel_pub_.publish(cancel);
 }
 
 // ── 判断机器人是否在起始区内 ───────────────────────────────
@@ -1018,6 +979,7 @@ bool MissionController::isRobotInHomeZone() const {
 bool MissionController::isProjectionInsideCircle(const CircleDef& circle,
                                                   bool include_arm) const {
   if (!odom_received_.load()) return false;
+  if ((ros::SteadyTime::now() - last_odom_time_).toSec() > odom_timeout_sec_) return false;
 
   nav_msgs::Odometry odom;
   {
@@ -1050,10 +1012,15 @@ bool MissionController::areVl53RangesValid() const {
   int valid_count = 0;
   for (size_t i = 0; i < 3; ++i) {
     const double age = (now - *stamps[i]).toSec();
+    const double header_age = samples[i]->header.stamp.isZero() ? 0.0 :
+        (now - samples[i]->header.stamp).toSec();
     const bool valid = !stamps[i]->isZero() && age >= 0.0 &&
                        age <= vl53_circle_timeout_sec_ &&
+                       header_age >= -0.05 && header_age <= vl53_circle_timeout_sec_ &&
                        std::isfinite(samples[i]->range) &&
+                       std::isfinite(samples[i]->min_range) && std::isfinite(samples[i]->max_range) &&
                        samples[i]->range >= vl53_min_clearance_m_ &&
+                       samples[i]->range >= samples[i]->min_range &&
                        samples[i]->range <= samples[i]->max_range;
     if (valid) ++valid_count;
   }
@@ -1098,6 +1065,7 @@ void MissionController::resetMissionState() {
 
 // ── 进入失败状态 ───────────────────────────────────────────
 void MissionController::enterFailedState(const std::string& reason) {
+  cancelMissionActions();
   ROS_ERROR("[mission_controller] ====== 任务失败: %s ======", reason.c_str());
   current_state_ = State::FAILED;
   mission_completed_.store(true);
@@ -1116,6 +1084,7 @@ void MissionController::enterFailedState(const std::string& reason) {
 
 // ── 进入超时状态 ───────────────────────────────────────────
 void MissionController::enterTimeoutState() {
+  cancelMissionActions();
   current_state_ = State::TIMEOUT;
   mission_completed_.store(true);
 
@@ -1165,10 +1134,8 @@ void MissionController::lockChassis() {
   lock_msg.data = true;
   chassis_lock_pub_.publish(lock_msg);
 
-  // 同时发布停止指令确保底盘静止
-  std_msgs::Empty stop;
-  stop_all_pub_.publish(stop);
-
+  // The mux stops immediately on /chassis_lock. /stop_all is reserved for
+  // actual faults because health_monitor converts it to a latched ESTOP.
   ROS_INFO("[mission_controller] 🔒 底盘已锁死");
 }
 

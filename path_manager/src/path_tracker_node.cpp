@@ -31,6 +31,7 @@ PathTracker::PathTracker(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , position_tolerance_(0.05)
     , heading_tolerance_(0.08)
     , use_turn_then_move_(false)
+    , use_holonomic_(false)
     , arrival_hold_time_(0.5)
     , state_(State::WAITING_FOR_PATH)
 {}
@@ -46,7 +47,9 @@ bool PathTracker::init() {
   pnh_.param<double>("position_tolerance", position_tolerance_, 0.05);
   pnh_.param<double>("heading_tolerance", heading_tolerance_, 0.08);
   pnh_.param<bool>("use_turn_then_move", use_turn_then_move_, false);
+  pnh_.param<bool>("use_holonomic", use_holonomic_, false);
   pnh_.param<double>("arrival_hold_time", arrival_hold_time_, 0.5);
+  pnh_.param("odom_timeout_sec", odom_timeout_sec_, 0.5);
 
   // 也支持从全局参数读取速度限制（与 robot_params.yaml 一致）
   nh_.param("/robot/max_linear_vel", max_linear_vel_, max_linear_vel_);
@@ -61,6 +64,9 @@ bool PathTracker::init() {
                                       &PathTracker::pathRevisionCallback, this);
   odom_sub_ = nh_.subscribe("/odom", 10,
                             &PathTracker::odomCallback, this);
+  estop_sub_ = nh_.subscribe("/emergency_stop", 1, &PathTracker::emergencyStopCallback, this);
+  reset_sub_ = nh_.subscribe("/emergency_stop/reset", 1, &PathTracker::emergencyResetCallback, this);
+  cancel_sub_ = nh_.subscribe("/mission/cancel", 1, &PathTracker::cancelCallback, this);
 
   // 发布到 cmd_vel_mux 的 external 输入（优先级: safety > external > teleop > fixed_route）
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_external", 10);
@@ -75,7 +81,8 @@ bool PathTracker::init() {
 
   ROS_INFO("[path_tracker] 初始化完成");
   ROS_INFO("[path_tracker]   控制频率: %.1f Hz", control_rate_hz_);
-  ROS_INFO("[path_tracker]   控制策略: %s", use_turn_then_move_ ? "先转向后前进" : "同时控制");
+  ROS_INFO("[path_tracker]   控制策略: %s", use_holonomic_ ? "全向平移" :
+           (use_turn_then_move_ ? "先转向后前进" : "同时控制"));
   ROS_INFO("[path_tracker]   Kp_linear=%.2f, Kp_angular=%.2f", kp_linear_, kp_angular_);
   ROS_INFO("[path_tracker]   位置容差=%.3f m, 朝向容差=%.3f rad", position_tolerance_, heading_tolerance_);
   ROS_INFO("[path_tracker]   最大速度: v=%.2f m/s, ω=%.2f rad/s", max_linear_vel_, max_angular_vel_);
@@ -91,6 +98,12 @@ bool PathTracker::init() {
 
 // ── /path_points 回调 ──────────────────────────────────────
 void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& msg) {
+  if (estop_latched_ || require_new_path_) return;
+  if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
+      !std::isfinite(msg->tolerance) || (msg->has_yaw && !std::isfinite(msg->yaw))) {
+    cancelTarget();
+    return;
+  }
   if (!msg->frame_id.empty() && msg->frame_id != "odom") {
     ROS_ERROR_THROTTLE(2.0, "[path_tracker] 拒绝非 odom 路径点 frame_id=%s", msg->frame_id.c_str());
     has_target_ = false;
@@ -147,6 +160,8 @@ void PathTracker::pathHasNextCallback(const std_msgs::Bool::ConstPtr& msg) {
 void PathTracker::pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg) {
   if (msg->data == path_revision_) return;
   path_revision_ = msg->data;
+  if (estop_latched_) return;
+  require_new_path_ = false;
   has_target_ = false;
   waiting_for_next_point_ = false;
   path_completed_ = false;
@@ -161,6 +176,13 @@ void PathTracker::pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg) {
 
 // ── /odom 回调 ─────────────────────────────────────────────
 void PathTracker::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
+  if (!std::isfinite(msg->pose.pose.position.x) || !std::isfinite(msg->pose.pose.position.y)) return;
+  const auto& orientation = msg->pose.pose.orientation;
+  if (!std::isfinite(orientation.x) || !std::isfinite(orientation.y) ||
+      !std::isfinite(orientation.z) || !std::isfinite(orientation.w)) return;
+  if (!msg->header.stamp.isZero() &&
+      std::abs((ros::Time::now() - msg->header.stamp).toSec()) > odom_timeout_sec_) return;
+  last_odom_time_ = ros::SteadyTime::now();
   current_x_ = msg->pose.pose.position.x;
   current_y_ = msg->pose.pose.position.y;
 
@@ -173,8 +195,42 @@ void PathTracker::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
   has_odom_ = true;
 }
 
+void PathTracker::cancelTarget() {
+  require_new_path_ = true;
+  has_target_ = false;
+  waiting_for_next_point_ = false;
+  path_completed_ = false;
+  state_ = State::STOPPED;
+  publishStop();
+  std_msgs::Bool unfinished;
+  unfinished.data = false;
+  path_finished_pub_.publish(unfinished);
+}
+
+void PathTracker::emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data) return;
+  estop_latched_ = true;
+  cancelTarget();
+}
+
+void PathTracker::emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data) return;
+  estop_latched_ = false;
+  // Reset only clears the latch. A new /select_path revision is required.
+  cancelTarget();
+}
+
+void PathTracker::cancelCallback(const std_msgs::Empty::ConstPtr&) {
+  cancelTarget();
+}
+
 // ── 控制定时器 ─────────────────────────────────────────────
 void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
+  if (estop_latched_ || require_new_path_ ||
+      (has_odom_ && (ros::SteadyTime::now() - last_odom_time_).toSec() > odom_timeout_sec_)) {
+    publishStop();
+    return;
+  }
   if (!has_odom_) {
     ROS_WARN_THROTTLE(2.0, "[path_tracker] 等待 /odom 数据...");
     return;
@@ -239,13 +295,13 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
       }
 
       // 计算并发布控制量
-      double cmd_vx = 0.0, cmd_omega = 0.0;
+      double cmd_vx = 0.0, cmd_vy = 0.0, cmd_omega = 0.0;
       computeControl(target, current_x_, current_y_, current_yaw_,
-                     cmd_vx, cmd_omega);
+                     cmd_vx, cmd_vy, cmd_omega);
 
       geometry_msgs::Twist twist;
       twist.linear.x = cmd_vx;
-      twist.linear.y = 0.0;
+      twist.linear.y = cmd_vy;
       twist.angular.z = cmd_omega;
       cmd_vel_pub_.publish(twist);
       break;
@@ -298,10 +354,26 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
 void PathTracker::computeControl(const path_manager::PathPoint& target,
                                  double current_x, double current_y,
                                  double current_yaw,
-                                 double& cmd_vx, double& cmd_omega) {
+                                 double& cmd_vx, double& cmd_vy, double& cmd_omega) {
   double dx = target.x - current_x;
   double dy = target.y - current_y;
   double distance = std::sqrt(dx * dx + dy * dy);
+  cmd_vy = 0.0;
+
+  if (use_holonomic_) {
+    // Position error is in odom; Twist translation must be in base_link.
+    // Negative vx exits a bedside circle without turning the chassis.
+    const double tolerance = target.tolerance > 0.0 ? target.tolerance : position_tolerance_;
+    const double speed = distance > tolerance
+        ? std::min(max_linear_vel_, kp_linear_ * distance) : 0.0;
+    const double scale = distance > 1e-9 ? speed / distance : 0.0;
+    cmd_vx = scale * (std::cos(current_yaw) * dx + std::sin(current_yaw) * dy);
+    cmd_vy = scale * (-std::sin(current_yaw) * dx + std::cos(current_yaw) * dy);
+    cmd_omega = target.has_yaw
+        ? clamp(kp_angular_ * normalizeAngle(target.yaw - current_yaw),
+                -max_angular_vel_, max_angular_vel_) : 0.0;
+    return;
+  }
 
   double target_heading = (target.has_yaw && distance <= ((target.tolerance > 0.0) ? target.tolerance : position_tolerance_))
       ? target.yaw : std::atan2(dy, dx);
@@ -337,14 +409,9 @@ void PathTracker::computeControl(const path_manager::PathPoint& target,
   cmd_vx = clamp(cmd_vx, -max_linear_vel_, max_linear_vel_);
   cmd_omega = clamp(cmd_omega, -max_angular_vel_, max_angular_vel_);
 
-  // 接近目标时减速（soft slowdown）
-  double slowdown_dist = position_tolerance_ * 3.0;
-  if (distance < slowdown_dist) {
-    double scale = distance / slowdown_dist;
-    // 保持最低速度避免卡住
-    scale = std::max(0.05, scale);
-    cmd_vx *= scale;
-  }
+  // kp_linear_ * distance already slows the approach. Multiplying by distance
+  // again made the 20 mm endpoints crawl quadratically and consumed most of
+  // the mission's time budget. Acceleration remains limited by cmd_vel_mux.
 }
 
 // ── 到达判定 ───────────────────────────────────────────────

@@ -3,8 +3,9 @@
 # ==============================================================================
 
 # ── 目标距离 (mm)：传感器期望读数值 ──
-# 例如：小车需要停在距离前方障碍物 200mm 的位置
-target_distance_mm: 200.0
+# 保守初值，需按传感器安装位置和床旁目标实测标定；不是圆心到床头柜的距离。
+# 目标必须大于制动距离与释放余量，200 mm 会与 300 mm 制动阈值冲突。
+target_distance_mm: 400.0
 
 # ── 允许误差 (mm)：偏差在此范围内即认为微调完成 ──
 tolerance_mm: 10.0
@@ -28,10 +29,10 @@ step_duration: 0.2
 settle_time: 0.3
 
 # ── 控制循环频率 (Hz) ──
-control_rate_hz: 10.0
+control_rate_hz: 20.0
 
 # ── 微调超时 (s)：超过此时长未完成则强制结束 ──
-max_fine_tuning_time: 30.0
+max_fine_tuning_time: 25.0
 
 # ── 最大微调步数：超过此次数则强制结束 (0=无限制) ──
 max_steps: 50
@@ -39,3 +40,11 @@ max_steps: 50
 # ── 距离误差比例增益 (m/s per mm)：将 mm 误差映射到线速度 ──
 # 默认 0.0005，即 100mm 误差 → 0.05 m/s
 kp_distance: 0.0005
+
+distance_timeout_sec: 0.5
+odom_timeout_sec: 0.5
+# 单次微调总位移最多 50 mm；任务仍会检查车体是否完全在停靠圆内。
+max_translation_m: 0.05
+# 只有前、左、右测距，禁止向后修正。
+allow_reverse: false
+auto_start_on_path_finished: false

@@ -6,6 +6,7 @@
 # ── 任务状态机参数 ──────────────────────────────────────────────
 mission:
   stage_timeout_sec: 30.0          # 单阶段超时（秒）
+  navigation_stage_timeout_sec: 75.0  # 导航阶段单独超时，横向通道约 6 m
   mission_timeout_sec: 180.0       # 全局任务超时（秒，3分钟）
   state_machine_rate_hz: 10.0      # 状态机循环频率
   skip_bedside_scan: true          # 无摄像头联调：跳过床头条形码识别
@@ -15,18 +16,24 @@ mission:
   path_nurse_station: "nurse_station"
   path_bed1_circle: "bed1_circle"
   path_bed3_circle: "bed3_circle"
+  path_bed1_to_bed3: "bed1_to_bed3"
+  path_bed3_to_bed1: "bed3_to_bed1"
+  path_bed1_to_home: "bed1_to_home"
+  path_bed3_to_home: "bed3_to_home"
   path_home: "HOME"
 
   # ── 圆圈参数（用于微调和回归检测） ──
-  circle_bed1_x: 1.5               # 1 床圆圈中心 X (m)
-  circle_bed1_y: 0.8               # 1 床圆圈中心 Y (m)
+  # 与 paths.yaml 一致：x=(场地Y_mm-500)/1000，y=(3500-场地X_mm)/1000。
+  circle_bed1_x: 4.0               # P4，1 床圆圈中心 X (m)
+  circle_bed1_y: 2.2               # P4，1 床圆圈中心 Y (m)
   circle_bed1_radius: 0.3          # 1 床圆圈半径 (m)
 
-  circle_bed3_x: 1.5               # 3 床圆圈中心 X (m)
-  circle_bed3_y: -0.8              # 3 床圆圈中心 Y (m)
+  circle_bed3_x: 4.0               # P6，3 床圆圈中心 X (m)
+  circle_bed3_y: -2.2              # P6，3 床圆圈中心 Y (m)
   circle_bed3_radius: 0.3          # 3 床圆圈半径 (m)
 
   # ── 起始区（矩形，顶点按序排列） ──
+  # 白色内框尺寸未提供，以下 0.6 m 方框为旧配置占位，必须按实测边界修改。
   home_zone_vertices:
     - {x: -0.3, y: -0.3}
     - {x:  0.3, y: -0.3}

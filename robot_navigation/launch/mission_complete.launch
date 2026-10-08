@@ -87,7 +87,7 @@
   <arg name="robot_params"        default="$(find robot_bringup)/config/robot_params.yaml"/>
   <arg name="arm_params"          default="$(find robot_bringup)/config/arm_params.yaml"/>
   <arg name="paths_file"          default="$(find robot_bringup)/config/paths.yaml"/>
-  <arg name="path_tracker_params" default="$(find robot_bringup)/config/path_tracker.yaml"/>
+  <arg name="path_tracker_params" default="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
   <arg name="fine_tuning_config"  default="$(find fine_tuning)/config/fine_tuning.yaml"/>
   <arg name="servo_config"        default="$(find arm_and_gripper)/config/servo_params.yaml"/>
   <arg name="arm_gripper_config"  default="$(find arm_and_gripper)/config/arm_and_gripper.yaml"/>
@@ -322,14 +322,15 @@
         name="distance_safety_node" output="screen" required="true">
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
-    <param name="reverse_speed" value="0.05"/>
-    <param name="allow_emergency_reverse" value="false"/>
     <param name="braking_deceleration_mps2" value="1.0"/>
     <param name="reaction_time_sec" value="0.2"/>
     <param name="stop_margin_mm" value="300.0"/>
     <param name="distance_timeout_sec" value="0.5"/>
     <param name="control_rate_hz" value="20.0"/>
-    <param name="check_forward_only" value="true"/>
+    <param name="command_timeout_sec" value="0.5"/>
+    <param name="release_hysteresis_mm" value="30.0"/>
+    <param name="rotation_clearance_mm" value="300.0"/>
+    <param name="projection_radius_m" value="0.25"/>
   </node>
 
   <!-- 8.3 急停按钮（GPIO 直连） -->

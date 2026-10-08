@@ -1,0 +1,4 @@
+<launch>
+  <arg name="test_node_type" default="test_box_cancellation"/>
+  <test pkg="robot_navigation" type="$(arg test_node_type)" test-name="box_cancellation" time-limit="15"/>
+</launch>

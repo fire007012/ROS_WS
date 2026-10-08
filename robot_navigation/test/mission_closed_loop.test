@@ -1,0 +1,28 @@
+<launch>
+  <!-- Ideal simulated kinematics; real control chain, no actuators or CAN. -->
+  <arg name="mission_node_type" default="mission_controller_node"/>
+  <arg name="manager_node_type" default="path_manager_node"/>
+  <arg name="tracker_node_type" default="path_tracker_node"/>
+  <arg name="mux_node_type" default="cmd_vel_mux_node"/>
+  <arg name="safety_node_type" default="distance_safety_node"/>
+  <arg name="fine_node_type" default="fine_tuning_node"/>
+  <arg name="health_node_type" default="health_monitor_node"/>
+  <param name="use_sim_time" value="true"/>
+  <rosparam file="$(find robot_bringup)/config/robot_params.yaml"/>
+  <node pkg="path_manager" type="$(arg manager_node_type)" name="path_manager_node" required="true"/>
+  <node pkg="path_manager" type="$(arg tracker_node_type)" name="path_tracker_node" required="true">
+    <rosparam file="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
+  </node>
+  <node pkg="motion_planner" type="$(arg mux_node_type)" name="cmd_vel_mux_node" required="true"/>
+  <node pkg="robot_navigation" type="$(arg safety_node_type)" name="distance_safety_node" required="true"/>
+  <node pkg="fine_tuning" type="$(arg fine_node_type)" name="fine_tuning_node" required="true">
+    <rosparam file="$(find fine_tuning)/config/fine_tuning.yaml"/>
+  </node>
+  <node pkg="robot_navigation" type="$(arg health_node_type)" name="health_monitor_node" required="true"/>
+  <node pkg="robot_navigation" type="$(arg mission_node_type)" name="mission_controller_node" required="true">
+    <rosparam file="$(find robot_navigation)/config/mission_params.yaml"/>
+    <param name="skip_bedside_scan" value="true"/>
+    <param name="bedside_scan_skip_wait_s" value="0.0"/>
+  </node>
+  <test pkg="robot_navigation" type="test_mission_closed_loop.py" test-name="mission_closed_loop" time-limit="70"/>
+</launch>

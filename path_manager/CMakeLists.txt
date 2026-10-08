@@ -76,6 +76,7 @@ target_link_libraries(path_tracker_node
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/path_tracker_transitions.test)
+  add_rostest(test/path_tracker_holonomic.test)
 endif()
 
 # ── move_base 路径适配器 ──────────────────────────────────────

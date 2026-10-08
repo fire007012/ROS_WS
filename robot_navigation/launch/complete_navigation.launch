@@ -234,17 +234,18 @@
 
   <!-- 距离安全检测 — 近距离制动；绕障由动态导航的局部规划器完成 -->
   <node if="$(arg enable_range_safety)" pkg="robot_navigation" type="distance_safety_node"
-        name="distance_safety_node" output="screen" required="false">
+        name="distance_safety_node" output="screen" required="true">
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
-    <param name="reverse_speed" value="0.05"/>
-    <param name="allow_emergency_reverse" value="false"/>
     <param name="braking_deceleration_mps2" value="1.0"/>
     <param name="reaction_time_sec" value="0.2"/>
     <param name="stop_margin_mm" value="300.0"/>
     <param name="distance_timeout_sec" value="0.25"/>
     <param name="control_rate_hz" value="20.0"/>
-    <param name="check_forward_only" value="true"/>
+    <param name="command_timeout_sec" value="0.5"/>
+    <param name="release_hysteresis_mm" value="30.0"/>
+    <param name="rotation_clearance_mm" value="300.0"/>
+    <param name="projection_radius_m" value="0.25"/>
   </node>
 
   <!-- ============================================================ -->

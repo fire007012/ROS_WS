@@ -1,0 +1,25 @@
+<launch>
+  <!-- Real control nodes, simulated sensors only; no CAN consumers. -->
+  <arg name="mux_node_type" default="cmd_vel_mux_node"/>
+  <arg name="safety_node_type" default="distance_safety_node"/>
+  <arg name="fine_node_type" default="fine_tuning_node"/>
+  <param name="/robot/max_linear_vel" value="0.25"/>
+  <node pkg="motion_planner" type="$(arg mux_node_type)" name="cmd_vel_mux_node" required="true"/>
+  <node pkg="robot_navigation" type="$(arg safety_node_type)" name="distance_safety_node" required="true"/>
+  <include file="$(find robot_navigation)/test/fine_tuning_fixture.launch">
+    <arg name="node_type" value="$(arg fine_node_type)"/><arg name="name" value="normal_fine"/>
+  </include>
+  <include file="$(find robot_navigation)/test/fine_tuning_fixture.launch">
+    <arg name="node_type" value="$(arg fine_node_type)"/><arg name="name" value="signed_fine"/>
+    <arg name="reverse" value="true"/>
+  </include>
+  <include file="$(find robot_navigation)/test/fine_tuning_fixture.launch">
+    <arg name="node_type" value="$(arg fine_node_type)"/><arg name="name" value="timeout_fine"/>
+    <arg name="timeout" value="0.25"/>
+  </include>
+  <include file="$(find robot_navigation)/test/fine_tuning_fixture.launch">
+    <arg name="node_type" value="$(arg fine_node_type)"/><arg name="name" value="conflict_fine"/>
+    <arg name="target" value="200.0"/>
+  </include>
+  <test pkg="robot_navigation" type="test_safety_and_fine_tuning.py" test-name="safety_and_fine_tuning" time-limit="40"/>
+</launch>

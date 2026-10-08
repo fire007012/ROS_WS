@@ -23,6 +23,10 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <future>
+#include <thread>
+#include <chrono>
+#include <cstdint>
 
 namespace robot_navigation {
 
@@ -87,6 +91,7 @@ class MissionController {
   void rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
+  void fineTuningFailedCallback(const std_msgs::Bool::ConstPtr& msg);
   void medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void audioReadyCallback(const std_msgs::Int32::ConstPtr& msg);
   void audioActiveCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -120,17 +125,34 @@ class MissionController {
   bool checkScanQrComplete();
   bool checkPositionInCircleComplete();
   bool checkScanBarcodeComplete();
-  bool skipBedsideScan_;
-  double bedsideScanSkipWaitSec_;
-  ros::Time bedsideScanSkipStart_;
   bool checkHomeCheckComplete();
 
   // ── 服务调用辅助 ──
-  bool callSelectPath(const std::string& path_name);
-  bool callFineTuningStart();
-  bool callOpenMedicineBox(int8_t box_id);
-  bool callArmPlaceMedicine(int8_t bed_id, int8_t box_id);
-  bool callSpeak(const std::string& text);
+  void callSelectPath(const std::string& path_name);
+  void callFineTuningStart();
+  void callOpenMedicineBox(int8_t box_id);
+  void callArmPlaceMedicine(int8_t bed_id, int8_t box_id);
+  void callSpeak(const std::string& text);
+  bool pollServiceCall();
+  void cancelMissionActions();
+  struct CallResult { bool success; std::string message; };
+  template<class Service>
+  void beginServiceCall(ros::ServiceClient client, Service service) {
+    service_state_ = current_state_;
+    service_generation_ = mission_generation_;
+    // Capture only owned request/client values. Cancellation may discard this
+    // result without blocking the ROS callback queue or dereferencing `this`.
+    std::packaged_task<CallResult()> task([client, service]() mutable {
+      try {
+        if (!client.call(service)) return CallResult{false, "service transport failed"};
+        return CallResult{static_cast<bool>(service.response.success), service.response.message};
+      } catch (const std::exception& error) {
+        return CallResult{false, error.what()};
+      }
+    });
+    service_future_ = task.get_future();
+    std::thread(std::move(task)).detach();
+  }
 
   // ── 底盘锁死 ──
   void lockChassis();
@@ -182,6 +204,7 @@ class MissionController {
   ros::Subscriber right_range_sub_;
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
+  ros::Subscriber fine_tuning_failed_sub_;
   ros::Subscriber medicine_release_done_sub_;
   ros::Subscriber audio_ready_sub_;
   ros::Subscriber audio_active_sub_;
@@ -190,6 +213,8 @@ class MissionController {
   ros::Publisher mission_finished_pub_;
   ros::Publisher mission_timeout_pub_;
   ros::Publisher stop_all_pub_;
+  ros::Publisher cancel_pub_;
+  ros::Publisher actions_enabled_pub_;
   ros::Publisher display_text_pub_;
   ros::Publisher chassis_lock_pub_;      // 底盘锁死信号
   ros::Publisher scan_target_bed_pub_;
@@ -210,6 +235,10 @@ class MissionController {
   State current_state_;
   std::atomic<bool> mission_started_;
   bool estop_latched_;
+  uint64_t mission_generation_ = 0;
+  uint64_t service_generation_ = 0;
+  State service_state_ = State::IDLE;
+  std::future<CallResult> service_future_;
   std::atomic<bool> mission_completed_;
 
   // ── 状态动作保护（防止重复执行入口动作） ──
@@ -239,6 +268,8 @@ class MissionController {
   // ── 里程计 ──
   nav_msgs::Odometry current_odom_;
   std::atomic<bool> odom_received_;
+  ros::SteadyTime last_odom_time_;
+  double odom_timeout_sec_ = 0.5;
   mutable std::mutex odom_mutex_;
 
   // VL53 readings used by the conservative projection/clearance check.
@@ -256,10 +287,14 @@ class MissionController {
   // ── 回归检测 ──
   ros::Time home_arrival_time_;
   bool home_arrived_;
+  bool skipBedsideScan_;
+  double bedsideScanSkipWaitSec_;
+  ros::Time bedsideScanSkipStart_;
 
   // ── 参数 ──
   double stage_timeout_sec_;       // 单阶段超时 (默认 30s)
   double stage_timeout_default_sec_;
+  double navigation_stage_timeout_sec_;
   double mission_timeout_sec_;     // 全局超时 (默认 180s)
   double state_machine_rate_hz_;   // 状态机循环频率
 
@@ -267,6 +302,10 @@ class MissionController {
   std::string path_nurse_station_;
   std::string path_bed1_circle_;
   std::string path_bed3_circle_;
+  std::string path_bed1_to_bed3_;
+  std::string path_bed3_to_bed1_;
+  std::string path_bed1_to_home_;
+  std::string path_bed3_to_home_;
   std::string path_home_;
 
   // ── 圆圈参数（用于微调目标） ──

@@ -1,0 +1,19 @@
+<launch>
+  <arg name="node_type" default="fine_tuning_node"/>
+  <arg name="name"/>
+  <arg name="target" default="400.0"/>
+  <arg name="reverse" default="false"/>
+  <arg name="timeout" default="3.0"/>
+  <node pkg="fine_tuning" type="$(arg node_type)" name="$(arg name)" required="true">
+    <param name="target_distance_mm" value="$(arg target)"/>
+    <param name="allow_reverse" value="$(arg reverse)"/>
+    <param name="max_fine_tuning_time" value="$(arg timeout)"/>
+    <param name="settle_time" value="0.1"/>
+    <param name="max_steps" value="2"/>
+    <remap from="/cmd_vel_external" to="/$(arg name)/velocity"/>
+    <remap from="/fine_tuning/start" to="/$(arg name)/start"/>
+    <remap from="/fine_tuning_done" to="/$(arg name)/done"/>
+    <remap from="/fine_tuning_failed" to="/$(arg name)/failed"/>
+    <remap from="/fine_tuning/status" to="/$(arg name)/status"/>
+  </node>
+</launch>

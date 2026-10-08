@@ -3,6 +3,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/UInt32.h>
+#include <std_msgs/Empty.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
@@ -33,11 +34,15 @@ class PathTracker {
   void pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void controlTimerCallback(const ros::TimerEvent& event);
+  void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
+  void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
+  void cancelCallback(const std_msgs::Empty::ConstPtr& msg);
+  void cancelTarget();
 
   // ── 控制逻辑 ──
   void computeControl(const path_manager::PathPoint& target,
                       double current_x, double current_y, double current_yaw,
-                      double& cmd_vx, double& cmd_omega);
+                      double& cmd_vx, double& cmd_vy, double& cmd_omega);
   bool isPointReached(const path_manager::PathPoint& target,
                       double current_x, double current_y,
                       double current_yaw) const;
@@ -55,6 +60,7 @@ class PathTracker {
   ros::Subscriber path_has_next_sub_;
   ros::Subscriber path_revision_sub_;
   ros::Subscriber odom_sub_;
+  ros::Subscriber estop_sub_, reset_sub_, cancel_sub_;
   ros::Publisher  cmd_vel_pub_;
   ros::Publisher  path_finished_pub_;
   ros::Publisher  current_target_pub_;
@@ -74,6 +80,10 @@ class PathTracker {
   double current_y_;
   double current_yaw_;
   bool   has_odom_;
+  bool estop_latched_ = false;
+  bool require_new_path_ = false;
+  ros::SteadyTime last_odom_time_;
+  double odom_timeout_sec_ = 0.5;
 
   // ── 控制参数 ──
   double control_rate_hz_;       // 控制循环频率 (Hz)
@@ -84,6 +94,7 @@ class PathTracker {
   double position_tolerance_;    // 默认到达判定距离 (m)
   double heading_tolerance_;     // 朝向对齐容差 (rad)，用于 turn-then-move 模式
   bool   use_turn_then_move_;    // true=先转向后前进, false=同时控制
+  bool   use_holonomic_;         // 全向平移，保持目标 yaw；优先于转向前进策略
   double arrival_hold_time_;     // 到达后稳定保持时间 (s)
   ros::Time arrival_time_;       // 进入到达状态的时刻
 

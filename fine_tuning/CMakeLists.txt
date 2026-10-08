@@ -8,11 +8,12 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   std_srvs
   geometry_msgs
+  nav_msgs
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs std_srvs geometry_msgs
+  CATKIN_DEPENDS roscpp std_msgs std_srvs geometry_msgs nav_msgs
 )
 
 include_directories(

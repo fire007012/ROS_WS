@@ -1,0 +1,14 @@
+<launch>
+  <arg name="mission_node_type" default="mission_controller_node"/>
+  <node pkg="robot_navigation" type="$(arg mission_node_type)" name="mission_controller_node" required="true">
+    <rosparam file="$(find robot_navigation)/config/mission_params.yaml"/>
+    <param name="mission/state_machine_rate_hz" value="50.0"/>
+    <param name="mission/stage_timeout_sec" value="0.7"/>
+    <param name="mission/navigation_stage_timeout_sec" value="10.0"/>
+    <param name="mission/mission_timeout_sec" value="2.5"/>
+    <param name="skip_bedside_scan" value="true"/>
+    <param name="bedside_scan_skip_wait_s" value="0.0"/>
+    <param name="enable_vl53_circle_check" value="false"/>
+  </node>
+  <test pkg="robot_navigation" type="test_mission_cancellation.py" test-name="mission_cancellation" time-limit="30"/>
+</launch>

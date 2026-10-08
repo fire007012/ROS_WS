@@ -1,0 +1,19 @@
+<launch>
+  <!-- No CAN, camera, arm or real velocity consumers are launched. -->
+  <arg name="mission_node_type" default="mission_controller_node"/>
+  <arg name="health_node_type" default="health_monitor_node"/>
+  <node pkg="robot_navigation" type="$(arg health_node_type)" name="health_monitor_node" required="true">
+    <!-- Exercise real stop_all -> ESTOP wiring, while mocking hardware heartbeats. -->
+    <rosparam param="critical_topics">[]</rosparam>
+  </node>
+  <node pkg="robot_navigation" type="$(arg mission_node_type)"
+        name="mission_controller_node" required="true">
+    <rosparam file="$(find robot_navigation)/config/mission_params.yaml"/>
+    <param name="mission/state_machine_rate_hz" value="50.0"/>
+    <param name="skip_bedside_scan" value="true"/>
+    <param name="bedside_scan_skip_wait_s" value="0.0"/>
+    <param name="enable_vl53_circle_check" value="false"/>
+  </node>
+  <test pkg="robot_navigation" type="test_mission_routes.py"
+        test-name="mission_routes" time-limit="65"/>
+</launch>

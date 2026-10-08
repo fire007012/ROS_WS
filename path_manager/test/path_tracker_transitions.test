@@ -1,5 +1,6 @@
 <launch>
-  <node pkg="path_manager" type="path_tracker_node" name="path_tracker_node" required="true">
+  <arg name="tracker_node_type" default="path_tracker_node"/>
+  <node pkg="path_manager" type="$(arg tracker_node_type)" name="path_tracker_node" required="true">
     <param name="control_rate_hz" value="50.0"/>
     <param name="arrival_hold_time" value="0.3"/>
   </node>

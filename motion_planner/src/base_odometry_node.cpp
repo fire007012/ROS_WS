@@ -17,7 +17,7 @@ constexpr double kTwoPi = 2.0 * M_PI;
 BaseOdometryNode::BaseOdometryNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     : nh_(nh),
       pnh_(pnh),
-      wheel_radius_(0.05),
+      wheel_radius_(0.075),
       wheel_base_(0.18),
       odom_publish_hz_(50.0),
       publish_tf_(true),

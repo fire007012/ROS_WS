@@ -1,0 +1,13 @@
+# 三路测距车辆：到下一点前先转向，再沿车头正向行驶。
+# 现场须确认底盘及机械臂收拢后的转弯扫掠净空；三束测距不能覆盖后方旋转区域。
+control_rate_hz: 30.0
+kp_linear: 0.8
+kp_angular: 1.5
+max_linear_vel: 0.25
+max_angular_vel: 0.5
+position_tolerance: 0.05
+heading_tolerance: 0.08
+arrival_hold_time: 0.5
+odom_timeout_sec: 0.5
+use_holonomic: false
+use_turn_then_move: true

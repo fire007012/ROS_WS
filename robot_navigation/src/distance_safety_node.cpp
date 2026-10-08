@@ -1,264 +1,148 @@
-/**
- * @file distance_safety_node.cpp
- * @brief 距离安全检测节点 — 障碍物过近或传感器失效时自动制动
- *
- * 通过 cmd_vel_mux 的 safety 通道（最高优先级）介入底盘控制，
- * 在 VL53L1X 检测到障碍物距离过近时持续占用安全通道，直到风险解除。
- */
-
 #include "robot_navigation/distance_safety_node.h"
-
+#include <algorithm>
 #include <cmath>
 
 namespace robot_navigation {
-
-// ── 构造 ───────────────────────────────────────────────────
 DistanceSafetyNode::DistanceSafetyNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
-    : nh_(nh)
-    , pnh_(pnh)
-    , safety_distance_mm_(300.0)
-    , critical_distance_mm_(100.0)
-    , reverse_speed_(0.05)
-    , allow_emergency_reverse_(false)
-    , braking_deceleration_mps2_(1.0)
-    , reaction_time_sec_(0.2)
-    , stop_margin_mm_(300.0)
-    , distance_timeout_sec_(0.5)
-    , control_rate_hz_(20.0)
-    , check_forward_only_(true)
-    , current_distance_mm_(0.0)
-    , current_vx_(0.0)
-    , current_vy_(0.0)
-    , has_distance_(false)
-    , has_cmd_vel_(false)
-    , last_distance_time_(ros::Time::now())
-    , safety_state_(SafetyState::CLEAR)
-{}
+    : nh_(nh), pnh_(pnh) {}
 
-// ── 初始化 ─────────────────────────────────────────────────
 bool DistanceSafetyNode::init() {
-  // ── 参数读取 ──
-  pnh_.param<double>("safety_distance_mm", safety_distance_mm_, 300.0);
-  pnh_.param<double>("critical_distance_mm", critical_distance_mm_, 100.0);
-  pnh_.param<double>("reverse_speed", reverse_speed_, 0.05);
-  pnh_.param<bool>("allow_emergency_reverse", allow_emergency_reverse_, false);
-  pnh_.param<double>("braking_deceleration_mps2", braking_deceleration_mps2_, 1.0);
-  pnh_.param<double>("reaction_time_sec", reaction_time_sec_, 0.2);
-  pnh_.param<double>("stop_margin_mm", stop_margin_mm_, 300.0);
-  pnh_.param<double>("distance_timeout_sec", distance_timeout_sec_, 0.5);
-  pnh_.param<double>("control_rate_hz", control_rate_hz_, 20.0);
-  pnh_.param<bool>("check_forward_only", check_forward_only_, true);
-
-  // 确保 threshold 大小逻辑正确
-  if (critical_distance_mm_ >= safety_distance_mm_) {
-    ROS_WARN("[distance_safety] critical_distance_mm (%.0f) >= safety_distance_mm (%.0f), "
-             "自动调整 critical = safety * 0.33",
-             critical_distance_mm_, safety_distance_mm_);
-    critical_distance_mm_ = safety_distance_mm_ * 0.33;
+  pnh_.param("safety_distance_mm", safety_distance_mm_, 300.0);
+  pnh_.param("critical_distance_mm", critical_distance_mm_, 100.0);
+  pnh_.param("braking_deceleration_mps2", braking_deceleration_mps2_, 1.0);
+  pnh_.param("reaction_time_sec", reaction_time_sec_, 0.2);
+  pnh_.param("stop_margin_mm", stop_margin_mm_, 300.0);
+  pnh_.param("distance_timeout_sec", distance_timeout_sec_, 0.5);
+  pnh_.param("command_timeout_sec", command_timeout_sec_, 0.5);
+  pnh_.param("release_hysteresis_mm", release_hysteresis_mm_, 30.0);
+  pnh_.param("projection_radius_m", projection_radius_m_, 0.25);
+  pnh_.param("rotation_clearance_mm", rotation_clearance_mm_, 300.0);
+  double rate;
+  pnh_.param("control_rate_hz", rate, 20.0);
+  for (double value : {safety_distance_mm_, critical_distance_mm_, braking_deceleration_mps2_,
+                       distance_timeout_sec_, command_timeout_sec_, projection_radius_m_, rate}) {
+    if (!std::isfinite(value) || value <= 0.0) return false;
   }
-  braking_deceleration_mps2_ = std::max(0.01, braking_deceleration_mps2_);
-  reaction_time_sec_ = std::max(0.0, reaction_time_sec_);
-  stop_margin_mm_ = std::max(0.0, stop_margin_mm_);
-
-  // ── 订阅 ──
-  distance_sub_ = nh_.subscribe("/vl53l1x_distance", 10,
-                                &DistanceSafetyNode::distanceCallback, this);
-
-  // 订阅 mux 的最终输出，用于判断运动方向
-  cmd_vel_sub_ = nh_.subscribe("/cmd_vel_muxed", 10,
-                               &DistanceSafetyNode::cmdVelCallback, this);
-
-  // ── 发布 ──
-  // 发布到 cmd_vel_mux 的 safety 通道（最高优先级）
-  cmd_vel_safety_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_safety", 10);
-  safety_state_pub_   = nh_.advertise<std_msgs::String>("/distance_safety/state", 10, true);
-
-  // ── 定时器 ──
-  const double period = 1.0 / std::max(1.0, control_rate_hz_);
-  safety_timer_ = nh_.createTimer(ros::Duration(period),
-                                  &DistanceSafetyNode::safetyTimerCallback, this);
-
-  // ── 初始发布安全状态 ──
-  {
-    std_msgs::String init_state;
-    init_state.data = "CLEAR";
-    safety_state_pub_.publish(init_state);
+  for (double value : {reaction_time_sec_, stop_margin_mm_, release_hysteresis_mm_, rotation_clearance_mm_}) {
+    if (!std::isfinite(value) || value < 0.0) return false;
   }
-  // 初始发布一帧空指令，让 mux 知道 safety 通道存在
-  publishSafetyClear();
-
-  ROS_INFO("[distance_safety] 初始化完成");
-  ROS_INFO("[distance_safety]   安全停止: %.0f mm, 紧急后退: %.0f mm, 后退速度: %.2f m/s",
-           safety_distance_mm_, critical_distance_mm_, reverse_speed_);
-  ROS_INFO("[distance_safety]   传感器超时: %.1f s, 控制频率: %.1f Hz",
-           distance_timeout_sec_, control_rate_hz_);
-  ROS_INFO("[distance_safety]   模式: %s", check_forward_only_ ? "仅检测前方" : "全方向检测");
+  const std::array<std::string, 4> names{{"front", "left", "right", "rear"}};
+  for (size_t i = 0; i < names.size(); ++i) {
+    std::string topic;
+    pnh_.param(names[i] + "_range_topic", topic, "/" + names[i] + "/range");
+    range_subs_[i] = nh_.subscribe<sensor_msgs::Range>(topic, 10,
+        [this, i](const sensor_msgs::Range::ConstPtr& msg) { rangeCallback(i, msg); });
+  }
+  requested_sub_ = nh_.subscribe("/cmd_vel_requested", 1, &DistanceSafetyNode::requestedCallback, this);
+  measured_sub_ = nh_.subscribe("/base_velocity", 1, &DistanceSafetyNode::measuredCallback, this);
+  cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_safety", 1);
+  state_pub_ = nh_.advertise<std_msgs::String>("/distance_safety/state", 1, true);
+  timer_ = nh_.createTimer(ros::Duration(1.0 / rate), &DistanceSafetyNode::safetyTimerCallback, this);
+  publishState("CLEAR");
+  ROS_INFO("[distance_safety] directional Range braking; reverse requires /rear/range");
   return true;
 }
 
-// ── 距离回调 ───────────────────────────────────────────────
-void DistanceSafetyNode::distanceCallback(const std_msgs::Float32::ConstPtr& msg) {
-  current_distance_mm_ = static_cast<double>(msg->data);
-  has_distance_ = true;
-  last_distance_time_ = ros::Time::now();
+void DistanceSafetyNode::rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr& msg) {
+  auto& sample = samples_[index];
+  const double age = msg->header.stamp.isZero() ? 0.0 : (ros::Time::now() - msg->header.stamp).toSec();
+  sample.valid = std::isfinite(msg->range) && std::isfinite(msg->min_range) &&
+      std::isfinite(msg->max_range) && msg->range >= msg->min_range &&
+      msg->range <= msg->max_range && msg->range > 0.0 &&
+      age >= -0.05 && age <= distance_timeout_sec_;
+  if (!sample.valid) return;
+  sample.distance_mm = msg->range * 1000.0;
+  sample.received = ros::SteadyTime::now();
 }
-
-// ── cmd_vel 回调（用于判断运动方向）────────────────────────
-void DistanceSafetyNode::cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg) {
-  current_vx_ = msg->linear.x;
-  current_vy_ = msg->linear.y;
-  has_cmd_vel_ = true;
+void DistanceSafetyNode::requestedCallback(const geometry_msgs::Twist::ConstPtr& msg) {
+  requested_ = *msg;
+  requested_time_ = ros::SteadyTime::now();
+  has_request_ = true;
 }
-
-// ── 安全检测定时器 ─────────────────────────────────────────
-void DistanceSafetyNode::safetyTimerCallback(const ros::TimerEvent& /*event*/) {
-  const ros::Time now = ros::Time::now();
-
-  // ── 检查传感器超时 ──
-  double time_since_last = (now - last_distance_time_).toSec();
-  if (!has_distance_ || time_since_last > distance_timeout_sec_) {
-    if (safety_state_ != SafetyState::TIMEOUT) {
-      safety_state_ = SafetyState::TIMEOUT;
-      std_msgs::String state;
-      state.data = "TIMEOUT";
-      safety_state_pub_.publish(state);
-      ROS_WARN_THROTTLE(1.0, "[distance_safety] 传感器数据超时 (%.1f s)，触发安全停止",
-                        time_since_last);
-    }
-    // Refresh every cycle so the mux cannot time out the safety source.
-    publishSafetyStop();
+void DistanceSafetyNode::measuredCallback(const geometry_msgs::Twist::ConstPtr& msg) {
+  measured_ = *msg;
+  measured_time_ = ros::SteadyTime::now();
+  has_measured_ = true;
+}
+void DistanceSafetyNode::publishState(const std::string& state) {
+  if (state_ == state) return;
+  state_ = state;
+  std_msgs::String msg;
+  msg.data = state;
+  state_pub_.publish(msg);
+}
+void DistanceSafetyNode::safetyTimerCallback(const ros::TimerEvent&) {
+  const auto now = ros::SteadyTime::now();
+  geometry_msgs::Twist output;
+  auto stop = [this, &output](const std::string& reason) {
+    cmd_pub_.publish(output);
+    publishState(reason);
+  };
+  if (!has_request_ || (now - requested_time_).toSec() > command_timeout_sec_) {
+    stop("COMMAND_TIMEOUT");
     return;
   }
-
-  // ── 方向判断 ──
-  double effective_vx = current_vx_;
-  if (!has_cmd_vel_) {
-    // 尚无 cmd_vel 数据，保守假设静止
-    effective_vx = 0.0;
-  }
-
-  // 仅检测前方时，如果机器人不向前则不干预
-  if (check_forward_only_ && effective_vx <= 0.001) {
-    if (safety_state_ != SafetyState::CLEAR) {
-      safety_state_ = SafetyState::CLEAR;
-      publishSafetyClear();
-      std_msgs::String state;
-      state.data = "CLEAR";
-      safety_state_pub_.publish(state);
-    }
+  const auto& r = requested_;
+  if (!std::isfinite(r.linear.x) || !std::isfinite(r.linear.y) || !std::isfinite(r.angular.z)) {
+    stop("INVALID_COMMAND");
     return;
   }
-
-  // ── 距离判定 ──
-  // The base threshold is a floor.  At higher speed, use a conservative
-  // stopping-distance estimate so the commanded stop is issued early enough.
-  const double forward_speed = std::max(0.0, effective_vx);
-  const double stopping_distance_mm = 1000.0 * (
-      forward_speed * forward_speed / (2.0 * braking_deceleration_mps2_) +
-      forward_speed * reaction_time_sec_) + stop_margin_mm_;
-  const double effective_safety_distance_mm =
-      std::max(safety_distance_mm_, stopping_distance_mm);
-  if (current_distance_mm_ <= critical_distance_mm_) {
-    // A rear sensor is not present, so reverse is opt-in rather than the
-    // default response to a front emergency.
-    const SafetyState next_state = allow_emergency_reverse_ ? SafetyState::REVERSE
-                                                             : SafetyState::STOP;
-    if (safety_state_ != next_state) {
-      safety_state_ = next_state;
-      std_msgs::String state;
-      state.data = allow_emergency_reverse_ ? "REVERSE" : "STOP";
-      safety_state_pub_.publish(state);
-      ROS_WARN("[distance_safety] 紧急制动: 距离 %.0f mm < %.0f mm",
-               current_distance_mm_, critical_distance_mm_);
+  geometry_msgs::Twist measured;
+  if (has_measured_ && (now - measured_time_).toSec() <= command_timeout_sec_ &&
+      std::isfinite(measured_.linear.x) && std::isfinite(measured_.linear.y) &&
+      std::isfinite(measured_.angular.z)) measured = measured_;
+  const double rotation = std::max(std::abs(r.angular.z), std::abs(measured.angular.z));
+  const std::array<double, 4> toward{{
+    std::max({0.0, r.linear.x, measured.linear.x}),
+    std::max({0.0, r.linear.y, measured.linear.y}),
+    std::max({0.0, -r.linear.y, -measured.linear.y}),
+    std::max({0.0, -r.linear.x, -measured.linear.x})}};
+  double factor = 1.0;
+  for (size_t i = 0; i < toward.size(); ++i) {
+    // For in-place turning check all installed front/side beams. Rearward
+    // translation requires a real rear sample; never synthesize clearance.
+    const bool turning_check = rotation > 0.001 && i < 3;
+    if (toward[i] <= 0.001 && !turning_check) {
+      stopped_[i] = false;
+      continue;
     }
-    if (allow_emergency_reverse_) publishSafetyReverse(reverse_speed_);
-    else publishSafetyStop();
-  } else if (current_distance_mm_ <= effective_safety_distance_mm) {
-    // Keep refreshing the stop command while blocked.
-    if (safety_state_ != SafetyState::STOP) {
-      safety_state_ = SafetyState::STOP;
-      std_msgs::String state;
-      state.data = "STOP";
-      safety_state_pub_.publish(state);
-      ROS_WARN("[distance_safety] ⛔ 安全停止！距离 %.0f mm < %.0f mm",
-               current_distance_mm_, effective_safety_distance_mm);
+    const auto& sample = samples_[i];
+    if (!sample.valid || (now - sample.received).toSec() > distance_timeout_sec_) {
+      stop(i == 3 ? "REAR_UNOBSERVED" : "RANGE_TIMEOUT");
+      return;
     }
-    publishSafetyStop();
-  } else if (current_distance_mm_ <= effective_safety_distance_mm * 1.5) {
-    // Keep refreshing the reduced command while warning is active.
-    if (safety_state_ != SafetyState::WARNING) {
-      safety_state_ = SafetyState::WARNING;
-      std_msgs::String state;
-      state.data = "WARNING";
-      safety_state_pub_.publish(state);
+    const double speed = toward[i] + rotation * projection_radius_m_;
+    const double margin = turning_check && toward[i] <= 0.001 ? rotation_clearance_mm_ : stop_margin_mm_;
+    const double floor = turning_check && toward[i] <= 0.001 ? rotation_clearance_mm_ : safety_distance_mm_;
+    const double threshold = std::max({critical_distance_mm_, floor,
+        1000.0 * (speed * speed / (2.0 * braking_deceleration_mps2_) + speed * reaction_time_sec_) + margin});
+    if (sample.distance_mm <= threshold ||
+        (stopped_[i] && sample.distance_mm <= threshold + release_hysteresis_mm_)) {
+      stopped_[i] = true;
+      stop("STOP");
+      return;
     }
-    geometry_msgs::Twist slow;
-    slow.linear.x = current_vx_ * 0.3;
-    slow.linear.y = current_vy_ * 0.3;
-    slow.angular.z = 0.0;
-    cmd_vel_safety_pub_.publish(slow);
+    stopped_[i] = false;
+    if (sample.distance_mm < threshold * 1.5) factor = std::min(factor, 0.3);
+  }
+  if (factor < 1.0) {
+    output = r;
+    output.linear.x *= factor;
+    output.linear.y *= factor;
+    output.angular.z *= factor;
+    cmd_pub_.publish(output);
+    publishState("WARNING");
   } else {
-    // 安全，清除干预
-    if (safety_state_ != SafetyState::CLEAR) {
-      safety_state_ = SafetyState::CLEAR;
-      publishSafetyClear();
-      std_msgs::String state;
-      state.data = "CLEAR";
-      safety_state_pub_.publish(state);
-    }
+    // A silent clear channel lets the mux expire the previous safety command.
+    publishState("CLEAR");
   }
 }
-
-// ── 安全停止 ───────────────────────────────────────────────
-void DistanceSafetyNode::publishSafetyStop() {
-  geometry_msgs::Twist stop;
-  stop.linear.x = 0.0;
-  stop.linear.y = 0.0;
-  stop.angular.z = 0.0;
-  cmd_vel_safety_pub_.publish(stop);
-}
-
-// ── 安全后退 ───────────────────────────────────────────────
-void DistanceSafetyNode::publishSafetyReverse(double reverse_speed) {
-  geometry_msgs::Twist reverse;
-  reverse.linear.x = -std::abs(reverse_speed);
-  reverse.linear.y = 0.0;
-  reverse.angular.z = 0.0;
-  cmd_vel_safety_pub_.publish(reverse);
-}
-
-// ── 清除安全干预 ───────────────────────────────────────────
-void DistanceSafetyNode::publishSafetyClear() {
-  // 发布一个"空"Twist，让 mux 知道 safety 通道无有效指令
-  // mux 的 sourceActive 依赖超时判断 — 发布零速度让 mux 知道 safety 通道存在
-  // 但不要在 safety CLEAR 时持续发布零速度覆盖其他通道！
-  // 解决方案：发布一次速度，然后依赖 mux 的 cmd_timeout_sec 超时回退
-  geometry_msgs::Twist clear;
-  clear.linear.x = 0.0;
-  clear.linear.y = 0.0;
-  clear.angular.z = 0.0;
-  // 仅发布一次就够了 — mux 的 sourceActive 检查 has_msg 和时间戳
-  // 发布零速度后，mux 会切换到其他通道
-  cmd_vel_safety_pub_.publish(clear);
-}
-
 }  // namespace robot_navigation
-
-// ── main ───────────────────────────────────────────────────
 int main(int argc, char** argv) {
   ros::init(argc, argv, "distance_safety_node");
-
-  ros::NodeHandle nh;
-  ros::NodeHandle pnh("~");
-
+  ros::NodeHandle nh, pnh("~");
   robot_navigation::DistanceSafetyNode node(nh, pnh);
-  if (!node.init()) {
-    ROS_FATAL("[distance_safety] 初始化失败");
-    return 1;
-  }
-
-  ROS_INFO("[distance_safety] 距离安全检测节点运行中...");
+  if (!node.init()) return 1;
   ros::spin();
-
   return 0;
 }

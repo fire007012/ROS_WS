@@ -53,6 +53,7 @@ class CmdVelMuxNode {
   ros::Subscriber chassis_lock_sub_;
   ros::Subscriber physical_start_sub_;
   ros::Publisher cmd_vel_pub_;
+  ros::Publisher requested_vel_pub_;
   ros::Publisher selected_source_pub_;
   ros::Publisher estop_state_pub_;
   ros::Timer timer_;

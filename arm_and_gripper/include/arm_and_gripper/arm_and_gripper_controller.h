@@ -2,15 +2,19 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <functional>
+#include <condition_variable>
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Empty.h>
 #include <arm_and_gripper/PlaceMedicine.h>
 #include <arm_and_gripper/ArmPlaceMedicine.h>
 
 namespace arm_and_gripper {
 class ArmAndGripperController {
  public:
-  ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh);
+  using FrameSender = std::function<bool(uint32_t, const uint8_t*, uint8_t, bool)>;
+  ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh, FrameSender sender = {});
   ~ArmAndGripperController();
   bool init();
  private:
@@ -24,9 +28,17 @@ class ArmAndGripperController {
   bool sendServoTriggerCommand(uint8_t mask, int old_angle, int new_angle,
                                int return_angle, uint16_t hold_ms);
   bool sendCanFrame(uint32_t id, const uint8_t *data, uint8_t dlc, bool extended);
+  bool sendRawFrame(uint32_t id, const uint8_t *data, uint8_t dlc, bool extended);
+  void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
+  void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
+  void cancelCallback(const std_msgs::Empty::ConstPtr&);
+  void cancelSequence();
+  void stopOutputs();
+  bool waitInterruptibly(double seconds);
 
   ros::NodeHandle nh_, pnh_;
   ros::Subscriber fine_tuning_done_sub_;
+  ros::Subscriber estop_sub_, reset_sub_, cancel_sub_, actions_enabled_sub_;
   ros::Publisher medicine_release_done_pub_;
   ros::ServiceServer place_medicine_srv_, arm_place_medicine_srv_;
 
@@ -42,5 +54,12 @@ class ArmAndGripperController {
   int new_servo_open_angle_, new_servo_close_angle_;
   std::atomic<bool> sequence_running_;
   std::mutex seq_mutex_;
+  FrameSender sender_;
+  std::atomic<bool> estop_latched_{false};
+  std::atomic<bool> actions_enabled_{true};
+  std::atomic<uint64_t> cancel_generation_{0};
+  uint64_t sequence_generation_ = 0;
+  std::mutex command_mutex_, wait_mutex_;
+  std::condition_variable cancelled_;
 };
 }

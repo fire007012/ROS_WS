@@ -1,45 +1,81 @@
+# 原始场地坐标单位为 mm；下列 ROS 坐标单位为 m，frame_id=odom。
+# P0 为原点，启动时车头朝护士台：+x 朝护士台，+y 朝场地左侧。
+# x=(场地Y_mm-500)/1000，y=(3500-场地X_mm)/1000，yaw=0 朝护士台。
+# 坐标为建议值，尚未依据实测障碍物轮廓验证净空。
+waypoints:
+  P0:  &P0  {x: 0.0, y: 0.0, tolerance: 0.02, yaw: 0.0}
+  P1:  &P1  {x: 1.3, y: 0.0, tolerance: 0.02, yaw: 0.0}
+  P2L: &P2L {x: 2.0, y: 1.1, tolerance: 0.05}
+  P2R: &P2R {x: 2.0, y: -1.1, tolerance: 0.05}
+  P3L: &P3L {x: 3.0, y: 2.0, tolerance: 0.05}
+  P3R: &P3R {x: 3.0, y: -2.0, tolerance: 0.05}
+  P4:  &P4  {x: 4.0, y: 2.2, tolerance: 0.02, yaw: 0.0}
+  P6:  &P6  {x: 4.0, y: -2.2, tolerance: 0.02, yaw: 0.0}
+  P7:  &P7  {x: 1.0, y: 0.0, tolerance: 0.03}
+  P8:  &P8  {x: 0.0, y: 0.0, tolerance: 0.02}
+
 paths:
-  # ── 任务系统所需路径 ──
   - name: "nurse_station"
-    description: "从起始区到护士台的路径"
+    description: "P0 → P1，车头朝护士台二维码"
     points:
-      - {x: 0.0, y: 0.0, tolerance: 0.05}
-      - {x: 0.8, y: 0.0, tolerance: 0.05}
-      - {x: 1.5, y: 0.0, tolerance: 0.03}
+      - *P0
+      - *P1
 
   - name: "bed1_circle"
-    description: "从护士台到1号病床圆圈区域"
+    description: "P1 → P2L → P3L → P4，护士台左侧绕行"
     points:
-      - {x: 1.5, y: 0.0, tolerance: 0.03}
-      - {x: 1.5, y: 0.8, tolerance: 0.05}
+      - *P1
+      - *P2L
+      - *P3L
+      - *P4
 
   - name: "bed3_circle"
-    description: "从护士台到3号病床圆圈区域"
+    description: "P1 → P2R → P3R → P6，护士台右侧绕行"
     points:
-      - {x: 1.5, y: 0.0, tolerance: 0.03}
-      - {x: 1.5, y: -0.8, tolerance: 0.05}
+      - *P1
+      - *P2R
+      - *P3R
+      - *P6
+
+  - name: "bed1_to_bed3"
+    description: "P4 → P3L → P3R → P6，先退出停靠圈再走横向通道"
+    points:
+      - *P4
+      - *P3L
+      - *P3R
+      - *P6
+
+  - name: "bed3_to_bed1"
+    description: "P6 → P3R → P3L → P4，先退出停靠圈再走横向通道"
+    points:
+      - *P6
+      - *P3R
+      - *P3L
+      - *P4
 
   - name: "HOME"
-    description: "从病床区域返回起始区"
+    description: "仅适用于已到达 P7 的车辆：P7 → P8"
     points:
-      - {x: 1.5, y: 0.0, tolerance: 0.05}
-      - {x: 0.8, y: 0.0, tolerance: 0.05}
-      - {x: 0.0, y: 0.0, tolerance: 0.05}
+      - *P7
+      - *P8
 
-  # ── 病床专属返回路径（从病床位置出发，更高效） ──
   - name: "bed1_to_home"
-    description: "从1号病床(y=0.8)返回起始区"
+    description: "P4 → P3L → P2L → P7 → P8，左侧绕回"
     points:
-      - {x: 1.5, y: 0.8, tolerance: 0.05}
-      - {x: 0.8, y: 0.4, tolerance: 0.05}
-      - {x: 0.0, y: 0.0, tolerance: 0.05}
+      - *P4
+      - *P3L
+      - *P2L
+      - *P7
+      - *P8
 
   - name: "bed3_to_home"
-    description: "从3号病床(y=-0.8)返回起始区"
+    description: "P6 → P3R → P2R → P7 → P8，右侧绕回"
     points:
-      - {x: 1.5, y: -0.8, tolerance: 0.05}
-      - {x: 0.8, y: -0.4, tolerance: 0.05}
-      - {x: 0.0, y: 0.0, tolerance: 0.05}
+      - *P6
+      - *P3R
+      - *P2R
+      - *P7
+      - *P8
 
   # ── 通用测试路径 ──
   - name: "medicine_rack"

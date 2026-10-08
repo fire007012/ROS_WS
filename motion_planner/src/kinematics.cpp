@@ -4,7 +4,7 @@
 
 namespace motion_planner {
 
-Kinematics::Kinematics() : wheel_radius_(0.05), wheel_base_(0.2) {}
+Kinematics::Kinematics() : wheel_radius_(0.075), wheel_base_(0.2) {}
 
 void Kinematics::loadFromRos(const ros::NodeHandle& nh, const ros::NodeHandle& pnh) {
   nh.param("/robot/wheel_radius", wheel_radius_, wheel_radius_);
@@ -14,7 +14,7 @@ void Kinematics::loadFromRos(const ros::NodeHandle& nh, const ros::NodeHandle& p
   pnh.param("wheel_base", wheel_base_, wheel_base_);
 
   if (wheel_radius_ <= 1e-6) {
-    wheel_radius_ = 0.05;
+    wheel_radius_ = 0.075;
   }
   if (wheel_base_ < 0.0) {
     wheel_base_ = 0.0;

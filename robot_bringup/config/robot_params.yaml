@@ -1,9 +1,9 @@
 robot:
-  wheel_radius: 0.05      # m, 轮半径
+  wheel_radius: 0.075     # m, 轮径 150 mm，轮半径 75 mm
   wheel_base: 0.18        # m, 轮心到底盘中心距离 L
 
-  max_linear_vel: 1.0     # m/s, 对 vx/vy 同时限幅
-  max_angular_vel: 2.0    # rad/s
+  max_linear_vel: 0.25    # m/s, 场地航点低速调试上限
+  max_angular_vel: 0.5    # rad/s
   max_linear_accel: 1.0   # m/s^2
   max_angular_accel: 2.0  # rad/s^2
   max_rpm: 3000.0         # RPM, 与 STM32 侧约定范围一致

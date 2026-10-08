@@ -63,4 +63,10 @@
   <exec_depend>python3-serial</exec_depend>
   <exec_depend>python3-tk</exec_depend>
   <export/>
+  <test_depend>rostest</test_depend>
+  <test_depend>rospy</test_depend>
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>fine_tuning</test_depend>
+  <test_depend>motion_planner</test_depend>
+  <test_depend>rosgraph_msgs</test_depend>
 </package>

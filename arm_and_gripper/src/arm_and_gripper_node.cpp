@@ -9,16 +9,17 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <chrono>
 
 namespace arm_and_gripper {
-ArmAndGripperController::ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
+ArmAndGripperController::ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh, FrameSender sender)
     : nh_(nh), pnh_(pnh), can_device_("can0"), arm_can_id_(0x205), socket_fd_(-1),
       auto_start_on_fine_tuning_(false), default_reset_arm_(true), default_arm_angle_(180.0),
       arm_move_timeout_s_(3.0), servo_hold_duration_s_(1.0), old_servo_move_duration_s_(0.5),
       old_servo_return_duration_s_(1.0), new_servo_move_duration_s_(0.5),
       new_servo_return_duration_s_(1.0),
       old_servo_open_angle_(180), old_servo_close_angle_(0), new_servo_open_angle_(180),
-      new_servo_close_angle_(0), sequence_running_(false) {}
+      new_servo_close_angle_(0), sequence_running_(false), sender_(std::move(sender)) {}
 
 ArmAndGripperController::~ArmAndGripperController(){ closeCanSocket(); }
 
@@ -39,11 +40,18 @@ bool ArmAndGripperController::init(){
   pnh_.param("new_servo_open_angle",new_servo_open_angle_,180);
   pnh_.param("new_servo_close_angle",new_servo_close_angle_,0);
   fine_tuning_done_sub_=nh_.subscribe("/fine_tuning_done",1,&ArmAndGripperController::fineTuningDoneCallback,this);
+  estop_sub_=nh_.subscribe("/emergency_stop",1,&ArmAndGripperController::emergencyStopCallback,this);
+  reset_sub_=nh_.subscribe("/emergency_stop/reset",1,&ArmAndGripperController::emergencyResetCallback,this);
+  cancel_sub_=nh_.subscribe("/mission/cancel",1,&ArmAndGripperController::cancelCallback,this);
+  actions_enabled_sub_=nh_.subscribe<std_msgs::Bool>("/mission/actions_enabled",1,
+      [this](const std_msgs::Bool::ConstPtr& msg){
+        if(msg->data) actions_enabled_=true; else cancelSequence();
+      });
   medicine_release_done_pub_=nh_.advertise<std_msgs::Bool>("/medicine_release_done",1,true);
   std_msgs::Bool initial; initial.data=false; medicine_release_done_pub_.publish(initial);
   place_medicine_srv_=nh_.advertiseService("/place_medicine",&ArmAndGripperController::placeMedicineCallback,this);
   arm_place_medicine_srv_=nh_.advertiseService("/arm_place_medicine",&ArmAndGripperController::armPlaceMedicineCallback,this);
-  if(!initCanSocket()) ROS_WARN("[arm_and_gripper] CAN not ready; retry on command");
+  if(!sender_&&!initCanSocket()) ROS_WARN("[arm_and_gripper] CAN not ready; retry on command");
   ROS_INFO("[arm_and_gripper] STM32 CAN release ready; auto_start_on_fine_tuning=%s",auto_start_on_fine_tuning_?"true":"false");
   return true;
 }
@@ -65,7 +73,9 @@ bool ArmAndGripperController::armPlaceMedicineCallback(ArmPlaceMedicine::Request
 }
 
 bool ArmAndGripperController::initCanSocket(){
-  if(socket_fd_>=0)return true; socket_fd_=socket(PF_CAN,SOCK_RAW,CAN_RAW); if(socket_fd_<0)return false;
+  if(socket_fd_>=0)return true;
+  socket_fd_=socket(PF_CAN,SOCK_RAW,CAN_RAW);
+  if(socket_fd_<0)return false;
   struct ifreq ifr{}; std::strncpy(ifr.ifr_name,can_device_.c_str(),IFNAMSIZ-1);
   if(ioctl(socket_fd_,SIOCGIFINDEX,&ifr)<0){closeCanSocket();return false;}
   struct sockaddr_can addr{};addr.can_family=AF_CAN;addr.can_ifindex=ifr.ifr_ifindex;
@@ -73,7 +83,14 @@ bool ArmAndGripperController::initCanSocket(){
 }
 void ArmAndGripperController::closeCanSocket(){if(socket_fd_>=0){close(socket_fd_);socket_fd_=-1;}}
 bool ArmAndGripperController::sendCanFrame(uint32_t id,const uint8_t* data,uint8_t dlc,bool ext){
-  if(socket_fd_<0&&!initCanSocket())return false; struct can_frame f{};f.can_id=id|(ext?CAN_EFF_FLAG:0);f.can_dlc=dlc;std::memcpy(f.data,data,dlc);
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  if(estop_latched_ || !actions_enabled_ || cancel_generation_.load()!=sequence_generation_) return false;
+  return sendRawFrame(id,data,dlc,ext);
+}
+bool ArmAndGripperController::sendRawFrame(uint32_t id,const uint8_t* data,uint8_t dlc,bool ext){
+  if(sender_) return sender_(id,data,dlc,ext);
+  if(socket_fd_<0&&!initCanSocket())return false;
+  struct can_frame f{};f.can_id=id|(ext?CAN_EFF_FLAG:0);f.can_dlc=dlc;std::memcpy(f.data,data,dlc);
   if(write(socket_fd_,&f,sizeof(f))!=static_cast<ssize_t>(sizeof(f))){ROS_ERROR("[arm_and_gripper] CAN write failed: %s",std::strerror(errno));return false;}return true;
 }
 bool ArmAndGripperController::sendArmAngleCommand(double angle){
@@ -86,19 +103,63 @@ bool ArmAndGripperController::sendServoTriggerCommand(uint8_t mask,int old_angle
   return sendCanFrame(0x700,d,8,true);
 }
 bool ArmAndGripperController::executePlaceSequence(double arm_angle,int8_t box_id,bool reset_arm){
-  std::lock_guard<std::mutex> lock(seq_mutex_);sequence_running_.store(true);bool ok=true;
+  std::unique_lock<std::mutex> lock(seq_mutex_,std::try_to_lock);
+  if(!lock.owns_lock() || estop_latched_ || !actions_enabled_) return false;
+  sequence_generation_=cancel_generation_.load();
+  sequence_running_.store(true);bool ok=true;
   std_msgs::Bool pending;pending.data=false;medicine_release_done_pub_.publish(pending);
-  if(!sendArmAngleCommand(arm_angle))ok=false;ros::Duration(arm_move_timeout_s_).sleep();
+  ok=sendArmAngleCommand(arm_angle)&&waitInterruptibly(arm_move_timeout_s_);
   if(ok&&box_id==1){
-    ok=sendServoTriggerCommand(0x01,old_servo_open_angle_,0,0,0);ros::Duration(old_servo_move_duration_s_+servo_hold_duration_s_).sleep();
-    ok=sendServoTriggerCommand(0x01,old_servo_close_angle_,0,0,0)&&ok;ros::Duration(old_servo_return_duration_s_).sleep();
+    ok=sendServoTriggerCommand(0x01,old_servo_open_angle_,0,0,0)&&waitInterruptibly(old_servo_move_duration_s_+servo_hold_duration_s_);
+    if(ok) ok=sendServoTriggerCommand(0x01,old_servo_close_angle_,0,0,0)&&waitInterruptibly(old_servo_return_duration_s_);
   }else if(ok&&box_id==3){
     // PD14 now uses absolute angles, just like the PB0 positional servo.
-    ok=sendServoTriggerCommand(0x02,0,new_servo_open_angle_,0,0);ros::Duration(new_servo_move_duration_s_+servo_hold_duration_s_).sleep();
-    ok=sendServoTriggerCommand(0x02,0,new_servo_close_angle_,0,0)&&ok;ros::Duration(new_servo_return_duration_s_).sleep();
+    ok=sendServoTriggerCommand(0x02,0,new_servo_open_angle_,0,0)&&waitInterruptibly(new_servo_move_duration_s_+servo_hold_duration_s_);
+    if(ok) ok=sendServoTriggerCommand(0x02,0,new_servo_close_angle_,0,0)&&waitInterruptibly(new_servo_return_duration_s_);
   }else ok=false;
-  if(ok&&reset_arm){ok=sendArmAngleCommand(-arm_angle);ros::Duration(arm_move_timeout_s_).sleep();}
+  if(ok&&reset_arm) ok=sendArmAngleCommand(-arm_angle)&&waitInterruptibly(arm_move_timeout_s_);
+  if(!ok) stopOutputs();
   sequence_running_.store(false);std_msgs::Bool done;done.data=ok;medicine_release_done_pub_.publish(done);return ok;
 }
+void ArmAndGripperController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg){
+  if(!msg->data || estop_latched_.exchange(true)) return;
+  cancelSequence();
 }
-int main(int argc,char**argv){ros::init(argc,argv,"arm_and_gripper_node");ros::NodeHandle nh,pnh("~");arm_and_gripper::ArmAndGripperController c(nh,pnh);return c.init()? (ros::spin(),0):1;}
+void ArmAndGripperController::emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg){
+  if(msg->data) estop_latched_=false; // Never restart the cancelled sequence.
+}
+void ArmAndGripperController::cancelCallback(const std_msgs::Empty::ConstPtr&){cancelSequence();}
+void ArmAndGripperController::cancelSequence(){
+  actions_enabled_=false;
+  ++cancel_generation_;
+  cancelled_.notify_all();
+  if(sequence_running_) stopOutputs();
+}
+void ArmAndGripperController::stopOutputs(){
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  const uint8_t stop[4]={0xfe,0x98,0x00,0x6b};
+  sendRawFrame((arm_can_id_&0xffu)<<8,stop,4,true);
+  // Stop the release sequence and close both positional medicine-box servos.
+  uint8_t close[8]={0x20,0x03,static_cast<uint8_t>(old_servo_close_angle_),
+      static_cast<uint8_t>(new_servo_close_angle_),0,0,0,0};
+  for(int i=0;i<7;++i) close[7]=static_cast<uint8_t>(close[7]+close[i]);
+  sendRawFrame(0x700,close,8,true);
+}
+bool ArmAndGripperController::waitInterruptibly(double seconds){
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::duration<double>(std::max(0.0,seconds));
+  std::unique_lock<std::mutex> lock(wait_mutex_);
+  while(ros::ok()&&!estop_latched_&&cancel_generation_.load()==sequence_generation_){
+    if(std::chrono::steady_clock::now()>=deadline) return true;
+    cancelled_.wait_for(lock,std::chrono::milliseconds(20));
+  }
+  return false;
+}
+}
+#ifndef ARM_AND_GRIPPER_NO_MAIN
+int main(int argc,char**argv){
+  ros::init(argc,argv,"arm_and_gripper_node");ros::NodeHandle nh,pnh("~");
+  arm_and_gripper::ArmAndGripperController controller(nh,pnh);
+  if(!controller.init()) return 1;
+  ros::AsyncSpinner spinner(3);spinner.start();ros::waitForShutdown();return 0;
+}
+#endif

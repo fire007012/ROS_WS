@@ -7,11 +7,11 @@
 
 # ── 机器人物理参数 ──────────────────────────────────────────────
 robot:
-  wheel_radius: 0.05            # 轮半径 (m)
+  wheel_radius: 0.075           # 轮径 150 mm，轮半径 75 mm (m)
   wheel_base: 0.18              # 轮心到底盘中心距离 (m)
 
-  max_linear_vel: 1.0           # 最大线速度 (m/s)
-  max_angular_vel: 2.0          # 最大角速度 (rad/s)
+  max_linear_vel: 0.25          # 最大线速度 (m/s)
+  max_angular_vel: 0.5          # 最大角速度 (rad/s)
   max_linear_accel: 1.0         # 最大线加速度 (m/s^2)
   max_angular_accel: 2.0        # 最大角加速度 (rad/s^2)
   max_rpm: 3000.0               # 电机最大 RPM
@@ -23,26 +23,31 @@ robot:
 # ── 路径跟踪参数 ──────────────────────────────────────────────────
 path_tracker:
   control_rate_hz: 30.0
-  kp_linear: 0.5
+  kp_linear: 0.8
   kp_angular: 1.5
-  max_linear_vel: 1.0
-  max_angular_vel: 2.0
+  max_linear_vel: 0.25
+  max_angular_vel: 0.5
   position_tolerance: 0.05
   heading_tolerance: 0.08
   use_turn_then_move: false
+  use_holonomic: true
   arrival_hold_time: 0.5
 
 # ── 终点微调参数 (VL53L1X) ────────────────────────────────────────
 fine_tuning:
-  target_distance_mm: 200.0
+  target_distance_mm: 400.0
   tolerance_mm: 10.0
   move_axis: 1.0                # 1=X轴, 2=Y轴
   move_direction: 1             # +1: 使距离减小, -1: 使距离增大
   step_velocity: 0.05
   step_duration: 0.2
   settle_time: 0.3
-  control_rate_hz: 10.0
-  max_fine_tuning_time: 30.0
+  control_rate_hz: 20.0
+  max_fine_tuning_time: 25.0
+  distance_timeout_sec: 0.5
+  odom_timeout_sec: 0.5
+  max_translation_m: 0.05
+  allow_reverse: false
   kp_distance: 0.0005
 
 # ── 舵机控制参数 ──────────────────────────────────────────────────
@@ -98,27 +103,27 @@ switches:
 # ── 任务状态机参数 ──────────────────────────────────────────────
 mission_controller:
   stage_timeout_sec: 30.0
+  navigation_stage_timeout_sec: 75.0
   mission_timeout_sec: 180.0
   state_machine_rate_hz: 10.0
   home_hold_sec: 5.0
-  circle_bed1_x: 2.0
-  circle_bed1_y: 1.0
+  circle_bed1_x: 4.0
+  circle_bed1_y: 2.2
   circle_bed1_radius: 0.3
-  circle_bed3_x: 2.0
-  circle_bed3_y: -1.0
+  circle_bed3_x: 4.0
+  circle_bed3_y: -2.2
   circle_bed3_radius: 0.3
   home_zone_vertices:
-    - {x: -0.5, y: -0.5}
-    - {x:  0.5, y: -0.5}
-    - {x:  0.5, y:  0.5}
-    - {x: -0.5, y:  0.5}
+    # 白色内框尺寸未提供：暂沿用 mission_params.yaml 的 0.6 m 方框，需实测。
+    - {x: -0.3, y: -0.3}
+    - {x:  0.3, y: -0.3}
+    - {x:  0.3, y:  0.3}
+    - {x: -0.3, y:  0.3}
 
 # ── 距离安全参数 ───────────────────────────────────────────────
 distance_safety:
   safety_distance_mm: 300.0
   critical_distance_mm: 100.0
-  reverse_speed: 0.05
-  allow_emergency_reverse: false
   # Stop threshold is max(safety_distance_mm, braking distance + latency + margin).
   # Measure these values on the real chassis before a match.
   braking_deceleration_mps2: 1.0
@@ -126,7 +131,14 @@ distance_safety:
   stop_margin_mm: 300.0
   distance_timeout_sec: 0.25
   control_rate_hz: 20.0
-  check_forward_only: true
+  command_timeout_sec: 0.5
+  release_hysteresis_mm: 30.0
+  rotation_clearance_mm: 300.0
+  projection_radius_m: 0.25
+  front_range_topic: /front/range
+  left_range_topic: /left/range
+  right_range_topic: /right/range
+  rear_range_topic: /rear/range  # 未安装：倒退命令会被拦截
 
 # ── 视频推流参数 ──────────────────────────────────────────────
 video_stream:

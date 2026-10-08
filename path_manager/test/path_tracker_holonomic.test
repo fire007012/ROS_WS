@@ -1,0 +1,9 @@
+<launch>
+  <arg name="tracker_node_type" default="path_tracker_node"/>
+  <node pkg="path_manager" type="$(arg tracker_node_type)"
+        name="path_tracker_node" required="true">
+    <rosparam file="$(find robot_bringup)/config/path_tracker.yaml"/>
+  </node>
+  <test pkg="path_manager" type="test_path_tracker_holonomic.py"
+        test-name="path_tracker_holonomic" time-limit="20"/>
+</launch>

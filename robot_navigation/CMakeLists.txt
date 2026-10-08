@@ -96,6 +96,7 @@ add_dependencies(mission_controller_node
 )
 target_link_libraries(mission_controller_node
   ${catkin_LIBRARIES}
+  Threads::Threads
 )
 
 # ── 药箱开启控制节点 ──────────────────────────────────────
@@ -294,6 +295,16 @@ install(DIRECTORY systemd/
 )
 
 if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest(test/mission_routes.test)
+  add_rostest(test/safety_and_fine_tuning.test)
+  add_rostest(test/mission_cancellation.test)
+  add_rostest(test/mission_closed_loop.test)
+  add_rostest_gtest(test_box_cancellation test/box_cancellation.test test/test_box_cancellation.cpp)
+  if(TARGET test_box_cancellation)
+    add_dependencies(test_box_cancellation ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+    target_link_libraries(test_box_cancellation can_utils ${catkin_LIBRARIES} Threads::Threads)
+  endif()
   catkin_add_gtest(test_vl53l1x_can_bridge
     test/test_vl53l1x_can_bridge.cpp
   )

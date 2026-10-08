@@ -54,6 +54,17 @@ target_link_libraries(arm_and_gripper_node
 )
 
 # ── 安装 ──
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest_gtest(test_arm_cancellation test/arm_cancellation.test
+    test/test_arm_cancellation.cpp src/arm_and_gripper_node.cpp)
+  if(TARGET test_arm_cancellation)
+    target_compile_definitions(test_arm_cancellation PRIVATE ARM_AND_GRIPPER_NO_MAIN)
+    add_dependencies(test_arm_cancellation ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+    target_link_libraries(test_arm_cancellation ${catkin_LIBRARIES} pthread)
+  endif()
+endif()
+
 install(TARGETS servo_controller_node arm_and_gripper_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

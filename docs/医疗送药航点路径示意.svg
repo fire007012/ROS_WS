@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="672" viewBox="0 0 7000 5600">
+  <rect width="7000" height="5600" fill="#f8fafc"/>
+  <style>
+    text { font-family: sans-serif; fill: #172033; font-size: 150px; }
+    .point { fill: white; stroke: #172033; stroke-width: 22; }
+    .left { fill: none; stroke: #d97706; stroke-width: 35; }
+    .right { fill: none; stroke: #2563eb; stroke-width: 35; }
+    .return { fill: none; stroke: #059669; stroke-width: 28; stroke-dasharray: 65 40; }
+  </style>
+  <text x="300" y="270" style="font-size:190px">Waypoints — field coordinates in mm</text>
+  <text x="300" y="500">Lines show routes; obstacle outlines are not available.</text>
+  <g transform="translate(0 5500) scale(1 -1)">
+    <path d="M 500 500 H 6500 M 500 1500 H 6500 M 500 2500 H 6500 M 500 3500 H 6500 M 500 4500 H 6500"
+          fill="none" stroke="#e2e8f0" stroke-width="12"/>
+    <path d="M 3500 500 L 3500 1800" fill="none" stroke="#172033" stroke-width="35"/>
+    <path d="M 3500 1800 L 2400 2500 L 1500 3500 L 1300 4500" class="left"/>
+    <path d="M 3500 1800 L 4600 2500 L 5500 3500 L 5700 4500" class="right"/>
+    <path d="M 1500 3500 H 5500" fill="none" stroke="#9333ea" stroke-width="35"/>
+    <path d="M 2400 2500 L 3500 1500 L 4600 2500" class="return"/>
+    <circle cx="1300" cy="4500" r="300" fill="#ffedd5" stroke="#d97706" stroke-width="20"/>
+    <circle cx="5700" cy="4500" r="300" fill="#dbeafe" stroke="#2563eb" stroke-width="20"/>
+    <g class="point">
+      <circle cx="3500" cy="500" r="55"/><circle cx="3500" cy="1800" r="55"/>
+      <circle cx="2400" cy="2500" r="55"/><circle cx="4600" cy="2500" r="55"/>
+      <circle cx="1500" cy="3500" r="55"/><circle cx="5500" cy="3500" r="55"/>
+      <circle cx="1300" cy="4500" r="55"/><circle cx="5700" cy="4500" r="55"/>
+      <circle cx="3500" cy="1500" r="55"/>
+    </g>
+  </g>
+  <text x="1050" y="800">P4 / bed 1</text><text x="5250" y="800">P6 / bed 3</text>
+  <text x="750" y="1870">P3L</text><text x="5650" y="1870">P3R</text>
+  <text x="2700" y="1880">Cross passage: 4000 mm</text>
+  <text x="1800" y="2940">P2L</text><text x="4750" y="2940">P2R</text>
+  <text x="3650" y="3680">P1 / QR scan</text>
+  <text x="3650" y="4120">P7 / return entry</text>
+  <text x="3650" y="5050">P0 / P8 — hold ≥5 s</text>
+  <text x="300" y="5460" style="font-size:130px">Orange: left branch · Blue: right branch · Green dashed: return connections</text>
+</svg>

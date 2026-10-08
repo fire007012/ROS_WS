@@ -1,0 +1,5 @@
+<launch>
+  <!-- The test injects an in-memory CAN sender into the real controller. -->
+  <arg name="test_node_type" default="test_arm_cancellation"/>
+  <test pkg="arm_and_gripper" type="$(arg test_node_type)" test-name="arm_cancellation" time-limit="20"/>
+</launch>
