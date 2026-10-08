@@ -91,7 +91,7 @@ sudo apt install pigpio libpigpio-dev
 
 | 硬件 | 接口 | 说明 |
 |------|------|------|
-| Y42 机械臂电机 | CAN2 (can1) | STM32 控制，CAN ID: 0x205（地址5） |
+| Y42 机械臂电机 | Linux can0 → STM32 CAN1 → CAN2 | STM32 控制，CAN ID: 0x205（地址5） |
 | 舵机1 (SG90) | GPIO18 (BCM) | 物理引脚12，PWM信号线 |
 | 舵机2 (SG90) | GPIO19 (BCM) | 物理引脚35，PWM信号线 |
 | 舵机电源 | 5V / GND | 从树莓派或外部电源取电（注意电流） |
@@ -103,8 +103,8 @@ sudo apt install pigpio libpigpio-dev
 ### 1. 前置准备
 
 ```bash
-# 启动 CAN2 接口
-sudo ip link set can1 up type can bitrate 1000000
+# 启动 Linux can0 上游接口，STM32 内部再转发到 CAN2
+sudo ip link set can0 up type can bitrate 500000
 
 # 启动 pigpiod 守护进程
 sudo pigpiod
@@ -223,7 +223,7 @@ string message
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `can_device` | `can1` | CAN 接口 |
+| `can_device` | `can0` | CAN 接口 |
 | `arm_can_id` | `0x205` | 电机 CAN ID |
 | `arm_angle_scale` | `2.78` | 角度→counts 换算 |
 | `default_arm_angle` | `90.0` | 默认机械臂角度 |
@@ -276,6 +276,6 @@ CAN 接口需要 `ip link set` 配置，通常由系统启动脚本或 `udev` �
 | 问题 | 解决方法 |
 |------|----------|
 | `pigpio 初始化失败` | 确认 `sudo pigpiod` 已运行 |
-| CAN 写入失败 | 确认 `can1` 已 UP: `ip link show can1` |
+| CAN 写入失败 | 确认 `can0` 已 UP: `ip link show can0` |
 | 舵机不动作 | 检查 GPIO 连接和外部电源 |
 | `/servo_command` 不可用 | 先启动 `servo_controller_node` |

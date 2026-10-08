@@ -1,0 +1,47 @@
+<?xml version='1.0' encoding='utf-8'?>
+<launch>
+  <!-- Shared defaults for BOTH peers. master/slave are AV roles, not the ROS Master location. -->
+  <!-- ROS_MASTER_URI and ROS_IP must be set in the launching shell. Do not use env tags to relocate roslaunch itself. -->
+  <!-- remote_ip uses ROBOT_PI_IP on the doctor (master), ROBOT_VM_IP on the robot (slave). Set the real addresses, not sample IPs. -->
+  <!-- 网络：读取本机 .bashrc；机器人端 remote_ip=ROBOT_VM_IP，医生端 remote_ip=ROBOT_PI_IP。 -->
+  <arg name="role" />
+  <arg name="master_uri" default="$(env ROS_MASTER_URI)" />
+  <arg name="local_ip" default="$(env ROS_IP)" />
+  <arg name="remote_ip" default="$(eval env('ROBOT_VM_IP') if arg('role') == 'slave' else env('ROBOT_PI_IP'))" />
+  <!-- 功能开关：纯音频可把 enable_video 改为 false；无桌面把 enable_display 改为 false。 -->
+  <arg name="enable_audio" default="true" />
+  <arg name="enable_video" default="true" />
+  <arg name="enable_display" default="true" />
+  <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
+  <arg name="start_lower_cam" default="true" />
+  <arg name="use_test_camera" default="false" />
+  <arg name="lower_cam_device" default="/dev/video0" />
+  <arg name="cam_width" default="1280" />
+  <arg name="cam_height" default="720" />
+  <arg name="cam_framerate" default="25" />
+  <arg name="cam_pixel_format" default="mjpeg" />
+  <arg name="jpeg_quality" default="85" />
+  <arg name="stream_width" default="1280" />
+  <arg name="stream_height" default="720" />
+  <arg name="stream_framerate" default="25.0" />
+  <arg name="http_port" default="8080" />
+  <arg name="enable_http" default="false" />
+  <arg name="enable_browser" default="false" />
+  <!-- 音频：两端采样率、声道和帧长必须一致；不自动开始通话，仍等待 /Ready=1。 -->
+  <arg name="sample_rate" default="48000" />
+  <arg name="frame_duration_ms" default="20" />
+  <arg name="opus_bitrate" default="32000" />
+  <arg name="ready_topic" default="/Ready" />
+  <arg name="capture_latency_ms" default="20" />
+  <arg name="playback_latency_ms" default="40" />
+  <arg name="jitter_buffer_ms" default="40" />
+  <arg name="max_queue_ms" default="100" />
+  <arg name="start_upper_cam" default="true" />
+  <arg name="upper_cam_device" default="/dev/video0" />
+  <arg name="rx_port" default="5004" />
+  <arg name="tx_port" default="5004" />
+  <arg name="mic_device" default="default" />
+  <arg name="speaker_device" default="default" />
+  <!-- Old CLI network options remain available, but must match the shell environment used by roslaunch. -->
+  <include file="$(find robot_navigation)/launch/audio_video_peer.launch" pass_all_args="true" />
+</launch>

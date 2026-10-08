@@ -58,7 +58,7 @@ servo:
 
 # ── 机械臂+夹爪参数 ────────────────────────────────────────────────
 arm_and_gripper:
-  can_device: "can1"
+  can_device: "can0"
   arm_can_id: 0x205
   position_cmd_code: 0x10
   arm_angle_scale: 2.78

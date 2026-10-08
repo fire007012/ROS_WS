@@ -44,7 +44,7 @@ barcode_qr:
 
 # ── 药箱控制参数 ──────────────────────────────────────────────
 medicine_box:
-  can_device: "can1"
+  can_device: "can0"
   can_id: 0x206
   servo_cmd_code: 0x20             # 舵机控制指令码
   open_angle_deg: 90.0             # 打开角度
@@ -60,7 +60,7 @@ arm_push:
 # ── 显示节点参数 ──────────────────────────────────────────────
 display:
   can_enable: false                # 是否通过 CAN 发送到 STM32 液晶屏
-  can_device: "can1"
+  can_device: "can0"
   can_id: 0x300
 
 # ── 启动信号接收参数 ────────────────────────────────────────────
