@@ -36,6 +36,34 @@ TEST(Vl53l1xCanProtocol, RejectsInvalidFramesAndStatusIsPreserved) {
   EXPECT_EQ(0xFFFF, sample.distance_mm);
 }
 
+TEST(Vl53l1xCanProtocol, ValidityUsesStatusAndDistanceTogether) {
+  robot_navigation::Vl53l1xSample sample;
+  sample.distance_mm = 850;
+  sample.sigma_mm = 0xFFFF;  // Firmware currently has no sigma estimate.
+  sample.status = robot_navigation::kStm32RangeValid;
+  EXPECT_TRUE(robot_navigation::stm32RangeSampleValid(sample));
+
+  sample.status = robot_navigation::kStm32RangeValid | robot_navigation::kStm32RangeEmergency;
+  EXPECT_TRUE(robot_navigation::stm32RangeSampleValid(sample));
+  sample.status = robot_navigation::kStm32RangeValid | robot_navigation::kStm32RangeOutOfRange;
+  EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
+  EXPECT_TRUE(robot_navigation::stm32RangeStatusHasFailure(sample.status));
+  sample.status = robot_navigation::kStm32RangeTimeout;
+  EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
+  sample.status = robot_navigation::kStm32RangeEmergency;
+  EXPECT_FALSE(robot_navigation::stm32RangeStatusHasFailure(sample.status));
+  sample.status = robot_navigation::kStm32RangeValid;
+  sample.distance_mm = 0xFFFF;
+  EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
+}
+
+TEST(Vl53l1xCanProtocol, SensorTypesReflectMixedHardwareLayout) {
+  EXPECT_EQ(sensor_msgs::Range::ULTRASOUND, robot_navigation::stm32RangeRadiationType(0));
+  EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(1));
+  EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(2));
+  EXPECT_STREQ("HC-SR04 ultrasonic", robot_navigation::stm32RangeDeviceName(0));
+}
+
 TEST(Vl53l1xCanProtocol, RejectsExtendedAndRemoteFrames) {
   robot_navigation::Vl53l1xSample sample;
   EXPECT_FALSE(robot_navigation::parseVl53l1xSample(makeFrame(0x110 | CAN_EFF_FLAG,

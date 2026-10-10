@@ -12,6 +12,15 @@
 
 namespace robot_navigation {
 
+// STM32 range-frame status bits.  Keep these tied to the firmware protocol,
+// rather than inferring validity from the distance sentinel alone.
+constexpr uint8_t kStm32RangeValid = 0x01;
+constexpr uint8_t kStm32RangeOutOfRange = 0x02;
+constexpr uint8_t kStm32RangeTimeout = 0x04;
+constexpr uint8_t kStm32RangeI2cError = 0x08;
+constexpr uint8_t kStm32RangeLowQuality = 0x10;
+constexpr uint8_t kStm32RangeEmergency = 0x20;
+
 struct Vl53l1xSample {
   uint8_t sensor_id = 0;
   uint16_t distance_mm = 0xFFFF;
@@ -28,6 +37,31 @@ struct Vl53l1xDiagnosticFrame {
   uint8_t last_status = 0;
   uint8_t sequence = 0;
 };
+
+inline bool stm32RangeSampleValid(const Vl53l1xSample& sample) {
+  const uint8_t failure_flags = kStm32RangeOutOfRange | kStm32RangeTimeout |
+                                kStm32RangeI2cError;
+  return (sample.status & kStm32RangeValid) != 0 &&
+         (sample.status & failure_flags) == 0 && sample.distance_mm != 0xFFFF;
+}
+
+inline bool stm32RangeStatusHasFailure(uint8_t status) {
+  return (status & (kStm32RangeOutOfRange | kStm32RangeTimeout |
+                    kStm32RangeI2cError)) != 0;
+}
+
+inline uint8_t stm32RangeRadiationType(uint8_t sensor_id) {
+  return sensor_id == 0 ? sensor_msgs::Range::ULTRASOUND : sensor_msgs::Range::INFRARED;
+}
+
+inline const char* stm32RangeDeviceName(uint8_t sensor_id) {
+  switch (sensor_id) {
+    case 0: return "HC-SR04 ultrasonic";
+    case 1: return "VL53L1X ToF left";
+    case 2: return "VL53L1X ToF right";
+    default: return "unknown range sensor";
+  }
+}
 
 inline uint8_t vl53l1xSequenceDelta(uint8_t previous, uint8_t current) {
   return static_cast<uint8_t>(current - previous);
@@ -83,7 +117,9 @@ class Vl53l1xCanBridge {
     std::string range_topic;
     std::string distance_topic;
     std::string frame_id;
-    double min_range = 0.04;
+    std::string device_name;
+    uint8_t radiation_type = sensor_msgs::Range::INFRARED;
+    double min_range = 0.05;
     double max_range = 4.0;
     double field_of_view = 0.47;
     ros::Publisher range_pub;
@@ -93,13 +129,18 @@ class Vl53l1xCanBridge {
     uint16_t distance_mm = 0xFFFF;
     uint16_t sigma_mm = 0xFFFF;
     uint8_t status = 0;
+    uint8_t diagnostic_error_code = 0;
     uint8_t sequence = 0;
     bool has_sequence = false;
+    uint8_t diagnostic_sequence = 0;
+    bool has_diagnostic_sequence = false;
     bool has_valid = false;
     uint64_t received = 0;
     uint64_t invalid_samples = 0;
     uint64_t dropped_frames = 0;
     uint64_t duplicate_frames = 0;
+    uint64_t diagnostic_dropped_frames = 0;
+    uint64_t diagnostic_duplicate_frames = 0;
     uint64_t invalid_frames = 0;
     uint64_t consecutive_failures = 0;
   };
@@ -110,11 +151,14 @@ class Vl53l1xCanBridge {
   void handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic, const ros::Time& stamp);
   void publishDiagnostics(const ros::Time& now);
   bool updateSequence(SensorState& state, uint8_t sequence);
+  bool updateDiagnosticSequence(SensorState& state, uint8_t sequence);
   void loadSensorParams(SensorState& state, const std::string& prefix,
                         const std::string& default_name,
                         const std::string& default_range_topic,
                         const std::string& default_distance_topic,
-                        const std::string& default_frame);
+                        const std::string& default_frame, double default_min_range,
+                        double default_max_range, uint8_t radiation_type,
+                        const std::string& device_name);
 
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;

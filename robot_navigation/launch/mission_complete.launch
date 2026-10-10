@@ -309,7 +309,7 @@
   <!--  第8层：安全感知层                                            -->
   <!-- ============================================================ -->
 
-  <!-- Front, left, and right VL53L1X samples are supplied by the STM32 bridge. -->
+  <!-- Front HC-SR04 and left/right VL53L1X samples are supplied by the STM32 bridge. -->
   <group if="$(arg enable_vl53l1x_can)">
     <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
       <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>

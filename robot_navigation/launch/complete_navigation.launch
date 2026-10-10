@@ -224,7 +224,7 @@
   <!--  安全感知节点                                                 -->
   <!-- ============================================================ -->
 
-  <!-- STM32 VL53L1X CAN bridge: three Range sensors + installation TF -->
+  <!-- STM32 range CAN bridge: front HC-SR04 plus left/right VL53L1X, with installation TF -->
   <group if="$(arg enable_vl53l1x_can)">
     <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
       <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>
