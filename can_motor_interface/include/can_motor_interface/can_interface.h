@@ -40,7 +40,7 @@ class CanInterfaceNode {
   bool openSocket();
   void closeSocket();
   bool socketAvailable();
-  bool sendSpeedCommand(uint8_t motor_index, float target_rpm);
+  bool sendSpeedCommand(uint8_t motor_index, float target_rpm, bool cached);
   bool sendControlCommand(uint8_t command, int32_t value = 0);
   bool sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_t dlc);
   void parseStatusFrame(const can_msgs::Frame& frame);
@@ -53,6 +53,8 @@ class CanInterfaceNode {
   bool linkHealthy();
   void parseDriverFrame(const can_frame& frame);
   void parseDiagnostics(const can_frame& frame);
+  void publishMotionStartState();
+  void clearCachedMotion();
 
  private:
   ros::NodeHandle nh_;
@@ -119,9 +121,13 @@ class CanInterfaceNode {
   double event_dedup_window_sec_;
   double command_publish_rate_hz_;
   double command_timeout_sec_;
+  double start_ack_timeout_sec_;
   std::atomic<double> last_rx_time_sec_;
   std::mutex event_mutex_;
   std::map<uint8_t, ros::SteadyTime> last_event_times_;
+  MotionStartStateMachine start_state_;
+  uint64_t command_generation_ = 0;
+  uint64_t cached_generation_ = 0;
 };
 
 }  // namespace can_motor_interface

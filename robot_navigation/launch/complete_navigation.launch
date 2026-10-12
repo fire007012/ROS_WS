@@ -85,6 +85,7 @@
     <rosparam param="direction_signs" subst_value="true">$(arg direction_signs)</rosparam>
     <param name="max_rpm" value="3000.0"/>
     <param name="heartbeat_timeout_sec" value="1.0"/>
+    <param name="start_ack_timeout_sec" value="0.4"/>
   </node>
 
   <!-- ============================================================ -->

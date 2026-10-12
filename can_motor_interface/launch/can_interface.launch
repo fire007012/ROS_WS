@@ -17,7 +17,7 @@
     <param name="rx_can_id" value="$(arg rx_can_id)" type="int"/>
     <param name="rx_can_id_filter_enable" value="true"/>
     <param name="use_extended_frame" value="$(arg use_extended_frame)" type="bool"/>
-    <!-- STM32 CAN1: DLC=8 [01, idx, int32 RPM LE, acceleration, sync=0]. No checksum. -->
+    <!-- STM32 CAN1: cached speed DLC=8 [01, idx, int32 RPM LE, acceleration, 01]. -->
     <param name="acceleration_rpm_s" value="$(arg acceleration_rpm_s)" type="int"/>
     <!-- Firmware default omits velocity: request basic+position+velocity. -->
     <param name="report_mask" value="7"/>
@@ -33,5 +33,7 @@
     <!-- Repeat the latest speed target independently of ROS command arrival jitter. -->
     <param name="command_publish_rate_hz" value="50.0"/>
     <param name="command_timeout_sec" value="0.5"/>
+    <!-- Physical-start command ACK must arrive in the firmware's 300..500 ms window. -->
+    <param name="start_ack_timeout_sec" value="0.4"/>
   </node>
 </launch>

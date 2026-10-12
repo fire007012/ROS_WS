@@ -34,7 +34,9 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       heartbeat_timeout_sec_(1.0),
       event_dedup_window_sec_(0.5),
       command_publish_rate_hz_(50.0),
-      command_timeout_sec_(0.5) {
+      command_timeout_sec_(0.5),
+      start_ack_timeout_sec_(0.4),
+      start_state_(0.4) {
   pnh_.param<std::string>("can_device", can_device_, "can0");
 
   int tx_can_id_i = static_cast<int>(tx_can_id_);
@@ -73,6 +75,9 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param("event_dedup_window_sec", event_dedup_window_sec_, event_dedup_window_sec_);
   pnh_.param("command_publish_rate_hz", command_publish_rate_hz_, command_publish_rate_hz_);
   pnh_.param("command_timeout_sec", command_timeout_sec_, command_timeout_sec_);
+  pnh_.param("start_ack_timeout_sec", start_ack_timeout_sec_, start_ack_timeout_sec_);
+  start_ack_timeout_sec_ = std::max(0.3, std::min(0.5, start_ack_timeout_sec_));
+  start_state_.setAckTimeout(start_ack_timeout_sec_);
   command_publish_rate_hz_ = std::max(1.0, command_publish_rate_hz_);
   command_timeout_sec_ = std::max(0.05, command_timeout_sec_);
 
@@ -116,7 +121,7 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   last_rx_time_sec_.store(ros::SteadyTime::now().toSec());
   std_msgs::Bool initial_estop; initial_estop.data = false; emergency_stop_pub_.publish(initial_estop);
-  std_msgs::String initial_state; initial_state.data = "RUNNING"; robot_state_pub_.publish(initial_state);
+  publishMotionStartState();
   std_msgs::Bool ready; ready.data = false; link_ready_pub_.publish(ready);
   rx_thread_ = std::thread(&CanInterfaceNode::canReceiveThread, this);
 }
@@ -227,24 +232,32 @@ bool CanInterfaceNode::sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_
   return true;
 }
 
-bool CanInterfaceNode::sendSpeedCommand(uint8_t motor_index, float target_rpm) {
+bool CanInterfaceNode::sendSpeedCommand(uint8_t motor_index, float target_rpm, bool cached) {
   const float rpm = std::max(-max_rpm_, std::min(max_rpm_, target_rpm));
   const int32_t rpm_i = static_cast<int32_t>(std::lround(rpm));
 
   return motion_.run([&] {
     if (!linkHealthy()) return true;
-    const can_frame frame = stm32Command(tx_can_id_, false, 0x01,
-        static_cast<uint8_t>(wheel_map_.indices[motor_index]),
-        rpm_i * wheel_map_.signs[motor_index], static_cast<uint8_t>(acceleration_rpm_s_), 0);
+    const can_frame frame = cached
+        ? stm32CachedSpeed(static_cast<uint8_t>(wheel_map_.indices[motor_index]),
+                           rpm_i * wheel_map_.signs[motor_index],
+                           static_cast<uint8_t>(acceleration_rpm_s_))
+        : stm32Command(tx_can_id_, false, 0x01,
+            static_cast<uint8_t>(wheel_map_.indices[motor_index]),
+            rpm_i * wheel_map_.signs[motor_index], static_cast<uint8_t>(acceleration_rpm_s_), 0);
     if (!sendCanFrame(frame.can_id, frame.data, frame.can_dlc)) return false;
-    std::lock_guard<std::mutex> lock(telemetry_mutex_);
-    motion_ack_health_.sent(motor_index, ros::SteadyTime::now().toSec());
+    if (!cached) {
+      std::lock_guard<std::mutex> lock(telemetry_mutex_);
+      motion_ack_health_.sent(motor_index, ros::SteadyTime::now().toSec());
+    }
     return true;
   });
 }
 
 bool CanInterfaceNode::sendControlCommand(uint8_t command, int32_t value) {
-  const can_frame frame = stm32Command(tx_can_id_, use_extended_frame_, command, broadcast_index_, value);
+  const uint8_t index = command == 0x09 ? 0xFF : broadcast_index_;
+  const int32_t wire_value = command == 0x09 ? 0 : value;
+  const can_frame frame = stm32Command(tx_can_id_, use_extended_frame_, command, index, wire_value);
   return sendCanFrame(frame.can_id, frame.data, frame.can_dlc);
 }
 
@@ -261,6 +274,8 @@ void CanInterfaceNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& ms
     std::fill(target_rpm_.begin(), target_rpm_.end(), 0.0f);
     std::lock_guard<std::mutex> telemetry_lock(telemetry_mutex_);
     motion_ack_health_ = MotionAckHealth{};
+    start_state_.resetForReprepare();
+    cached_generation_ = 0;
     return true;
   })) {
     ROS_WARN("ESTOP reset denied: require fresh driver replies, heartbeat ACK and stable firmware diagnostics");
@@ -268,14 +283,15 @@ void CanInterfaceNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& ms
   }
   ROS_WARN("[can_interface] ESTOP reset accepted by upper safety policy");
   std_msgs::Bool estop; estop.data = false; emergency_stop_pub_.publish(estop);
-  std_msgs::String state; state.data = "RUNNING"; robot_state_pub_.publish(state);
+  publishMotionStartState();
   std_msgs::Bool lock; lock.data = false; chassis_lock_pub_.publish(lock);
   std_msgs::Bool hold; hold.data = false; fixed_route_hold_pub_.publish(hold);
 }
 
 void CanInterfaceNode::remoteStartCallback(const std_msgs::Empty::ConstPtr&) {
-  if (!motion_.run([&] { return !linkHealthy() || sendControlCommand(0x05); }))
-    triggerEmergencyStop("synchronous start transmit failure");
+  // 0x05 is a firmware-side physical trigger. ROS must not synthesize it or
+  // turn the physical key into a velocity/position command.
+  ROS_WARN("[can_interface] ignoring /start_signal/remote; physical STM32 start key is required");
 }
 
 void CanInterfaceNode::cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
@@ -295,10 +311,25 @@ void CanInterfaceNode::cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& 
   }
   last_command_time_ = ros::SteadyTime::now();
   have_command_ = true;
+  ++command_generation_;
 }
 
 void CanInterfaceNode::commandTimerCallback(const ros::WallTimerEvent&) {
   if (motion_.latched() || !linkHealthy()) return;
+  const double now = ros::SteadyTime::now().toSec();
+  if (start_state_.timeout(now)) {
+    ROS_ERROR("[can_interface] start ACK timeout after %.3fs (seq=%u); motion remains stopped",
+              start_ack_timeout_sec_, start_state_.pendingSequence());
+    publishMotionStartState();
+  }
+  if (start_state_.startPending()) {
+    // The physical key releases the already cached queue. Keep only the
+    // heartbeat alive until the matching 0x102 command-0x05 ACK arrives.
+    return;
+  }
+  if (start_state_.state() == MotionStartState::START_FAILED ||
+      start_state_.state() == MotionStartState::ESTOP_LATCHED ||
+      start_state_.state() == MotionStartState::HEARTBEAT_LOST) return;
   std::vector<float> targets;
   bool command_fresh = false;
   bool command_received = false;
@@ -316,12 +347,32 @@ void CanInterfaceNode::commandTimerCallback(const ros::WallTimerEvent&) {
     return;
   }
 
-  // Keep the latest target on the wire at a fixed cadence; expire to an explicit stop.
+  // Before physical start, send each new target exactly once with the cache
+  // bit. This prepares the synchronous queue without generating repeats.
+  if (start_state_.canSendCachedMotion()) {
+    if (cached_generation_ == command_generation_ &&
+        start_state_.state() == MotionStartState::CACHE_READY) return;
+    for (size_t i = 0; i < targets.size(); ++i) {
+      if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i], true)) {
+        triggerEmergencyStop("CAN cached motion transmit failure");
+        return;
+      }
+    }
+    cached_generation_ = command_generation_;
+    start_state_.cacheReady();
+    ROS_INFO("[can_interface] synchronized speed cache prepared; state=%s",
+             motionStartStateName(start_state_.state()));
+    publishMotionStartState();
+    return;
+  }
+
+  // Running mode sends ordinary immediate speed updates. The physical key is
+  // never converted into a synthetic velocity/position command.
   if (!command_fresh) {
     std::fill(targets.begin(), targets.end(), 0.0f);
   }
   for (size_t i = 0; i < targets.size(); ++i) {
-    if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i])) {
+    if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i], false)) {
       triggerEmergencyStop("CAN transmit failure; explicit reset required after link repair");
       break;
     }
@@ -343,14 +394,32 @@ void CanInterfaceNode::publishStopSignals() {
   actionlib_msgs::GoalID cancel; move_base_cancel_pub_.publish(cancel);
 }
 
+void CanInterfaceNode::publishMotionStartState() {
+  const std::string state_name = motionStartStateName(start_state_.state());
+  ROS_INFO("[can_interface] motion start state=%s", state_name.c_str());
+  std_msgs::String state;
+  state.data = state_name;
+  robot_state_pub_.publish(state);
+}
+
+void CanInterfaceNode::clearCachedMotion() {
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  have_command_ = false;
+  std::fill(target_rpm_.begin(), target_rpm_.end(), 0.0f);
+  ++command_generation_;
+  cached_generation_ = command_generation_;
+}
+
 void CanInterfaceNode::triggerEmergencyStop(const char* reason) {
   last_failure_time_sec_.store(ros::SteadyTime::now().toSec());
+  clearCachedMotion();
+  start_state_.estopLatched();
   const bool send_stop = !motion_.latched();
   const bool first = motion_.stop([&] { if (send_stop) sendControlCommand(0x03); });
   if (first) {
     ROS_ERROR("[can_interface] ESTOP latched: %s", reason);
     publishStopSignals();
-    std_msgs::String state; state.data = "ESTOP"; robot_state_pub_.publish(state);
+    publishMotionStartState();
     std_msgs::String display; display.data = "急停: " + std::string(reason); display_pub_.publish(display);
   } else {
     ROS_WARN_THROTTLE(1.0, "[can_interface] duplicate ESTOP ignored: %s", reason);
@@ -363,16 +432,37 @@ void CanInterfaceNode::handleCanEvent(const CanEvent& event) {
   switch (event.type) {
     case CanEventType::PHYSICAL_START: {
       if (isDuplicateEvent(0x12, ros::SteadyTime::now())) return;
-      ROS_INFO("[can_interface] physical start button pressed; STM32 already executed 0x05");
-      std_msgs::String state; state.data = motion_.latched() ? "ESTOP" : "RUNNING"; robot_state_pub_.publish(state);
+      const double now = ros::SteadyTime::now().toSec();
+      ROS_INFO("[can_interface] physical start event result=%u local seq=%u",
+               event.result, event.sequence);
+      if (event.result == 0) {
+        start_state_.physicalStart(event.result, event.sequence, now);
+        ROS_INFO("[can_interface] accepted physical start seq=%u; pause synchronized motion until matching ACK",
+                 event.sequence);
+      } else if (event.result == 1) {
+        start_state_.physicalStart(event.result, event.sequence, now);
+        ROS_WARN("[can_interface] physical start rejected result=1; waiting for next manual key press");
+      } else {
+        start_state_.physicalStart(event.result, event.sequence, now);
+        ROS_ERROR("[can_interface] physical start execution failed result=%u", event.result);
+      }
+      publishMotionStartState();
       std_msgs::String display; display.data = motion_.latched() ? "急停中" : "物理启动"; display_pub_.publish(display);
       break;
     }
     case CanEventType::PHYSICAL_ESTOP:
-      if (!isDuplicateEvent(0x20, ros::SteadyTime::now())) triggerEmergencyStop("physical estop button");
+      if (!isDuplicateEvent(0x20, ros::SteadyTime::now())) {
+        ROS_ERROR("[can_interface] physical emergency stop event; cancelling START_PENDING");
+        triggerEmergencyStop("physical estop button");
+      }
       break;
     case CanEventType::HEARTBEAT_TIMEOUT:
-      if (!isDuplicateEvent(0x21, ros::SteadyTime::now())) triggerEmergencyStop("STM32 heartbeat timeout");
+      if (!isDuplicateEvent(0x21, ros::SteadyTime::now())) {
+        ROS_ERROR("[can_interface] STM32 heartbeat timeout event; reason=0x%02X", event.detail);
+        start_state_.heartbeatLost();
+        publishMotionStartState();
+        triggerEmergencyStop("STM32 heartbeat timeout");
+      }
       break;
     case CanEventType::DRIVER_FAULT:
       if (!isDuplicateEvent(static_cast<uint8_t>(0x30U + event.detail), ros::SteadyTime::now())) {
@@ -407,6 +497,17 @@ void CanInterfaceNode::parseStatusFrame(const can_msgs::Frame& frame) {
   if (!decodeStm32Telemetry(frame.dlc, frame.data.data(), &telemetry) ||
       telemetry.index >= 5) return;
 
+  // A command-0x05 ACK only means that firmware queued the synchronous
+  // trigger. Confirm actual start from velocity feedback before resuming the
+  // normal immediate command stream.
+  if (telemetry.type == 0x03 && start_state_.startPending() &&
+      start_state_.ackAccepted() && std::fabs(telemetry.rpm) > 0.01f) {
+    start_state_.motionStarted();
+    ROS_INFO("[can_interface] motion feedback detected after physical start; state=%s",
+             motionStartStateName(start_state_.state()));
+    publishMotionStartState();
+  }
+
   // These are STM32 cache reports, not evidence of a fresh CAN2 sample.
   // Keep their fault indication as a second stop path if the 0x06 event is lost.
   if (telemetry.type == 0x01 && ((telemetry.flags & 8) || frame.data[6]))
@@ -424,6 +525,13 @@ void CanInterfaceNode::parseDriverFrame(const can_frame& frame) {
     if (reply.function == 0x35)
       motor_state_rpm_[logical] = reply.rpm * wheel_map_.signs[logical];
     else motor_status_flags_[logical] = reply.flags;
+  }
+  if (reply.function == 0x35 && start_state_.startPending() &&
+      start_state_.ackAccepted() && std::fabs(reply.rpm) > 0.01f) {
+    start_state_.motionStarted();
+    ROS_INFO("[can_interface] real motor speed feedback detected after physical start; state=%s",
+             motionStartStateName(start_state_.state()));
+    publishMotionStartState();
   }
   if (reply.function == 0x3A && (!(reply.flags & 1) || (reply.flags & 8)))
     triggerEmergencyStop("CAN2 driver disabled or stall protection active");
@@ -447,11 +555,26 @@ void CanInterfaceNode::parseDiagnostics(const can_frame& frame) {
       (frame.data[1] == 0xE2 || frame.data[1] == 0xEE))
     triggerEmergencyStop("CAN2 driver rejected a command/read");
   if (frame.can_id == 0x102 && frame.can_dlc == 8) {
-    if (frame.data[3] != 0) {
+    const uint16_t sequence = static_cast<uint16_t>(frame.data[0] << 8 | frame.data[1]);
+    const uint8_t command = frame.data[2];
+    const uint8_t result = frame.data[3];
+    if (command == 0x05) {
+      const bool matched = start_state_.acknowledge(sequence, command, result);
+      ROS_INFO("[can_interface] start ACK seq=%u result=%u matched=%s state=%s",
+               sequence, result, matched ? "yes" : "no",
+               motionStartStateName(start_state_.state()));
+      if (result == 1) {
+        ROS_ERROR("[can_interface] physical start ACK rejected seq=%u", sequence);
+        publishMotionStartState();
+      } else if (result == 2) {
+        ROS_ERROR("[can_interface] physical start ACK execution failed seq=%u", sequence);
+        publishMotionStartState();
+      }
+    } else if (result != 0) {
       ROS_ERROR_THROTTLE(1.0, "STM32 rejected command 0x%02X (result=%u)", frame.data[2], frame.data[3]);
       triggerEmergencyStop("STM32 negative command ACK");
-    } else if (frame.data[2] == 0x09) heartbeat_ack_time_sec_.store(now);
-    else if (frame.data[2] == 0x07) report_configured_.store(true);
+    } else if (command == 0x09) heartbeat_ack_time_sec_.store(now);
+    else if (command == 0x07) report_configured_.store(true);
   }
   if (frame.can_id == 0x103 && frame.can_dlc == 8 && frame.data[0] >= 1 && frame.data[0] <= 3) {
     bool failure, response_timeout;
@@ -589,7 +712,11 @@ void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
     ROS_WARN_THROTTLE(1.0, "CAN heartbeat timeout: no STM32 reply on %s ID=0x%X %s for %.2f s. "
                        "Check firmware protocol, bitrate and CAN1 filtering.", can_device_.c_str(),
                        rx_can_id_, use_extended_frame_ ? "extended" : "standard", heartbeat_timeout_sec_);
-    if (!isDuplicateEvent(0x22, ros::SteadyTime::now())) triggerEmergencyStop("CAN receive timeout");
+    if (!isDuplicateEvent(0x22, ros::SteadyTime::now())) {
+      start_state_.heartbeatLost();
+      publishMotionStartState();
+      triggerEmergencyStop("CAN receive timeout");
+    }
   }
   if ((link_was_healthy_.load() || now - link_open_time_sec_.load() > 2.0) && !linkHealthy() && !motion_.latched())
     triggerEmergencyStop("CAN2 motor feedback, heartbeat ACK or firmware statistics expired");
@@ -598,7 +725,7 @@ void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
     std::lock_guard<std::mutex> lock(telemetry_mutex_);
     motion_ack_expired = !motion_ack_health_.healthy(now, 0.5);
   }
-  if (motion_ack_expired && !motion_.latched())
+  if (motion_ack_expired && !motion_.latched() && start_state_.state() == MotionStartState::RUNNING)
     triggerEmergencyStop("CAN2 per-wheel F6 motion ACK timeout");
   // Retry the stop after a lost write/reconnect; never emit F6 while latched.
   if (motion_.latched()) motion_.stop([&] { sendControlCommand(0x03); });
