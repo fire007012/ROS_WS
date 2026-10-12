@@ -15,7 +15,7 @@
   <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
   <arg name="start_lower_cam" default="true" />
   <arg name="use_test_camera" default="false" />
-  <arg name="lower_cam_device" default="/dev/video0" />
+  <arg name="lower_cam_device" default="" />
   <arg name="cam_width" default="1280" />
   <arg name="cam_height" default="720" />
   <arg name="cam_framerate" default="25" />
@@ -37,7 +37,7 @@
   <arg name="jitter_buffer_ms" default="40" />
   <arg name="max_queue_ms" default="100" />
   <arg name="start_upper_cam" default="true" />
-  <arg name="upper_cam_device" default="/dev/video0" />
+  <arg name="upper_cam_device" default="" />
   <arg name="rx_port" default="5004" />
   <arg name="tx_port" default="5004" />
   <arg name="mic_device" default="default" />

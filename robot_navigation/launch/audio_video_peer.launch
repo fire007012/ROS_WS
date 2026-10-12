@@ -44,19 +44,17 @@
   <env name="ROS_IP" value="$(arg local_ip)" />
   <group if="$(arg enable_video)">
     <group if="$(eval arg('start_upper_cam') if arg('role') == 'master' else arg('start_lower_cam'))">
-      <node pkg="usb_cam" type="usb_cam_node" name="$(arg local_camera_node)" output="screen" ns="$(arg local_camera_ns)" unless="$(arg use_test_camera)">
-        <param name="video_device" value="$(eval arg('upper_cam_device') if arg('role') == 'master' else arg('lower_cam_device'))" />
-        <param name="image_width" value="$(arg cam_width)" />
-        <param name="image_height" value="$(arg cam_height)" />
-        <param name="framerate" value="$(arg cam_framerate)" />
-        <param name="pixel_format" value="$(arg cam_pixel_format)" />
-        <param name="io_method" value="mmap" />
-      </node>
-      <node pkg="robot_navigation" type="test_camera.py" name="$(arg local_camera_node)" output="screen" ns="$(arg local_camera_ns)" if="$(arg use_test_camera)">
-        <param name="image_width" value="$(arg cam_width)" />
-        <param name="image_height" value="$(arg cam_height)" />
-        <param name="framerate" value="$(arg cam_framerate)" />
-      </node>
+      <include file="$(find robot_navigation)/config/camera_devices.launch">
+        <arg name="camera_role" value="$(eval 'doctor_audio' if arg('role') == 'master' else 'robot_audio')"/>
+        <arg name="camera_device_override" value="$(eval arg('upper_cam_device') if arg('role') == 'master' else arg('lower_cam_device'))"/>
+        <arg name="camera_ns" value="$(arg local_camera_ns)"/>
+        <arg name="camera_node" value="$(arg local_camera_node)"/>
+        <arg name="image_width" value="$(arg cam_width)"/>
+        <arg name="image_height" value="$(arg cam_height)"/>
+        <arg name="framerate" value="$(arg cam_framerate)"/>
+        <arg name="pixel_format" value="$(arg cam_pixel_format)"/>
+        <arg name="use_test_camera" value="$(arg use_test_camera)"/>
+      </include>
       <node pkg="robot_navigation" type="video_stream_node" name="video_sender_$(arg role)" output="screen">
         <param name="camera_topic" value="/$(arg local_camera_ns)/$(arg local_camera_node)/image_raw" />
         <param name="compressed_topic" value="/$(arg local_camera_ns)/network/compressed" />

@@ -12,6 +12,44 @@
 视频保留 MJPEG：usb_cam 本地解码，发送节点 JPEG 编码后跨网络，接收节点解码显示。
 不是摄像头原生 MJPEG 零拷贝，也没有 H.264。
 
+## 树莓派双摄像头配置
+
+共享配置文件：`config/camera_devices.launch`。
+
+当前树莓派 `v4l2-ctl --list-devices` 对应关系：
+
+```text
+扫码摄像头：/dev/video0，备用 /dev/video1，发现设备 /dev/media2
+音视频摄像头：/dev/video2，备用 /dev/video3，发现设备 /dev/media3
+```
+
+`usb_cam` 应使用 `/dev/video*`，不使用 `/dev/media*`。默认启动时：
+
+```bash
+# 树莓派扫码
+roslaunch robot_navigation scan_and_display.launch
+
+# 树莓派机器人端音视频，使用 /dev/video2
+roslaunch robot_navigation audio_video_slave.launch
+```
+
+如果摄像头编号变化，只修改 `camera_devices.launch` 中的：
+
+```xml
+<arg name="scan_device" default="/dev/video0"/>
+<arg name="robot_audio_device" default="/dev/video2"/>
+```
+
+也可以临时覆盖，不改文件：
+
+```bash
+roslaunch robot_navigation scan_and_display.launch video_device:=/dev/video1
+roslaunch robot_navigation audio_video_slave.launch lower_cam_device:=/dev/video3
+```
+
+电脑 VM 是医生端，默认选择 VM 自己的 `/dev/video0`，不会读取树莓派的 `/dev/video2`。
+如果 VM 没有摄像头，使用 `start_upper_cam:=false`，仍可接收树莓派视频。
+
 ## 单命令启动与集中配置（树莓派 + 医生端 VM）
 
 角色保持不变：`audio_video_slave.launch` 是机器人端，`audio_video_master.launch`
@@ -22,6 +60,8 @@
 原来的 `enable_video:=false` 等命令行覆盖功能。两端共用
 `launch/audio_video_peer.launch` 实现，原有节点名、相机命名空间及跨网话题保持不变。
 默认仍是 720p25/MJPEG、48kHz/mono/20ms、UDP 5004；HTTP 默认关闭。
+
+树莓派摄像头路径统一由 `config/camera_devices.launch` 管理：扫码默认 `/dev/video0`（备用 `/dev/video1`），机器人端音视频默认 `/dev/video2`（备用 `/dev/video3`）。`/dev/media2` 和 `/dev/media3` 只用于 v4l2 设备发现，不传给 `usb_cam`。电脑 VM 医生端默认使用自己的 `/dev/video0`；没有本地摄像头时启动 `start_upper_cam:=false`。换树莓派摄像头编号时只改该文件的 `scan_device` 或 `robot_audio_device`；启动命令仍可用 `scan_camera_device:=`、`lower_cam_device:=` 或 `upper_cam_device:=` 临时覆盖。
 
 两边 `.bashrc` 的 ROS 部分先 source Noetic 和实际工作空间，再设置网络变量。
 以下 IP 必须替换为接入同一网络后的真实地址，`10.161.170.94` 只是 VM 示例：

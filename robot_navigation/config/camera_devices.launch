@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Shared camera routing for the Raspberry Pi.
+       Edit scan_device/audio_device here when the v4l2 numbering changes.
+       The /dev/media* entries are discovery metadata; usb_cam uses /dev/video*. -->
+  <arg name="camera_role" default="scan"/>
+  <arg name="scan_device" default="/dev/video0"/>
+  <arg name="scan_alternate_device" default="/dev/video1"/>
+  <arg name="robot_audio_device" default="/dev/video2"/>
+  <arg name="robot_audio_alternate_device" default="/dev/video3"/>
+  <!-- The VM may have different local camera numbering. -->
+  <arg name="doctor_audio_device" default="/dev/video0"/>
+  <arg name="doctor_audio_alternate_device" default="/dev/video1"/>
+  <arg name="camera_device_override" default=""/>
+  <arg name="camera_ns" default=""/>
+  <arg name="camera_node" default="usb_cam"/>
+  <arg name="image_width" default="640"/>
+  <arg name="image_height" default="480"/>
+  <arg name="framerate" default="30"/>
+  <arg name="pixel_format" default="mjpeg"/>
+  <arg name="io_method" default="mmap"/>
+  <arg name="use_test_camera" default="false"/>
+
+  <arg name="selected_device"
+       value="$(eval arg('camera_device_override') if arg('camera_device_override') else (arg('scan_device') if arg('camera_role') == 'scan' else (arg('robot_audio_device') if arg('camera_role') == 'robot_audio' else arg('doctor_audio_device'))))"/>
+
+  <group if="$(eval arg('camera_ns') == '')">
+    <node pkg="usb_cam" type="usb_cam_node" name="$(arg camera_node)"
+          output="screen" unless="$(arg use_test_camera)">
+      <param name="video_device" value="$(arg selected_device)"/>
+      <param name="image_width" value="$(arg image_width)"/>
+      <param name="image_height" value="$(arg image_height)"/>
+      <param name="framerate" value="$(arg framerate)"/>
+      <param name="pixel_format" value="$(arg pixel_format)"/>
+      <param name="io_method" value="$(arg io_method)"/>
+    </node>
+    <node pkg="robot_navigation" type="test_camera.py" name="$(arg camera_node)"
+          output="screen" if="$(arg use_test_camera)">
+      <param name="image_width" value="$(arg image_width)"/>
+      <param name="image_height" value="$(arg image_height)"/>
+      <param name="framerate" value="$(arg framerate)"/>
+    </node>
+  </group>
+
+  <group unless="$(eval arg('camera_ns') == '')">
+    <node pkg="usb_cam" type="usb_cam_node" name="$(arg camera_node)"
+          ns="$(arg camera_ns)" output="screen" unless="$(arg use_test_camera)">
+      <param name="video_device" value="$(arg selected_device)"/>
+      <param name="image_width" value="$(arg image_width)"/>
+      <param name="image_height" value="$(arg image_height)"/>
+      <param name="framerate" value="$(arg framerate)"/>
+      <param name="pixel_format" value="$(arg pixel_format)"/>
+      <param name="io_method" value="$(arg io_method)"/>
+    </node>
+    <node pkg="robot_navigation" type="test_camera.py" name="$(arg camera_node)"
+          ns="$(arg camera_ns)" output="screen" if="$(arg use_test_camera)">
+      <param name="image_width" value="$(arg image_width)"/>
+      <param name="image_height" value="$(arg image_height)"/>
+      <param name="framerate" value="$(arg framerate)"/>
+    </node>
+  </group>
+</launch>

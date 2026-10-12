@@ -259,6 +259,7 @@ catkin_install_python(PROGRAMS
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
   scripts/button_autostart.py
+  scripts/scan_sequence_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -45,7 +45,7 @@ bool BarcodeQrDetector::init() {
   scan_session_sub_ = nh_.subscribe("/barcode_scan/session", 1, &BarcodeQrDetector::scanSessionCallback, this);
 
   // ── 发布者 ──
-  qr_result_pub_     = nh_.advertise<robot_navigation::QrResult>("/qr_result", 1);
+  qr_result_pub_     = nh_.advertise<robot_navigation::QrResult>("/qr_result", 1, true);
   barcode_bed1_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed1", 1);
   barcode_bed3_pub_  = nh_.advertise<std_msgs::String>("/barcode_bed3", 1);
   display_text_pub_  = nh_.advertise<std_msgs::String>(display_topic_, 1);
