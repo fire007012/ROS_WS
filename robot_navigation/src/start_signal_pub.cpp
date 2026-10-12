@@ -2,13 +2,11 @@
  * @file start_signal_pub.cpp
  * @brief 启动信号转发节点
  *
- * 通过 CAN 接收 STM32 按键触发的启动信号，并转发到 ROS 话题 /start_signal。
+ * 通过 CAN 接收 STM32 物理按键事件，并转发到 ROS 话题 /start_signal/physical。
  * 同时也支持通过 ROS 参数或服务手动触发。
  *
- * CAN 协议（自定义）：
- *   CAN ID: 0x180 (STM32 → ROS)
- *   Data[0]: 指令码 (0xF0 = 启动信号)
- *   Data[1-7]: 保留
+ * STM32 协议：标准帧 0x112、DLC=8，byte0=0x01、byte1=0x01、byte2=0x01
+ * 表示物理启动键按下；byte3=0 表示固件接受，byte4..5 是本地序号。
  */
 
 #include <ros/ros.h>
@@ -38,16 +36,12 @@ class StartSignalPub {
       , socket_fd_(-1)
       , running_(false)
       , can_device_("can0")
-      , can_id_(0x180)
-      , start_cmd_code_(0xF0)
+      , can_id_(0x112)
   {
     pnh_.param<std::string>("can_device", can_device_, "can0");
     int can_id_int = static_cast<int>(can_id_);
     pnh_.param("can_id", can_id_int, can_id_int);
     can_id_ = static_cast<uint32_t>(can_id_int);
-    int cmd_int = static_cast<int>(start_cmd_code_);
-    pnh_.param("start_cmd_code", cmd_int, cmd_int);
-    start_cmd_code_ = static_cast<uint8_t>(cmd_int);
   }
 
   ~StartSignalPub() {
@@ -57,7 +51,7 @@ class StartSignalPub {
   }
 
   bool init() {
-    pub_ = nh_.advertise<std_msgs::UInt32>("/start_signal/can", 1, false);
+    pub_ = nh_.advertise<std_msgs::UInt32>("/start_signal/physical", 1, false);
 
     // 初始化 CAN 接收
     if (initCan()) {
@@ -117,9 +111,13 @@ class StartSignalPub {
       if (nbytes != static_cast<int>(sizeof(struct can_frame))) continue;
 
       // 检查是否是启动信号
-      if (frame.can_id == can_id_ &&
-          frame.data[0] == start_cmd_code_) {
-        ROS_INFO("[start_signal_pub] ====== 收到 STM32 启动信号！======");
+      const uint32_t raw_id = frame.can_id & CAN_SFF_MASK;
+      if (!(frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) &&
+          raw_id == can_id_ && frame.can_dlc == 8 &&
+          frame.data[0] == 0x01 && frame.data[1] == 0x01 &&
+          frame.data[2] == 0x01 && frame.data[3] == 0x00) {
+        const uint16_t seq = static_cast<uint16_t>(frame.data[4] << 8 | frame.data[5]);
+        ROS_INFO("[start_signal_pub] physical STM32 start accepted, local seq=%u", seq);
         std_msgs::UInt32 msg; msg.data = 0x5A17;
         pub_.publish(msg);
 
@@ -138,7 +136,6 @@ class StartSignalPub {
   std::thread rx_thread_;
   std::string can_device_;
   uint32_t can_id_;
-  uint8_t start_cmd_code_;
 };
 
 }  // namespace robot_navigation

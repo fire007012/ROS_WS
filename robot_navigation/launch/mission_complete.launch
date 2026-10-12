@@ -68,8 +68,9 @@
   <arg name="use_dynamic_navigation" default="false"/>
   <!-- Required when use_dynamic_navigation:=true. -->
   <arg name="dynamic_map_file" default="/absolute/path/to/arena.yaml"/>
-  <arg name="enable_physical_start" default="true"/>
-  <arg name="enable_can_start_signal" default="false"/>
+  <!-- STM32 CAN1 0x112 is the authoritative physical start event. -->
+  <arg name="enable_physical_start" default="false"/>
+  <arg name="enable_can_start_signal" default="true"/>
   <arg name="enable_emergency_stop" default="true"/>
   <arg name="enable_audio_video" default="true"/>
   <arg name="audio_role" default="slave"/>
@@ -113,7 +114,11 @@
     <rosparam param="motor_indices" subst_value="true">$(arg motor_indices)</rosparam>
     <rosparam param="direction_signs" subst_value="true">$(arg direction_signs)</rosparam>
     <param name="max_rpm" value="3000.0"/>
+    <param name="acceleration_rpm_s" value="50"/>
+    <param name="report_mask" value="7"/>
+    <param name="broadcast_index" value="255"/>
     <param name="heartbeat_timeout_sec" value="1.0"/>
+    <param name="start_ack_timeout_sec" value="0.4"/>
   </node>
 
   <!-- ============================================================ -->
@@ -249,9 +254,8 @@
   <group if="$(arg enable_can_start_signal)">
     <node pkg="robot_navigation" type="start_signal_pub_node"
           name="start_signal_pub_node" output="screen">
-      <param name="can_device" value="can0"/>
-      <param name="can_id" value="384"/>
-      <param name="start_cmd_code" value="240"/>
+      <param name="can_device" value="$(arg can_device)"/>
+      <param name="can_id" value="274"/>
     </node>
   </group>
 

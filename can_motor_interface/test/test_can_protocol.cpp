@@ -29,6 +29,21 @@ TEST(CanProtocol, CommandMatchesStm32FixedEightByteParser) {
   EXPECT_EQ(7, reports.data[2]);
 }
 
+TEST(CanProtocol, CachedMotionUsesFirmwareCacheBits) {
+  const auto speed = can_motor_interface::stm32CachedSpeed(2, -100, 50);
+  EXPECT_EQ(0x01, speed.data[0]);
+  EXPECT_EQ(2, speed.data[1]);
+  EXPECT_EQ(0x9C, speed.data[2]);
+  EXPECT_EQ(0xFF, speed.data[5]);
+  EXPECT_EQ(50, speed.data[6]);
+  EXPECT_EQ(0x01, speed.data[7]);
+  const auto position = can_motor_interface::stm32CachedPosition(4, 1600, 20, 0x01);
+  EXPECT_EQ(0x02, position.data[0]);
+  EXPECT_EQ(0x04, position.data[1]);
+  EXPECT_EQ(20, position.data[6]);
+  EXPECT_EQ(0x05, position.data[7]);
+}
+
 TEST(CanProtocol, FeedbackUsesActualVelocitySubframeAndTenthsOfRpm) {
   can_motor_interface::Stm32Telemetry telemetry;
   const std::array<uint8_t, 8> speed{{3, 2, 0x18, 0xFC, 0xFF, 0xFF, 0, 0}}; // -1000 = -100 RPM
@@ -72,13 +87,92 @@ TEST(CanProtocol, HeartbeatAcceptsConfiguredExtendedReplies) {
 }
 
 TEST(CanProtocol, PhysicalStartRequiresButtonSourceAndPress) {
-  const std::array<uint8_t, 8> data{{0x01, 0x01, 0x01, 0, 0, 0, 0, 0}};
+  const std::array<uint8_t, 8> data{{0x01, 0x01, 0x01, 0, 0x12, 0x34, 0, 0}};
   CanEvent event;
   EXPECT_TRUE(decodeCanEvent(0x112, false, 8, data.data(), &event));
   EXPECT_EQ(CanEventType::PHYSICAL_START, event.type);
+  EXPECT_EQ(0x1234, event.sequence);
+  EXPECT_EQ(0, event.result);
   EXPECT_FALSE(decodeCanEvent(0x112, true, 8, data.data(), &event));
   const std::array<uint8_t, 8> invalid{{0x01, 0x00, 0x01, 0, 0, 0, 0, 0}};
   EXPECT_FALSE(decodeCanEvent(0x112, false, 8, invalid.data(), &event));
+}
+
+TEST(CanProtocol, PhysicalStartResultsAreDecodedAndDoNotDependOnAckOrder) {
+  CanEvent event;
+  const std::array<uint8_t, 8> rejected{{0x01, 0x01, 0x01, 0x01, 0x00, 0x11, 0, 0}};
+  ASSERT_TRUE(decodeCanEvent(0x112, false, 8, rejected.data(), &event));
+  EXPECT_EQ(1, event.result);
+  EXPECT_EQ(0x11, event.sequence);
+  const std::array<uint8_t, 8> failed{{0x01, 0x01, 0x01, 0x02, 0x00, 0x12, 0, 0}};
+  ASSERT_TRUE(decodeCanEvent(0x112, false, 8, failed.data(), &event));
+  EXPECT_EQ(2, event.result);
+  EXPECT_EQ(0x12, event.sequence);
+}
+
+TEST(CanProtocol, StartAckAndButtonOrderAreCorrelatedBySequence) {
+  using can_motor_interface::MotionStartState;
+  using can_motor_interface::MotionStartStateMachine;
+  MotionStartStateMachine first;
+  first.cacheReady();
+  EXPECT_FALSE(first.acknowledge(0x1234, 0x05, 0)); // ACK arrives first
+  first.physicalStart(0, 0x1234, 1.0);
+  EXPECT_TRUE(first.startPending());
+  EXPECT_TRUE(first.ackAccepted());
+  first.motionStarted();
+  EXPECT_EQ(MotionStartState::RUNNING, first.state());
+
+  MotionStartStateMachine second;
+  second.cacheReady();
+  second.physicalStart(0, 0x0042, 2.0); // button arrives first
+  EXPECT_FALSE(second.ackAccepted());
+  EXPECT_TRUE(second.acknowledge(0x0042, 0x05, 0));
+  second.motionStarted();
+  EXPECT_EQ(MotionStartState::RUNNING, second.state());
+}
+
+TEST(CanProtocol, StartFailureRejectionExecutionFailureAndTimeout) {
+  using can_motor_interface::MotionStartState;
+  can_motor_interface::MotionStartStateMachine rejected;
+  rejected.cacheReady();
+  rejected.physicalStart(1, 1, 0);
+  EXPECT_EQ(MotionStartState::CACHE_READY, rejected.state());
+
+  can_motor_interface::MotionStartStateMachine failed;
+  failed.cacheReady();
+  failed.physicalStart(2, 2, 0);
+  EXPECT_EQ(MotionStartState::START_FAILED, failed.state());
+
+  can_motor_interface::MotionStartStateMachine timeout;
+  timeout.cacheReady();
+  timeout.physicalStart(0, 3, 0);
+  EXPECT_TRUE(timeout.timeout(0.4));
+  EXPECT_EQ(MotionStartState::START_FAILED, timeout.state());
+}
+
+TEST(CanProtocol, EstopCancelsPendingStartAndHeartbeatIsLatched) {
+  using can_motor_interface::MotionStartState;
+  can_motor_interface::MotionStartStateMachine sm;
+  sm.cacheReady();
+  sm.physicalStart(0, 7, 0);
+  sm.heartbeatLost();
+  EXPECT_EQ(MotionStartState::HEARTBEAT_LOST, sm.state());
+  sm.estopLatched();
+  EXPECT_EQ(MotionStartState::ESTOP_LATCHED, sm.state());
+  sm.resetForReprepare();
+  EXPECT_EQ(MotionStartState::IDLE, sm.state());
+}
+
+TEST(CanProtocol, MotionWriteGatePausesDuringStartAndReopensAfterFeedback) {
+  can_motor_interface::MotionStartStateMachine sm;
+  EXPECT_TRUE(sm.canSendCachedMotion()); // cache may be prepared while heartbeat runs
+  sm.cacheReady();
+  sm.physicalStart(0, 9, 0.0);
+  EXPECT_FALSE(sm.canSendCachedMotion());
+  EXPECT_FALSE(sm.canSendRunningMotion()); // only heartbeat is permitted here
+  sm.acknowledge(9, 0x05, 0);
+  sm.motionStarted();
+  EXPECT_TRUE(sm.canSendRunningMotion());
 }
 
 TEST(CanProtocol, StatusSafetyReasonsAreDistinguished) {
@@ -238,8 +332,8 @@ TEST(CanProtocol, ArmUsesFifthMotorAbsolutePulsePosition) {
   using namespace can_motor_interface;
   const auto position = stm32ArmPosition(std::acos(-1.0));
   EXPECT_EQ(0x100U, position.can_id);
-  const std::array<uint8_t, 8> expected{{2, 4, 0x40, 6, 0, 0, 0, 1}};
-  EXPECT_TRUE(std::equal(expected.begin(), expected.end(), position.data)); // pi rad = 1600 pulses
+  const std::array<uint8_t, 8> expected{{2, 4, 0x40, 6, 0, 0, 0, 5}};
+  EXPECT_TRUE(std::equal(expected.begin(), expected.end(), position.data)); // pi rad = 1600 pulses, cached mode
   EXPECT_THROW(stm32ArmPosition(std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
   EXPECT_THROW(stm32ArmPosition(1e20), std::invalid_argument);
 }

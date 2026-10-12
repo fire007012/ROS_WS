@@ -1,7 +1,7 @@
 <launch>
   <!-- ROS RPM -> STM32 command parser -> motor drivers.
        Matches STM32_Motor_Controller: standard 0x100/0x101, DLC=8, 500 kbps
-       with the firmware's 8 MHz HSE. No checksum; byte6=accel, byte7=sync.
+       with the firmware's 8 MHz HSE. No checksum; cached speed uses byte7=0x01.
        Never run the native y42_* test or another chassis writer alongside it. -->
   <arg name="can_device" default="can0"/>
   <arg name="tx_can_id" default="256"/>
