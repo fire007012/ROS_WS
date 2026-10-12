@@ -34,6 +34,7 @@ class OpenMedicineBoxNode {
       , sender_(std::move(sender))
   {
     pnh_.param<std::string>("can_device", can_device_, "can0");
+    pnh_.param<bool>("selection_only", selection_only_, false);
     int can_id_int = static_cast<int>(can_id_);
     pnh_.param("can_id", can_id_int, can_id_int);
     can_id_ = static_cast<uint32_t>(can_id_int);
@@ -60,7 +61,7 @@ class OpenMedicineBoxNode {
     service_ = nh_.advertiseService("/open_medicine_box",
                                     &OpenMedicineBoxNode::callback, this);
 
-    if (!sender_ && !can_.open(can_device_)) {
+    if (!selection_only_ && !sender_ && !can_.open(can_device_)) {
       ROS_WARN("[open_medicine_box] CAN 初始化失败，将在首次调用时重试");
     }
 
@@ -101,6 +102,11 @@ class OpenMedicineBoxNode {
       return true;
     }
 
+    if (selection_only_) {
+      res.success = true;
+      res.message = "药箱已选定，开关动作由 /arm_place_medicine 的四步序列统一执行";
+      return true;
+    }
     ROS_INFO("[open_medicine_box] 收到开箱请求: box_id=%d", req.box_id);
 
     {
@@ -143,6 +149,7 @@ class OpenMedicineBoxNode {
   }
 
   bool sendServoCommand(uint8_t box_id, double angle_deg) {
+    if (selection_only_) return true;
     if (!sender_ && !can_.isOpen() && !can_.open(can_device_)) {
       ROS_ERROR("[open_medicine_box] CAN socket 不可用");
       return false;
@@ -180,6 +187,7 @@ class OpenMedicineBoxNode {
   uint8_t servo_cmd_code_;
   double open_angle_deg_;
   double hold_duration_sec_;
+  bool selection_only_ = false;
   FrameSender sender_;
 };
 

@@ -37,7 +37,7 @@
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_camera"       default="true"/>
   <arg name="enable_arm"          default="true"/>
-  <!-- Select one owner for motor 5: mission sequence or JointState control. -->
+  <!-- Legacy compatibility argument; Y42 joint control is no longer launched. -->
   <arg name="arm_joint_control" default="false"/>
   <arg name="enable_servo"        default="false"/>
   <!-- 比赛默认必须扫描床头柜条形码；无摄像头联调时显式传 true。 -->
@@ -192,30 +192,17 @@
 
   <!-- 5.2 机械臂+夹爪（可选） -->
   <group if="$(arg enable_arm)">
-    <!-- 机械臂 CAN 接口 -->
-    <node pkg="arm_interface" type="arm_controller_node"
-          name="arm_controller_node" output="screen" if="$(arg arm_joint_control)">
-      <rosparam file="$(arg arm_params)" command="load"/>
-      <param name="can_device" value="$(arg can_device)"/>
-      <param name="joint_name" value="joint_1"/>
-      <param name="speed_rpm" value="100"/>
-    </node>
-
-    <!-- 机械臂动作序列控制 -->
-    <node pkg="arm_and_gripper" type="arm_and_gripper_node"
-          name="arm_and_gripper_node" output="screen" unless="$(arg arm_joint_control)">
-      <rosparam file="$(arg arm_gripper_config)" command="load"/>
-      <!-- 推出动作参数 -->
-      <param name="push_distance_m" value="0.05"/>
-      <param name="push_velocity" value="0.03"/>
-      <param name="push_timeout_s" value="5.0"/>
-      <param name="push_cmd_code" value="17"/>
-    </node>
+    <!-- DS3230MG/SG90 四步序列；旧 arm_interface/Y42 节点不再启动。 -->
+    <include file="$(find arm_and_gripper)/launch/arm_and_gripper.launch">
+      <arg name="arm_config" value="$(arg arm_gripper_config)"/>
+      <arg name="can_device" value="$(arg can_device)"/>
+    </include>
   </group>
   <!-- 5.3 药箱开启服务（由护士台二维码给出的 box_id 驱动） -->
   <group if="$(arg enable_open_medicine_box)">
     <node pkg="robot_navigation" type="open_medicine_box_node"
           name="open_medicine_box_node" output="screen" required="true">
+      <param name="selection_only" value="true"/>
       <param name="can_device" value="$(arg medicine_box_can_device)"/>
       <param name="can_id" value="$(arg medicine_box_can_id)"/>
       <param name="servo_cmd_code" value="$(arg medicine_box_servo_cmd_code)"/>

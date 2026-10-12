@@ -101,13 +101,12 @@ class LaunchProtocol(unittest.TestCase):
         self.assertEqual(config.params['/can_interface_node/motor_indices'].value, [1, 0, 3, 2])
         self.assertEqual(config.params['/can_interface_node/direction_signs'].value, [1, 1, 1, 1])
 
-    def test_arm_launch_selects_single_axis_on_same_bus(self):
+    def test_arm_launch_selects_paired_pwm_sequence_on_same_bus(self):
         config = self.load('robot_bringup', 'robot_bringup.launch',
-                           ['enable_teleop:=false', 'can_device:=vcan9'])
-        self.assertEqual(config.params['/arm_controller_node/can_device'].value, 'vcan9')
-        self.assertEqual(config.params['/arm_controller_node/joint_name'].value, 'joint_1')
-        self.assertEqual(config.params['/arm/joint_count'].value, 1)
-        self.assertNotIn('/arm_controller_node/tx_can_base_id', config.params)
+                           ['enable_arm_and_gripper:=true', 'enable_teleop:=false', 'can_device:=vcan9'])
+        self.assertEqual(config.params['/arm_and_gripper_node/can_device'].value, 'vcan9')
+        self.assertEqual(config.params['/arm_and_gripper_node/arm_can_id'].value, 0x701)
+        self.assertFalse(any(n.type=='arm_controller_node' for n in config.nodes))
 
     def test_arm_joint_and_sequence_control_do_not_start_together(self):
         for package, launch, args in [
