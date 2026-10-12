@@ -16,7 +16,7 @@ TEST(ArmCancellation, InterruptsWaitAndNeverResumesAfterReset) {
         std::lock_guard<std::mutex> lock(mutex);
         frames.emplace_back(data, data+size);
         return true;
-      });
+      }, [](uint32_t,uint8_t,uint8_t,uint8_t,uint8_t,double){return true;});
   ASSERT_TRUE(controller.init());
   ros::AsyncSpinner spinner(3);
   spinner.start();
@@ -49,7 +49,7 @@ TEST(ArmCancellation, InterruptsWaitAndNeverResumesAfterReset) {
       {
         std::lock_guard<std::mutex> lock(mutex);
         for(const auto& frame:frames)
-          if(mode==0 ? frame[0]==0xfb : (frame[0]==0x20 && frame[2]>0)) started=true;
+          if(mode==0 ? frame[0]==0x21 : (frame[0]==0x22 && frame[1]==1 && frame[2]==0)) started=true;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -61,9 +61,9 @@ TEST(ArmCancellation, InterruptsWaitAndNeverResumesAfterReset) {
       std::lock_guard<std::mutex> lock(mutex);
       bool stopped=false, closed=false;
       for(const auto& frame:frames) {
-        if(frame==std::vector<uint8_t>({0xfe,0x98,0,0x6b})) stopped=true;
-        if(stopped) { EXPECT_NE(frame[0], 0xfb) << "motion after stop"; }
-        if(frame[0]==0x20 && frame[1]==3 && frame[2]==0 && frame[3]==0) closed=true;
+        if(frame[0]==0x23) stopped=true;
+        if(stopped) { EXPECT_NE(frame[0], 0x21) << "motion after stop"; }
+        if(frame[0]==0x22 && frame[1]==3 && frame[2]==180 && frame[3]==180) closed=true;
       }
       EXPECT_TRUE(stopped);
       EXPECT_TRUE(closed);
@@ -81,6 +81,82 @@ TEST(ArmCancellation, InterruptsWaitAndNeverResumesAfterReset) {
     {std::lock_guard<std::mutex> lock(mutex);EXPECT_EQ(frames.size(), count);}
   }
   spinner.stop();
+}
+
+
+TEST(ArmSequence, BothBoxesUseFourStagesAndIndependentAbsoluteHome) {
+  ros::NodeHandle nh,pnh("~");
+  pnh.setParam("arm_move_timeout_s",0.01);
+  pnh.setParam("servo_hold_duration_s",0.01);
+  pnh.setParam("old_servo_move_duration_s",0.01);pnh.setParam("old_servo_return_duration_s",0.01);
+  pnh.setParam("new_servo_move_duration_s",0.01);pnh.setParam("new_servo_return_duration_s",0.01);
+  pnh.setParam("arm_place_angle_1",15.0);pnh.setParam("arm_place_angle_2",-20.0);
+  pnh.setParam("arm_home_angle_1",2.0);pnh.setParam("arm_home_angle_2",-3.0);
+  struct Frame {uint32_t id;std::vector<uint8_t> data;};
+  std::vector<Frame> frames;
+  arm_and_gripper::ArmAndGripperController controller(nh,pnh,
+      [&](uint32_t id,const uint8_t *data,uint8_t size,bool ext){
+        EXPECT_TRUE(ext);EXPECT_EQ(size,8);frames.push_back({id,{data,data+size}});return true;
+      },[](uint32_t,uint8_t,uint8_t,uint8_t,uint8_t,double){return true;});
+  ASSERT_TRUE(controller.init());ros::AsyncSpinner spinner(3);spinner.start();
+  auto client=nh.serviceClient<arm_and_gripper::ArmPlaceMedicine>("/arm_place_medicine");
+  for(int box:{1,3}) {
+    frames.clear();arm_and_gripper::ArmPlaceMedicine service;service.request.bed_id=1;service.request.box_id=box;
+    ASSERT_TRUE(client.call(service));ASSERT_TRUE(service.response.success);ASSERT_EQ(frames.size(),5u);
+    EXPECT_EQ(frames[0].id,0x701u);EXPECT_EQ(frames[0].data[0],0x21);
+    EXPECT_EQ(frames[0].data[1],3);EXPECT_EQ(frames[0].data[2],150);
+    EXPECT_EQ(frames[0].data[4],56);EXPECT_EQ(frames[0].data[5],255); // -200 deci-deg
+    EXPECT_EQ(frames[1].id,0x700u);EXPECT_EQ(frames[1].data[0],0x22);
+    EXPECT_EQ(frames[1].data[1],box==1?1:2);
+    EXPECT_EQ(frames[1].data[box==1?2:3],0);
+    EXPECT_EQ(frames[2].data[box==1?2:3],180);
+    EXPECT_EQ(frames[3].id,0x701u);EXPECT_EQ(frames[3].data[0],0x21);
+    EXPECT_EQ(frames[3].data[2],20);EXPECT_EQ(frames[3].data[3],0);
+    EXPECT_EQ(frames[3].data[4],226);EXPECT_EQ(frames[3].data[5],255);
+    EXPECT_EQ(frames[4].data[0],0x24);
+    for(const auto &frame:frames){uint8_t sum=0;for(int i=0;i<7;++i)sum+=frame.data[i];EXPECT_EQ(sum,frame.data[7]);}
+  }
+  spinner.stop();
+}
+
+TEST(ArmSequence, MissingArmAckPreventsOpeningAndReportsFailure) {
+  ros::NodeHandle nh,pnh("~");
+  std::vector<std::vector<uint8_t>> frames;
+  arm_and_gripper::ArmAndGripperController controller(nh,pnh,
+      [&](uint32_t,const uint8_t *data,uint8_t size,bool){frames.emplace_back(data,data+size);return true;},
+      [](uint32_t,uint8_t,uint8_t,uint8_t,uint8_t,double){return false;});
+  ASSERT_TRUE(controller.init());ros::AsyncSpinner spinner(3);spinner.start();
+  auto client=nh.serviceClient<arm_and_gripper::ArmPlaceMedicine>("/arm_place_medicine");
+  arm_and_gripper::ArmPlaceMedicine service;service.request.bed_id=3;service.request.box_id=3;
+  ASSERT_TRUE(client.call(service));EXPECT_FALSE(service.response.success);
+  ASSERT_EQ(frames.size(),3u);EXPECT_EQ(frames[0][0],0x21);EXPECT_EQ(frames[1][0],0x23);
+  EXPECT_EQ(frames[2][0],0x22);EXPECT_EQ(frames[2][2],180);EXPECT_EQ(frames[2][3],180);
+  spinner.stop();
+}
+
+
+TEST(ArmSequence, FailedBoxCloseAckNeverRetractsArm) {
+  ros::NodeHandle nh,pnh("~");
+  unsigned box_acks=0;
+  std::vector<std::vector<uint8_t>> frames;
+  arm_and_gripper::ArmAndGripperController controller(nh,pnh,
+      [&](uint32_t,const uint8_t *data,uint8_t size,bool){frames.emplace_back(data,data+size);return true;},
+      [&](uint32_t,uint8_t,uint8_t,uint8_t opcode,uint8_t,double){return opcode!=0x22 || ++box_acks<2;});
+  ASSERT_TRUE(controller.init());ros::AsyncSpinner spinner(3);spinner.start();
+  auto client=nh.serviceClient<arm_and_gripper::ArmPlaceMedicine>("/arm_place_medicine");
+  arm_and_gripper::ArmPlaceMedicine service;service.request.bed_id=1;service.request.box_id=1;
+  ASSERT_TRUE(client.call(service));EXPECT_FALSE(service.response.success);
+  ASSERT_EQ(frames.size(),5u);
+  EXPECT_EQ(frames[0][0],0x21);EXPECT_EQ(frames[1][0],0x22);EXPECT_EQ(frames[2][0],0x22);
+  EXPECT_EQ(frames[3][0],0x23);EXPECT_EQ(frames[4][0],0x22);
+  spinner.stop();
+}
+
+TEST(ArmSequence, InvalidAnglesFailInitialization) {
+  ros::NodeHandle nh,pnh("~");pnh.setParam("arm_place_angle_1",180.0);
+  arm_and_gripper::ArmAndGripperController controller(nh,pnh,
+      [](uint32_t,const uint8_t*,uint8_t,bool){return true;});
+  EXPECT_FALSE(controller.init());pnh.setParam("arm_place_angle_1",15.0);
 }
 
 int main(int argc, char** argv) {

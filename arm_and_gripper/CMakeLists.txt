@@ -33,15 +33,15 @@ include_directories(
 )
 
 # ── 舵机控制节点 ──
-add_executable(servo_controller_node
-  src/servo_controller_node.cpp
-)
-add_dependencies(servo_controller_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-target_link_libraries(servo_controller_node
-  ${catkin_LIBRARIES}
-  pigpio
-  pthread
-)
+find_library(PIGPIO_LIBRARY pigpio)
+if(PIGPIO_LIBRARY)
+  add_executable(servo_controller_node src/servo_controller_node.cpp)
+  add_dependencies(servo_controller_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+  target_link_libraries(servo_controller_node ${catkin_LIBRARIES} ${PIGPIO_LIBRARY} pthread)
+  install(TARGETS servo_controller_node RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+else()
+  message(STATUS "Legacy pigpio backend unavailable; STM32 servo sequence remains enabled")
+endif()
 
 # ── 机械臂+夹爪主控制节点 ──
 add_executable(arm_and_gripper_node
@@ -65,7 +65,7 @@ if(CATKIN_ENABLE_TESTING)
   endif()
 endif()
 
-install(TARGETS servo_controller_node arm_and_gripper_node
+install(TARGETS arm_and_gripper_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

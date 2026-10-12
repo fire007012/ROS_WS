@@ -82,6 +82,23 @@ TEST(BoxCancellation, AlsoClosesBetweenServiceCompletionAndArmStart) {
   spinner.stop();
 }
 
+
+TEST(BoxSelection, NoEarlyServoMovementBeforeArmSequence) {
+  ros::NodeHandle nh,pnh("~");pnh.setParam("selection_only",true);
+  unsigned frames=0;
+  robot_navigation::OpenMedicineBoxNode controller(nh,pnh,
+      [&](uint32_t,const uint8_t*,uint8_t){++frames;return true;});
+  ASSERT_TRUE(controller.init());ros::AsyncSpinner spinner(3);spinner.start();
+  auto client=nh.serviceClient<robot_navigation::OpenMedicineBox>("/open_medicine_box");
+  for(int box:{1,3}) {
+    robot_navigation::OpenMedicineBox request;request.request.box_id=box;
+    ASSERT_TRUE(client.call(request));EXPECT_TRUE(request.response.success);
+  }
+  robot_navigation::OpenMedicineBox invalid;invalid.request.box_id=2;
+  ASSERT_TRUE(client.call(invalid));EXPECT_FALSE(invalid.response.success);EXPECT_EQ(frames,0u);
+  spinner.stop();pnh.setParam("selection_only",false);
+}
+
 int main(int argc,char**argv) {
   testing::InitGoogleTest(&argc,argv);ros::init(argc,argv,"test_box_cancellation");
   return RUN_ALL_TESTS();

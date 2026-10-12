@@ -125,14 +125,8 @@
   <!--  第3层：机械臂硬件层（可选）                                   -->
   <!-- ============================================================ -->
 
-  <group if="$(eval arg('enable_arm') and not arg('enable_arm_and_gripper'))">
-    <node pkg="arm_interface" type="arm_controller_node"
-          name="arm_controller_node" output="screen">
-      <param name="can_device" value="$(arg can_device)"/>
-      <param name="joint_name" value="joint_1"/>
-      <param name="speed_rpm" value="100"/>
-    </node>
-  </group>
+  <!-- Former Y42 arm interface intentionally omitted: arm_and_gripper owns
+       PC6/PC7 and PB0/PD14 through the STM32 PWM CAN protocol. -->
 
   <!-- ============================================================ -->
   <!--  第4层：路径管理层                                            -->
@@ -188,13 +182,7 @@
   <!--  第7层：舵机控制层                                            -->
   <!-- ============================================================ -->
 
-  <!-- 7.1 舵机控制器 — 通过 pigpio 控制 PWM 舵机 -->
-  <group if="$(arg enable_servo)">
-    <rosparam file="$(arg servo_config)" command="load"
-              ns="servo_controller_node"/>
-    <node pkg="arm_and_gripper" type="servo_controller_node"
-          name="servo_controller_node" output="screen" required="true"/>
-  </group>
+  <!-- 7.1 STM32 PWM is owned by arm_and_gripper; legacy pigpio node omitted. -->
 
   <!-- ============================================================ -->
   <!--  第8层：药品摆放层（最顶层）                                   -->
@@ -202,10 +190,10 @@
 
   <!-- 8.1 药品摆放主控 — 协调机械臂+夹爪完成药品放置动作序列 -->
   <group if="$(arg enable_arm_and_gripper)">
-    <rosparam file="$(arg arm_gripper_config)" command="load"
-              ns="arm_and_gripper_node"/>
-    <node pkg="arm_and_gripper" type="arm_and_gripper_node"
-          name="arm_and_gripper_node" output="screen" required="true"/>
+    <include file="$(find arm_and_gripper)/launch/arm_and_gripper.launch">
+      <arg name="arm_config" value="$(arg arm_gripper_config)"/>
+      <arg name="can_device" value="$(arg can_device)"/>
+    </include>
   </group>
 
   <!-- ============================================================ -->

@@ -41,13 +41,8 @@
     <arg name="fixed_route_file" value="$(arg fixed_route_file)"/>
   </include>
 
-  <!-- 机械臂接口（可选） -->
-  <group if="$(eval arg('enable_arm') and not arg('enable_arm_and_gripper'))">
-    <include file="$(find arm_interface)/launch/arm.launch">
-      <arg name="params_file" value="$(find robot_bringup)/config/arm_params.yaml"/>
-      <arg name="can_device" value="$(arg can_device)"/>
-    </include>
-  </group>
+  <!-- Former Y42 arm interface intentionally omitted. Enable the
+       arm_and_gripper include below for the STM32 PWM sequence. -->
 
   <!-- 路径管理（可选） -->
   <group if="$(arg enable_path_manager)">
@@ -69,10 +64,11 @@
     </include>
   </group>
 
-  <!-- 药品摆放（可选，依赖微调完成信号，机械臂/舵机硬件） -->
+  <!-- 药品摆放（可选，STM32 PWM + CAN sequence） -->
   <group if="$(arg enable_arm_and_gripper)">
     <include file="$(find arm_and_gripper)/launch/arm_and_gripper.launch">
       <arg name="arm_config" value="$(arg arm_and_gripper_config)"/>
+      <arg name="can_device" value="$(arg can_device)"/>
     </include>
   </group>
 

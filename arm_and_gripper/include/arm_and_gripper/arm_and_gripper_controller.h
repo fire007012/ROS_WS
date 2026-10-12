@@ -14,19 +14,23 @@ namespace arm_and_gripper {
 class ArmAndGripperController {
  public:
   using FrameSender = std::function<bool(uint32_t, const uint8_t*, uint8_t, bool)>;
-  ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh, FrameSender sender = {});
+  using AckReceiver = std::function<bool(uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, double)>;
+  ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh,
+                          FrameSender sender = {}, AckReceiver receiver = {});
   ~ArmAndGripperController();
   bool init();
  private:
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   bool placeMedicineCallback(PlaceMedicine::Request&, PlaceMedicine::Response&);
   bool armPlaceMedicineCallback(ArmPlaceMedicine::Request&, ArmPlaceMedicine::Response&);
-  bool executePlaceSequence(double arm_angle, int8_t box_id, bool reset_arm);
+  bool executePlaceSequence(int8_t box_id, bool reset_arm);
   bool initCanSocket();
   void closeCanSocket();
-  bool sendArmAngleCommand(double angle_deg);
-  bool sendServoTriggerCommand(uint8_t mask, int old_angle, int new_angle,
-                               int return_angle, uint16_t hold_ms);
+  bool sendArmAngleCommand(double first_deg, double second_deg);
+  bool sendArmOwnershipCommand(uint8_t opcode);
+  bool sendAcknowledged(uint32_t id, uint32_t ack_id, uint8_t ack_code, uint8_t data[8]);
+  bool waitForAck(uint32_t id, uint8_t code, uint8_t seq, uint8_t opcode, uint8_t mask);
+  bool sendServoTriggerCommand(uint8_t mask, int old_angle, int new_angle);
   bool sendCanFrame(uint32_t id, const uint8_t *data, uint8_t dlc, bool extended);
   bool sendRawFrame(uint32_t id, const uint8_t *data, uint8_t dlc, bool extended);
   void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -44,10 +48,13 @@ class ArmAndGripperController {
 
   std::string can_device_;
   uint32_t arm_can_id_;
+  double arm_place_angle_1_, arm_place_angle_2_, arm_home_angle_1_, arm_home_angle_2_;
+  double arm_ack_timeout_s_;
+  uint8_t command_seq_ = 0;
   int socket_fd_;
   bool auto_start_on_fine_tuning_;
   bool default_reset_arm_;
-  double default_arm_angle_, arm_move_timeout_s_;
+  double arm_move_timeout_s_;
   double servo_hold_duration_s_, old_servo_move_duration_s_, old_servo_return_duration_s_;
   double new_servo_move_duration_s_, new_servo_return_duration_s_;
   int old_servo_open_angle_, old_servo_close_angle_;
@@ -55,6 +62,7 @@ class ArmAndGripperController {
   std::atomic<bool> sequence_running_;
   std::mutex seq_mutex_;
   FrameSender sender_;
+  AckReceiver receiver_;
   std::atomic<bool> estop_latched_{false};
   std::atomic<bool> actions_enabled_{true};
   std::atomic<uint64_t> cancel_generation_{0};
