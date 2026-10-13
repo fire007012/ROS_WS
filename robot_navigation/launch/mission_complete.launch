@@ -28,6 +28,7 @@
   ==============================================================================
 -->
 <launch>
+  <arg name="enable_arm_upper_alignment" default="false"/>
   <arg name="can_device" default="can0"/>
   <arg name="tx_can_id" default="256"/>
   <arg name="rx_can_id" default="257"/>
@@ -313,6 +314,7 @@
     <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
       <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>
       <arg name="config" value="$(arg vl53l1x_can_config)"/>
+      <arg name="enable_arm_upper_alignment" value="$(arg enable_arm_upper_alignment)"/>
     </include>
   </group>
 
@@ -378,6 +380,7 @@
       <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
       <param name="heart_rate_topic" value="$(arg heart_rate_topic)"/>
       <param name="temperature_topic" value="$(arg temperature_topic)"/>
+      <param name="enable_arm_upper_alignment" value="$(arg enable_arm_upper_alignment)"/>
       <param name="enable_vl53_circle_check" value="$(arg enable_vl53_circle_check)"/>
       <param name="require_all_vl53_ranges" value="$(arg require_all_vl53_ranges)"/>
       <param name="vl53_circle_timeout_sec" value="$(arg vl53_circle_timeout_sec)"/>

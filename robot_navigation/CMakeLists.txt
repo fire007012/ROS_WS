@@ -148,7 +148,7 @@ target_link_libraries(vl53l1x_driver_node
   ${catkin_LIBRARIES}
 )
 
-# ── STM32 VL53L1X CAN bridge (three sensors) ───────────────────
+# ── STM32 VL53L1X CAN bridge (five sensors) ───────────────────
 add_executable(vl53l1x_can_bridge_node
   src/vl53l1x_can_bridge.cpp
 )
@@ -364,3 +364,23 @@ endif()
 
 install(FILES scripts/scan_camera_policy.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_upper_alignment test/test_upper_alignment.cpp)
+  if(TARGET test_upper_alignment)
+    target_link_libraries(test_upper_alignment gtest_main ${catkin_LIBRARIES})
+  endif()
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_executable(upper_alignment_bridge_fixture
+    test/upper_alignment_bridge_fixture.cpp src/vl53l1x_can_bridge.cpp)
+  target_compile_definitions(upper_alignment_bridge_fixture PRIVATE VL53L1X_BRIDGE_NO_MAIN)
+  target_link_libraries(upper_alignment_bridge_fixture can_utils ${catkin_LIBRARIES})
+  add_rostest(test/upper_alignment.test)
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_rostest(test/mission_upper_alignment.test)
+  add_rostest(test/mission_medicine_event.test)
+endif()

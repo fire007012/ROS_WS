@@ -19,7 +19,7 @@ class KeyboardVelocityRouting(unittest.TestCase):
         planner = (ROOT / 'motion_planner/src/planner_node.cpp').read_text(encoding='utf-8')
         safety = (ROOT / 'robot_navigation/src/distance_safety_node.cpp').read_text(encoding='utf-8')
         self.assertIn('nh_.subscribe("/cmd_vel_muxed",', planner)
-        self.assertIn('nh_.subscribe("/cmd_vel_muxed",', safety)
+        self.assertIn('nh_.subscribe("/cmd_vel_requested",', safety)
         self.assertNotIn('nh_.subscribe("/cmd_vel",', planner)
         self.assertNotIn('nh_.subscribe("/cmd_vel",', safety)
 
@@ -79,6 +79,10 @@ struct Time {
 struct TimerEvent { Time current_real, last_real; };
 struct Subscriber { std::string topic; };
 struct Timer {};
+using SteadyTime = Time;
+using WallDuration = Duration;
+using SteadyTimerEvent = TimerEvent;
+using SteadyTimer = Timer;
 inline std::vector<std::pair<std::string,geometry_msgs::Twist>>& outputs(){
   static std::vector<std::pair<std::string,geometry_msgs::Twist>> value; return value;
 }
@@ -91,6 +95,7 @@ struct NodeHandle {
   template<class T> void param(const std::string&,T& value,const T& fallback){value=fallback;}
   template<class O,class M> Subscriber subscribe(const std::string& topic,int,void(O::*)(const std::shared_ptr<const M>&),O*){return Subscriber{topic};}
   template<class M> Publisher advertise(const std::string& topic,int,bool=false){return Publisher{topic};}
+  template<class O> SteadyTimer createSteadyTimer(WallDuration,void(O::*)(const SteadyTimerEvent&),O*){return SteadyTimer{};}
   template<class O> Timer createTimer(Duration,void(O::*)(const TimerEvent&),O*){return Timer{};}
 };
 }

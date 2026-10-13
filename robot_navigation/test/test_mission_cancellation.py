@@ -7,7 +7,7 @@ import unittest
 import rospy
 import rostest
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Bool, Empty, String, UInt32
+from std_msgs.msg import Bool, Empty, Int8, String, UInt32
 from std_srvs.srv import Trigger, TriggerResponse
 from path_manager.srv import SelectPath, SelectPathResponse
 from robot_navigation.msg import QrResult
@@ -33,6 +33,7 @@ class MissionCancellation(unittest.TestCase):
         self.odom = rospy.Publisher('/odom', Odometry, queue_size=1)
         self.path_done = rospy.Publisher('/path_finished', Bool, queue_size=1)
         self.fine_done = rospy.Publisher('/fine_tuning_done', Bool, queue_size=1)
+        self.placed_event = rospy.Publisher('/medicine/placed', Int8, queue_size=1)
         subs = [rospy.Subscriber('/mission/cancel', Empty, self.on_cancel),
                 rospy.Subscriber('/chassis_lock', Bool, self.on_lock),
                 rospy.Subscriber('/robot_display', String, self.on_display)]
@@ -41,7 +42,7 @@ class MissionCancellation(unittest.TestCase):
                     rospy.Service('/open_medicine_box', OpenMedicineBox,
                                   lambda req: OpenMedicineBoxResponse(self.service('box'), 'mock')),
                     rospy.Service('/arm_place_medicine', ArmPlaceMedicine,
-                                  lambda req: ArmPlaceMedicineResponse(self.service('arm'), 'mock')),
+                                  self.place),
                     rospy.Service('/speak', Speak,
                                   lambda req: SpeakResponse(self.service('speech'), 'mock'))]
         timer = rospy.Timer(rospy.Duration(.02), self.publish)
@@ -108,6 +109,16 @@ class MissionCancellation(unittest.TestCase):
         if slow:
             time.sleep(1.5)
         return True
+
+    def place(self, req):
+        with self.guard:
+            generation = self.cancelled
+        self.service('arm')
+        with self.guard:
+            if self.cancelled != generation:
+                return ArmPlaceMedicineResponse(False, 'cancelled before release')
+            self.placed_event.publish(Int8(req.bed_id))
+        return ArmPlaceMedicineResponse(True, 'mock release followed by arm return')
 
     def select(self, req):
         with self.guard:

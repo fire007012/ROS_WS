@@ -9,7 +9,7 @@ import rospy
 import rostest
 import yaml
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Bool, String, UInt32
+from std_msgs.msg import Bool, Int8, String, UInt32
 from std_srvs.srv import Trigger, TriggerResponse
 from path_manager.srv import SelectPath, SelectPathResponse
 from robot_navigation.msg import QrResult
@@ -29,13 +29,16 @@ class MissionRoutes(unittest.TestCase):
         self.odom = rospy.Publisher('/odom', Odometry, queue_size=1)
         self.path_done = rospy.Publisher('/path_finished', Bool, queue_size=1)
         self.fine_done = rospy.Publisher('/fine_tuning_done', Bool, queue_size=1)
+        self.placed_event = rospy.Publisher('/medicine/placed', Int8, queue_size=1)
         subscribers = [rospy.Subscriber('/mission_finished', Bool, self.on_finished),
                        rospy.Subscriber('/robot_display', String, self.on_display)]
         services = [rospy.Service('/select_path', SelectPath, self.select_path),
                     rospy.Service('/fine_tuning/start', Trigger, self.fine_tuning),
                     rospy.Service('/open_medicine_box', OpenMedicineBox, self.open_box),
                     rospy.Service('/arm_place_medicine', ArmPlaceMedicine, self.place),
-                    rospy.Service('/speak', Speak, lambda req: SpeakResponse(True, 'simulated'))]
+                    rospy.Service('/speak', Speak, self.speak),
+                    rospy.Service('/bedside/complete', Trigger,
+                                  lambda req: TriggerResponse(True, 'simulated bedside completion'))]
         timer = rospy.Timer(rospy.Duration(.02), self.publish)
         try:
             self.wait(lambda: self.start.get_num_connections() and self.qr.get_num_connections())
@@ -67,6 +70,8 @@ class MissionRoutes(unittest.TestCase):
                     self.assertEqual(self.boxes, [first_box, 4-first_box])
                     self.assertEqual(self.placed, [(first_bed, first_box),
                                                    (4-first_bed, 4-first_box)])
+                    self.assertEqual(self.spoken, [f'{first_bed}床病人请取药',
+                                                   f'{4-first_bed}床病人请取药'])
             # If a dedicated return path is absent, stop instead of cutting to P7.
             self.reset()
             self.result = QrResult(1, 1, 3, 3)
@@ -84,7 +89,7 @@ class MissionRoutes(unittest.TestCase):
 
     def reset(self):
         with self.guard:
-            self.selected, self.boxes, self.placed = [], [], []
+            self.selected, self.boxes, self.placed, self.spoken = [], [], [], []
             self.pose = [0.0, 0.0]
             self.finished = self.failed = False
             self.pending_path = self.pending_fine = None
@@ -119,7 +124,14 @@ class MissionRoutes(unittest.TestCase):
     def place(self, req):
         with self.guard:
             self.placed.append((req.bed_id, req.box_id))
+        # Model the release event emitted by the real arm before it returns home.
+        self.placed_event.publish(Int8(req.bed_id))
         return ArmPlaceMedicineResponse(True, 'simulated')
+
+    def speak(self, req):
+        with self.guard:
+            self.spoken.append(req.text)
+        return SpeakResponse(True, 'simulated')
 
     def on_finished(self, msg):
         with self.guard:

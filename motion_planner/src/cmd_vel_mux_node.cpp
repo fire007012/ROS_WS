@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace motion_planner {
 
@@ -25,6 +26,9 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   nh_.param("/robot/max_angular_accel", max_angular_accel_, max_angular_accel_);
   pnh_.param("publish_rate_hz", publish_rate_hz_, publish_rate_hz_);
   pnh_.param("cmd_timeout_sec", cmd_timeout_sec_, cmd_timeout_sec_);
+  pnh_.param("alignment_cmd_timeout_sec", alignment_cmd_timeout_sec_, 0.2);
+  if (!std::isfinite(alignment_cmd_timeout_sec_) || alignment_cmd_timeout_sec_ <= 0 ||
+      alignment_cmd_timeout_sec_ > 0.2) throw std::invalid_argument("alignment_cmd_timeout_sec must be in (0, 0.2]");
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
 
   fixed_route_sub_ = nh_.subscribe("/cmd_vel_fixed_route", 10, &CmdVelMuxNode::fixedRouteCallback, this);
@@ -34,6 +38,10 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   direct_cmd_sub_ = nh_.subscribe("/cmd_vel", 10, &CmdVelMuxNode::teleopCallback, this);
   external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
   safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
+  alignment_sub_ = nh_.subscribe("/cmd_vel_arm_alignment", 1, &CmdVelMuxNode::alignmentCallback, this);
+  alignment_mode_sub_ = nh_.subscribe("/arm_upper_alignment/active", 1, &CmdVelMuxNode::alignmentModeCallback, this);
+  mission_cancel_sub_ = nh_.subscribe("/mission/cancel", 1, &CmdVelMuxNode::missionCancelCallback, this);
+  actions_enabled_sub_ = nh_.subscribe("/mission/actions_enabled", 1, &CmdVelMuxNode::actionsEnabledCallback, this);
   estop_sub_ = nh_.subscribe("/emergency_stop", 10, &CmdVelMuxNode::estopCallback, this);
   emergency_reset_sub_ = nh_.subscribe("/emergency_stop/reset", 2, &CmdVelMuxNode::emergencyResetCallback, this);
   chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10, &CmdVelMuxNode::chassisLockCallback, this);
@@ -48,9 +56,10 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   sources_["teleop"] = SourceState();
   sources_["external"] = SourceState();
   sources_["safety"] = SourceState();
+  sources_["arm_alignment"] = SourceState();
 
   const double period = 1.0 / std::max(1.0, publish_rate_hz_);
-  timer_ = nh_.createTimer(ros::Duration(period), &CmdVelMuxNode::timerCallback, this);
+  timer_ = nh_.createSteadyTimer(ros::WallDuration(period), &CmdVelMuxNode::timerCallback, this);
 }
 
 void CmdVelMuxNode::fixedRouteCallback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -67,6 +76,33 @@ void CmdVelMuxNode::externalCallback(const geometry_msgs::Twist::ConstPtr& msg) 
 
 void CmdVelMuxNode::safetyCallback(const geometry_msgs::Twist::ConstPtr& msg) {
   updateSourceCommand("safety", *msg);
+}
+
+void CmdVelMuxNode::alignmentCallback(const geometry_msgs::Twist::ConstPtr& msg) {
+  geometry_msgs::Twist lateral;
+  lateral.linear.y = msg->linear.y;
+  updateSourceCommand("arm_alignment", lateral);
+  if (alignment_active_ && sources_["arm_alignment"].twist.linear.y == 0)
+    publishStop("arm_alignment_stop");
+}
+void CmdVelMuxNode::alignmentModeCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (alignment_active_ == msg->data) return;
+  alignment_active_ = msg->data;
+  // A mode transition must never resume a cached navigation/teleop command.
+  for (auto& source : sources_) source.second.has_msg = false;
+  publishStop("arm_alignment_mode_change");
+}
+
+void CmdVelMuxNode::missionCancelCallback(const std_msgs::Empty::ConstPtr&) {
+  mission_cancelled_ = true;
+  for (auto& source : sources_) source.second.has_msg = false;
+  publishStop("mission_cancel");
+}
+void CmdVelMuxNode::actionsEnabledCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (msg->data && mission_cancelled_) {
+    mission_cancelled_ = false;
+    for (auto& source : sources_) source.second.has_msg = false;
+  }
 }
 
 void CmdVelMuxNode::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
@@ -100,15 +136,17 @@ void CmdVelMuxNode::chassisLockCallback(const std_msgs::Bool::ConstPtr& msg) {
   }
 }
 
-void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
-  const ros::Time now = ros::Time::now();
+void CmdVelMuxNode::timerCallback(const ros::SteadyTimerEvent& event) {
+  const ros::SteadyTime now = ros::SteadyTime::now();
   const double dt = std::max(1e-3, (event.current_real - event.last_real).toSec());
 
   // Safety must inspect the requested motion, never its own reduced/stopped
   // output. Otherwise a stop releases itself and a warning compounds to zero.
   geometry_msgs::Twist requested;
-  if (!estop_active_ && !chassis_locked_) {
-    for (const char* source : {"external", "teleop", "fixed_route"}) {
+  if (!estop_active_ && !chassis_locked_ && !mission_cancelled_) {
+    if (alignment_active_) {
+      if (sourceActive("arm_alignment", now)) requested = sources_["arm_alignment"].twist;
+    } else for (const char* source : {"external", "teleop", "fixed_route"}) {
       if (sourceActive(source, now)) {
         requested = clampTwist(sources_[source].twist, dt, true);
         break;
@@ -122,8 +160,34 @@ void CmdVelMuxNode::timerCallback(const ros::TimerEvent& event) {
     return;
   }
 
+  if (mission_cancelled_) {
+    publishStop("mission_cancel");
+    return;
+  }
+
   if (chassis_locked_) {
     publishStop("chassis_lock");
+    return;
+  }
+
+  if (alignment_active_) {
+    // Remain in this mode on publisher loss: stop, never fall back to navigation.
+    if (!sourceActive("arm_alignment", now) || requested.linear.y == 0.0) {
+      publishStop("arm_alignment_wait_or_timeout");
+      return;
+    }
+    if (sourceActive("safety", now)) {
+      geometry_msgs::Twist safe;
+      const double y = sources_["safety"].twist.linear.y;
+      if (y * requested.linear.y > 0)
+        safe.linear.y = std::copysign(std::min(std::abs(y), std::abs(requested.linear.y)), y);
+      publishSelected(safe, "safety");
+      return;
+    }
+    auto output = clampTwist(requested, dt);
+    output.linear.x = 0;
+    output.angular.z = 0;
+    publishSelected(output, "arm_alignment");
     return;
   }
 
@@ -170,16 +234,17 @@ void CmdVelMuxNode::updateSourceCommand(const std::string& source_name, const ge
     source.twist.linear.y = msg.linear.y;
     source.twist.angular.z = msg.angular.z;
   }
-  source.stamp = ros::Time::now();
+  source.stamp = ros::SteadyTime::now();
   source.has_msg = true;
 }
 
-bool CmdVelMuxNode::sourceActive(const std::string& source_name, const ros::Time& now) const {
+bool CmdVelMuxNode::sourceActive(const std::string& source_name, const ros::SteadyTime& now) const {
   const auto it = sources_.find(source_name);
   if (it == sources_.end() || !it->second.has_msg) {
     return false;
   }
-  return (now - it->second.stamp).toSec() <= cmd_timeout_sec_;
+  const double timeout = source_name == "arm_alignment" ? alignment_cmd_timeout_sec_ : cmd_timeout_sec_;
+  return (now - it->second.stamp).toSec() <= timeout;
 }
 
 geometry_msgs::Twist CmdVelMuxNode::clampTwist(const geometry_msgs::Twist& input, double dt,
