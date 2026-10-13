@@ -4,6 +4,9 @@
 #include <ros/time.h>
 #include <sensor_msgs/Range.h>
 namespace robot_navigation {
+// IDs 0..4 retain their firmware mapping; the rear chassis sensor is ID 5.
+constexpr uint8_t kStm32RearSensorId = 5;
+constexpr uint8_t kStm32RangeSensorCount = 6;
 // STM32 range-frame status bits.  Keep these tied to the firmware protocol,
 // rather than inferring validity from the distance sentinel alone.
 constexpr uint8_t kStm32RangeValid = 0x01;
@@ -53,6 +56,7 @@ inline const char* stm32RangeDeviceName(uint8_t sensor_id) {
     case 2: return "VL53L1X ToF right";
     case 3: return "VL53L1X ToF arm upper left";
     case 4: return "VL53L1X ToF arm upper right";
+    case kStm32RearSensorId: return "VL53L1X ToF rear";
     default: return "unknown range sensor";
   }
 }
@@ -69,7 +73,8 @@ inline bool vl53l1xSampleFresh(bool has_valid, const ros::SteadyTime& now,
 // Pure protocol helpers are kept separate so they can be tested without CAN hardware.
 inline bool parseVl53l1xSample(const struct can_frame& frame, Vl53l1xSample& sample) {
   if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) != 0 ||
-      frame.can_id != 0x110 || frame.can_dlc != 8 || frame.data[0] != 0x01 || frame.data[1] > 4) {
+      frame.can_id != 0x110 || frame.can_dlc != 8 || frame.data[0] != 0x01 ||
+      frame.data[1] >= kStm32RangeSensorCount) {
     return false;
   }
   sample.sensor_id = frame.data[1];
@@ -85,7 +90,7 @@ inline bool parseVl53l1xSample(const struct can_frame& frame, Vl53l1xSample& sam
 inline bool parseVl53l1xDiagnostic(const struct can_frame& frame, Vl53l1xDiagnosticFrame& diagnostic) {
   if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) != 0 ||
       frame.can_id != 0x111 || frame.can_dlc != 8 || frame.data[0] != 0x01 ||
-      (frame.data[1] != 0xFF && frame.data[1] > 4)) {
+      (frame.data[1] != 0xFF && frame.data[1] >= kStm32RangeSensorCount)) {
     return false;
   }
   diagnostic.sensor_id = frame.data[1];

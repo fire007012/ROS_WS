@@ -93,6 +93,7 @@ class MissionController {
   void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void rearRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningFailedCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -207,6 +208,7 @@ class MissionController {
   ros::Subscriber front_range_sub_;
   ros::Subscriber left_range_sub_;
   ros::Subscriber right_range_sub_;
+  ros::Subscriber rear_range_sub_;
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
   ros::Subscriber fine_tuning_failed_sub_;
@@ -293,9 +295,11 @@ class MissionController {
   sensor_msgs::Range front_range_;
   sensor_msgs::Range left_range_;
   sensor_msgs::Range right_range_;
+  sensor_msgs::Range rear_range_;
   ros::Time front_range_time_;
   ros::Time left_range_time_;
   ros::Time right_range_time_;
+  ros::Time rear_range_time_;
   mutable std::mutex range_mutex_;
 
   // ── 阶段计时 ──
@@ -375,6 +379,7 @@ class MissionController {
   std::string front_range_topic_;
   std::string left_range_topic_;
   std::string right_range_topic_;
+  std::string rear_range_topic_;
 };
 
 }  // namespace robot_navigation

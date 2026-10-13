@@ -15,7 +15,7 @@ struct can_frame makeFrame(uint32_t id, std::initializer_list<uint8_t> data) {
 }
 
 TEST(Vl53l1xCanProtocol, DecodesLittleEndianAndRoutesSensors) {
-  for (uint8_t id = 0; id < 5; ++id) {
+  for (uint8_t id = 0; id < robot_navigation::kStm32RangeSensorCount; ++id) {
     const auto frame = makeFrame(0x110, {0x01, id, 0x52, 0x03, 0x0A, 0x00, 0x01, id});
     robot_navigation::Vl53l1xSample sample;
     ASSERT_TRUE(robot_navigation::parseVl53l1xSample(frame, sample));
@@ -28,7 +28,7 @@ TEST(Vl53l1xCanProtocol, DecodesLittleEndianAndRoutesSensors) {
 TEST(Vl53l1xCanProtocol, RejectsInvalidFramesAndStatusIsPreserved) {
   robot_navigation::Vl53l1xSample sample;
   EXPECT_FALSE(robot_navigation::parseVl53l1xSample(makeFrame(0x110, {0x02, 0, 1, 0, 0, 0, 1, 0}), sample));
-  EXPECT_FALSE(robot_navigation::parseVl53l1xSample(makeFrame(0x110, {0x01, 5, 1, 0, 0, 0, 1, 0}), sample));
+  EXPECT_FALSE(robot_navigation::parseVl53l1xSample(makeFrame(0x110, {0x01, 6, 1, 0, 0, 0, 1, 0}), sample));
   EXPECT_FALSE(robot_navigation::parseVl53l1xSample(makeFrame(0x110, {0x01, 0, 1, 0}), sample));
   const auto timeout = makeFrame(0x110, {0x01, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0x04, 0x2D});
   ASSERT_TRUE(robot_navigation::parseVl53l1xSample(timeout, sample));
@@ -57,11 +57,27 @@ TEST(Vl53l1xCanProtocol, ValidityUsesStatusAndDistanceTogether) {
   EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
 }
 
-TEST(Vl53l1xCanProtocol, AllFiveSensorsAreInfrared) {
-  EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(0));
-  EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(1));
-  EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(2));
+TEST(Vl53l1xCanProtocol, AllSixSensorsAreInfrared) {
+  for (uint8_t id = 0; id < robot_navigation::kStm32RangeSensorCount; ++id)
+    EXPECT_EQ(sensor_msgs::Range::INFRARED, robot_navigation::stm32RangeRadiationType(id));
   EXPECT_STREQ("VL53L1X ToF front", robot_navigation::stm32RangeDeviceName(0));
+  EXPECT_STREQ("VL53L1X ToF rear", robot_navigation::stm32RangeDeviceName(5));
+}
+
+TEST(Vl53l1xCanProtocol, RearSampleAndDiagnosticKeepTheirOwnId) {
+  robot_navigation::Vl53l1xSample sample;
+  ASSERT_TRUE(robot_navigation::parseVl53l1xSample(makeFrame(0x110,
+      {1, 5, 0x20, 3, 0xFF, 0xFF, 1, 255}), sample));
+  EXPECT_EQ(5, sample.sensor_id);
+  EXPECT_EQ(800, sample.distance_mm);
+  EXPECT_TRUE(robot_navigation::stm32RangeSampleValid(sample));
+  robot_navigation::Vl53l1xDiagnosticFrame diagnostic;
+  ASSERT_TRUE(robot_navigation::parseVl53l1xDiagnostic(makeFrame(0x111,
+      {1, 5, 3, 4, 0x20, 3, 4, 0}), diagnostic));
+  EXPECT_EQ(5, diagnostic.sensor_id);
+  EXPECT_EQ(800, diagnostic.last_valid_distance_mm);
+  EXPECT_FALSE(robot_navigation::parseVl53l1xDiagnostic(makeFrame(0x111,
+      {1, 6, 3, 4, 0xFF, 0xFF, 4, 0}), diagnostic));
 }
 
 TEST(Vl53l1xCanProtocol, RejectsExtendedAndRemoteFrames) {

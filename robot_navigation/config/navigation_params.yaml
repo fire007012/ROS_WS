@@ -138,7 +138,7 @@ distance_safety:
   front_range_topic: /front/range
   left_range_topic: /left/range
   right_range_topic: /right/range
-  rear_range_topic: /rear/range  # 未安装：倒退命令会被拦截
+  rear_range_topic: /rear/range  # 后方 VL53，CAN sensor_id=5；失效时禁止倒车/转弯
 
 # ── 视频推流参数 ──────────────────────────────────────────────
 video_stream:

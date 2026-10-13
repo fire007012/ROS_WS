@@ -36,7 +36,7 @@ class ClosedLoop(unittest.TestCase):
         self.distance = rospy.Publisher('/vl53l1x_distance', Float32, queue_size=1)
         self.motor = rospy.Publisher('/motor_state', Float32MultiArray, queue_size=1)
         self.ranges = [rospy.Publisher('/'+name+'/range', Range, queue_size=1)
-                       for name in ['front', 'left', 'right']]
+                       for name in ['front', 'left', 'right', 'rear']]
         self.qr = rospy.Publisher('/qr_result', QrResult, queue_size=1)
         self.start = rospy.Publisher('/start_signal/physical', UInt32, queue_size=1)
         self.placed_event = rospy.Publisher('/medicine/placed', Int8, queue_size=1)

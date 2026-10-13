@@ -52,6 +52,7 @@ class HealthMonitor {
   void frontRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void leftRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void rightRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
+  void rearRangeCallback(const sensor_msgs::Range::ConstPtr& msg);
   void pathCallback(const std_msgs::Bool::ConstPtr& msg);
   void motorStateCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
 
@@ -64,6 +65,7 @@ class HealthMonitor {
   ros::Subscriber front_range_sub_;
   ros::Subscriber left_range_sub_;
   ros::Subscriber right_range_sub_;
+  ros::Subscriber rear_range_sub_;
   ros::Subscriber path_sub_;
   ros::Subscriber motor_state_sub_;
 

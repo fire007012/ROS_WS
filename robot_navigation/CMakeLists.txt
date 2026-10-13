@@ -148,7 +148,7 @@ target_link_libraries(vl53l1x_driver_node
   ${catkin_LIBRARIES}
 )
 
-# ── STM32 VL53L1X CAN bridge (five sensors) ───────────────────
+# ── STM32 VL53L1X CAN bridge (six sensors) ────────────────────
 add_executable(vl53l1x_can_bridge_node
   src/vl53l1x_can_bridge.cpp
 )
@@ -300,6 +300,7 @@ if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/mission_routes.test)
   add_rostest(test/safety_and_fine_tuning.test)
+  add_rostest(test/rear_can_safety.test)
   add_rostest(test/mission_cancellation.test)
   add_rostest(test/mission_closed_loop.test)
   add_rostest_gtest(test_box_cancellation test/box_cancellation.test test/test_box_cancellation.cpp)

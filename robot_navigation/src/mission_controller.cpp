@@ -67,6 +67,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , front_range_topic_("/front/range")
     , left_range_topic_("/left/range")
     , right_range_topic_("/right/range")
+    , rear_range_topic_("/rear/range")
 {
   // ── 参数读取 ──
   // mission_params.yaml keeps task settings under "mission". Accept legacy
@@ -93,6 +94,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param<std::string>("front_range_topic", front_range_topic_, "/front/range");
   pnh_.param<std::string>("left_range_topic", left_range_topic_, "/left/range");
   pnh_.param<std::string>("right_range_topic", right_range_topic_, "/right/range");
+  pnh_.param<std::string>("rear_range_topic", rear_range_topic_, "/rear/range");
   vl53_circle_timeout_sec_ = std::max(0.01, vl53_circle_timeout_sec_);
   vl53_min_clearance_m_ = std::max(0.0, vl53_min_clearance_m_);
   base_projection_radius_m_ = std::max(0.0, base_projection_radius_m_);
@@ -164,6 +166,8 @@ bool MissionController::init() {
                                      &MissionController::leftRangeCallback, this);
   right_range_sub_   = nh_.subscribe(right_range_topic_, 10,
                                      &MissionController::rightRangeCallback, this);
+  rear_range_sub_    = nh_.subscribe(rear_range_topic_, 10,
+                                     &MissionController::rearRangeCallback, this);
   path_finished_sub_  = nh_.subscribe("/path_finished", 10,
                                      &MissionController::pathFinishedCallback, this);
 
@@ -295,6 +299,12 @@ void MissionController::rightRangeCallback(const sensor_msgs::Range::ConstPtr& m
   std::lock_guard<std::mutex> lock(range_mutex_);
   right_range_ = *msg;
   right_range_time_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
+}
+
+void MissionController::rearRangeCallback(const sensor_msgs::Range::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(range_mutex_);
+  rear_range_ = *msg;
+  rear_range_time_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
 }
 
 // ── 回调: 条形码 bed1 ──────────────────────────────────────
@@ -1090,10 +1100,10 @@ bool MissionController::areVl53RangesValid() const {
 
   std::lock_guard<std::mutex> lock(range_mutex_);
   const ros::Time now = ros::Time::now();
-  const sensor_msgs::Range* samples[] = {&front_range_, &left_range_, &right_range_};
-  const ros::Time* stamps[] = {&front_range_time_, &left_range_time_, &right_range_time_};
+  const sensor_msgs::Range* samples[] = {&front_range_, &left_range_, &right_range_, &rear_range_};
+  const ros::Time* stamps[] = {&front_range_time_, &left_range_time_, &right_range_time_, &rear_range_time_};
   int valid_count = 0;
-  for (size_t i = 0; i < 3; ++i) {
+  for (size_t i = 0; i < 4; ++i) {
     const double age = (now - *stamps[i]).toSec();
     const double header_age = samples[i]->header.stamp.isZero() ? 0.0 :
         (now - samples[i]->header.stamp).toSec();
@@ -1108,10 +1118,10 @@ bool MissionController::areVl53RangesValid() const {
     if (valid) ++valid_count;
   }
 
-  const bool ok = require_all_vl53_ranges_ ? valid_count == 3 : valid_count > 0;
+  const bool ok = require_all_vl53_ranges_ ? valid_count == 4 : valid_count > 0;
   if (!ok) {
     ROS_WARN_THROTTLE(1.0,
-                      "[mission_controller] VL53投影校验等待数据: valid=%d/3, require_all=%s",
+                      "[mission_controller] VL53投影校验等待数据: valid=%d/4, require_all=%s",
                       valid_count, require_all_vl53_ranges_ ? "true" : "false");
   }
   return ok;

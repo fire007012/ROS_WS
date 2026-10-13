@@ -39,7 +39,7 @@ bool DistanceSafetyNode::init() {
   state_pub_ = nh_.advertise<std_msgs::String>("/distance_safety/state", 1, true);
   timer_ = nh_.createSteadyTimer(ros::WallDuration(1.0 / rate), &DistanceSafetyNode::safetyTimerCallback, this);
   publishState("CLEAR");
-  ROS_INFO("[distance_safety] directional Range braking; reverse requires /rear/range");
+  ROS_INFO("[distance_safety] four-direction Range braking; reverse and turning require rear data");
   return true;
 }
 
@@ -99,9 +99,9 @@ void DistanceSafetyNode::safetyTimerCallback(const ros::SteadyTimerEvent&) {
     std::max({0.0, -r.linear.x, -measured.linear.x})}};
   double factor = 1.0;
   for (size_t i = 0; i < toward.size(); ++i) {
-    // For in-place turning check all installed front/side beams. Rearward
-    // translation requires a real rear sample; never synthesize clearance.
-    const bool turning_check = rotation > 0.001 && i < 3;
+    // Turning sweeps the rear chassis too. Every chassis beam must be fresh;
+    // rearward translation also requires a real rear sample.
+    const bool turning_check = rotation > 0.001;
     if (toward[i] <= 0.001 && !turning_check) {
       stopped_[i] = false;
       continue;

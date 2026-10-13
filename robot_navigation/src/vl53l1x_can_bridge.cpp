@@ -100,6 +100,10 @@ bool Vl53l1xCanBridge::configure() {
                    "/arm_upper_right/range", "/arm_upper_right/distance_mm",
                    "arm_upper_right_range_link", 0.05, 3.0, stm32RangeRadiationType(4),
                    stm32RangeDeviceName(4));
+  loadSensorParams(sensors_[kStm32RearSensorId], "rear", "rear_vl53l1x",
+                   "/rear/range", "/vl53l1x_distance_rear", "rear_range_link",
+                   0.05, 3.0, stm32RangeRadiationType(kStm32RearSensorId),
+                   stm32RangeDeviceName(kStm32RearSensorId));
   pnh_.param("upper_alignment/enabled", alignment_enabled_, false);
   pnh_.param("upper_alignment/start_difference_mm", alignment_.start_mm, 50.0);
   pnh_.param("upper_alignment/stop_difference_mm", alignment_.stop_mm, 20.0);
@@ -245,7 +249,7 @@ void Vl53l1xCanBridge::publishRange(SensorState& state, const ros::Time& stamp, 
   range.max_range = state.max_range;
   range.range = valid ? state.distance_mm / 1000.0 : std::numeric_limits<float>::quiet_NaN();
   state.range_pub.publish(range);
-  // Preserve the three legacy Float32 topics in millimetres, including invalidation.
+  // Float32 distance topics use millimetres, including invalidation.
   std_msgs::Float32 distance;
   distance.data = valid ? state.distance_mm : std::numeric_limits<float>::quiet_NaN();
   state.distance_pub.publish(distance);
@@ -352,8 +356,8 @@ void Vl53l1xCanBridge::handleFrame(const struct can_frame& frame) {
     protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x110;
     if (!parseVl53l1xSample(protocol_frame, sample)) {
       ++invalid_frame_count_;
-      if (frame.can_dlc >= 2 && frame.data[1] < 5) ++sensors_[frame.data[1]].invalid_frames;
-      if (frame.can_dlc >= 2 && frame.data[1] < 5) {
+      if (frame.can_dlc >= 2 && frame.data[1] < kStm32RangeSensorCount) ++sensors_[frame.data[1]].invalid_frames;
+      if (frame.can_dlc >= 2 && frame.data[1] < kStm32RangeSensorCount) {
         auto& state = sensors_[frame.data[1]];
         state.has_valid = false;
         alignment_.invalidate(frame.data[1]);
@@ -368,7 +372,7 @@ void Vl53l1xCanBridge::handleFrame(const struct can_frame& frame) {
     protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x111;
     if (!parseVl53l1xDiagnostic(protocol_frame, diagnostic)) {
       ++invalid_frame_count_;
-      if (frame.can_dlc >= 2 && frame.data[1] < 5) {
+      if (frame.can_dlc >= 2 && frame.data[1] < kStm32RangeSensorCount) {
         auto& state = sensors_[frame.data[1]];
         state.has_valid = false;
         alignment_.invalidate(frame.data[1]);

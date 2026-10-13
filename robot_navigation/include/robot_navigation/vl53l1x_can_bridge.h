@@ -97,7 +97,7 @@ class Vl53l1xCanBridge {
   ros::SteadyTimer poll_timer_;
   ros::SteadyTimer diagnostics_timer_;
   ros::Publisher diagnostics_pub_;
-  SensorState sensors_[5];
+  SensorState sensors_[kStm32RangeSensorCount];
   uint32_t distance_can_id_ = 0x110;
   uint32_t diagnostic_can_id_ = 0x111;
   std::string can_interface_ = "can0";

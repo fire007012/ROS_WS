@@ -6,7 +6,7 @@
 #include <std_msgs/String.h>
 
 namespace robot_navigation {
-// Directional braking only; three ToF beams do not constitute an obstacle map.
+// Directional braking only; four chassis ToF beams do not constitute an obstacle map.
 class DistanceSafetyNode {
  public:
   DistanceSafetyNode(ros::NodeHandle& nh, ros::NodeHandle& pnh);

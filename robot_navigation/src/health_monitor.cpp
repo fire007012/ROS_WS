@@ -24,7 +24,7 @@ HealthMonitor::HealthMonitor(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   // 默认监控的关键话题
   critical_topics_ = {
-    "/odom", "/front/range", "/left/range", "/right/range", "/motor_state"
+    "/odom", "/front/range", "/left/range", "/right/range", "/rear/range", "/motor_state"
   };
 
   // 允许从参数覆盖
@@ -47,6 +47,7 @@ bool HealthMonitor::init() {
   front_range_sub_ = nh_.subscribe("/front/range", 10, &HealthMonitor::frontRangeCallback, this);
   left_range_sub_ = nh_.subscribe("/left/range", 10, &HealthMonitor::leftRangeCallback, this);
   right_range_sub_ = nh_.subscribe("/right/range", 10, &HealthMonitor::rightRangeCallback, this);
+  rear_range_sub_ = nh_.subscribe("/rear/range", 10, &HealthMonitor::rearRangeCallback, this);
   path_sub_ = nh_.subscribe("/path_finished", 10, &HealthMonitor::pathCallback, this);
   motor_state_sub_ = nh_.subscribe("/motor_state", 10, &HealthMonitor::motorStateCallback, this);
 
@@ -146,6 +147,7 @@ void HealthMonitor::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 void HealthMonitor::frontRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/front/range"] = ros::Time::now(); }
 void HealthMonitor::leftRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/left/range"] = ros::Time::now(); }
 void HealthMonitor::rightRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/right/range"] = ros::Time::now(); }
+void HealthMonitor::rearRangeCallback(const sensor_msgs::Range::ConstPtr&) { last_message_time_["/rear/range"] = ros::Time::now(); }
 void HealthMonitor::pathCallback(const std_msgs::Bool::ConstPtr& msg) { if (msg->data) last_message_time_["/path_finished"] = ros::Time::now(); }
 void HealthMonitor::motorStateCallback(const std_msgs::Float32MultiArray::ConstPtr&) { last_message_time_["/motor_state"] = ros::Time::now(); }
 

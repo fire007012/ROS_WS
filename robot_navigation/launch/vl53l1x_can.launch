@@ -12,6 +12,8 @@
   <arg name="left_yaw" default="0.0"/><arg name="left_pitch" default="0.0"/><arg name="left_roll" default="0.0"/>
   <arg name="right_x" default="0.0"/><arg name="right_y" default="0.0"/><arg name="right_z" default="0.0"/>
   <arg name="right_yaw" default="0.0"/><arg name="right_pitch" default="0.0"/><arg name="right_roll" default="0.0"/>
+  <arg name="rear_x" default="0.0"/><arg name="rear_y" default="0.0"/><arg name="rear_z" default="0.0"/>
+  <arg name="rear_yaw" default="3.141592653589793"/><arg name="rear_pitch" default="0.0"/><arg name="rear_roll" default="0.0"/>
 
   <node pkg="robot_navigation" type="vl53l1x_can_bridge_node"
         name="vl53l1x_can_bridge_node" output="screen" required="true">
@@ -27,5 +29,7 @@
           args="$(arg left_x) $(arg left_y) $(arg left_z) $(arg left_yaw) $(arg left_pitch) $(arg left_roll) base_link left_range_link 100"/>
     <node pkg="tf" type="static_transform_publisher" name="right_range_tf"
           args="$(arg right_x) $(arg right_y) $(arg right_z) $(arg right_yaw) $(arg right_pitch) $(arg right_roll) base_link right_range_link 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="rear_range_tf"
+          args="$(arg rear_x) $(arg rear_y) $(arg rear_z) $(arg rear_yaw) $(arg rear_pitch) $(arg rear_roll) base_link rear_range_link 100"/>
   </group>
 </launch>

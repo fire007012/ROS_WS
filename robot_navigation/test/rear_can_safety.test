@@ -1,0 +1,12 @@
+<launch>
+  <!-- Frozen ROS time; raw CAN injection, no hardware or motor CAN sender. -->
+  <arg name="bridge_node_type" default="upper_alignment_bridge_fixture"/>
+  <arg name="safety_node_type" default="distance_safety_node"/>
+  <param name="use_sim_time" value="true"/>
+  <node pkg="robot_navigation" type="$(arg bridge_node_type)" name="range_bridge" required="true">
+    <rosparam file="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
+  </node>
+  <node pkg="robot_navigation" type="$(arg safety_node_type)" name="distance_safety" required="true"/>
+  <node pkg="motion_planner" type="cmd_vel_mux_node" name="mux" required="true"/>
+  <test pkg="robot_navigation" type="test_rear_can_safety.py" test-name="rear_can_safety" time-limit="40"/>
+</launch>

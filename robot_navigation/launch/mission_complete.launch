@@ -60,13 +60,14 @@
   <arg name="require_all_vl53_ranges" default="true"/>
   <!-- 单位均为 m；半径应取水平投影外接圆半径，不能只填底盘中心尺寸。 -->
   <arg name="vl53_circle_timeout_sec" default="0.5"/> <!-- 传感器数据最大允许年龄 -->
-  <arg name="vl53_min_clearance_m" default="0.05"/> <!-- 三路 Range 的最小有效距离 -->
+  <arg name="vl53_min_clearance_m" default="0.05"/> <!-- 底盘四路 Range 的最小有效距离 -->
   <arg name="base_projection_radius_m" default="0.20"/> <!-- 车体（不含机械臂）外接半径 -->
   <arg name="full_projection_radius_m" default="0.25"/> <!-- 车体+机械臂外接半径 -->
   <arg name="circle_boundary_margin_m" default="0.02"/> <!-- 圆/白框边界额外安全余量 -->
   <arg name="front_range_topic" default="/front/range"/>
   <arg name="left_range_topic" default="/left/range"/>
   <arg name="right_range_topic" default="/right/range"/>
+  <arg name="rear_range_topic" default="/rear/range"/>
   <arg name="use_dynamic_navigation" default="false"/>
   <!-- Required when use_dynamic_navigation:=true. -->
   <arg name="dynamic_map_file" default="/absolute/path/to/arena.yaml"/>
@@ -309,7 +310,7 @@
   <!--  第8层：安全感知层                                            -->
   <!-- ============================================================ -->
 
-  <!-- Front HC-SR04 and left/right VL53L1X samples are supplied by the STM32 bridge. -->
+  <!-- Four chassis and two arm-upper VL53L1X sensors are supplied by the STM32 bridge. -->
   <group if="$(arg enable_vl53l1x_can)">
     <include file="$(find robot_navigation)/launch/vl53l1x_can.launch">
       <arg name="can_interface" value="$(arg vl53l1x_can_interface)"/>
@@ -321,6 +322,10 @@
   <!-- 8.2 距离安全检测 — 持续近距离制动；绕障由动态导航局部规划器处理 -->
   <node pkg="robot_navigation" type="distance_safety_node"
         name="distance_safety_node" output="screen" required="true">
+    <param name="front_range_topic" value="$(arg front_range_topic)"/>
+    <param name="left_range_topic" value="$(arg left_range_topic)"/>
+    <param name="right_range_topic" value="$(arg right_range_topic)"/>
+    <param name="rear_range_topic" value="$(arg rear_range_topic)"/>
     <param name="safety_distance_mm" value="300.0"/>
     <param name="critical_distance_mm" value="100.0"/>
     <param name="braking_deceleration_mps2" value="1.0"/>
@@ -391,6 +396,7 @@
       <param name="front_range_topic" value="$(arg front_range_topic)"/>
       <param name="left_range_topic" value="$(arg left_range_topic)"/>
       <param name="right_range_topic" value="$(arg right_range_topic)"/>
+      <param name="rear_range_topic" value="$(arg rear_range_topic)"/>
     <rosparam file="$(arg mission_config)" command="load"/>
   </node>
 
