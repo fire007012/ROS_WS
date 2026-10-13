@@ -7,6 +7,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/Int8.h>
 #include <arm_and_gripper/PlaceMedicine.h>
 #include <arm_and_gripper/ArmPlaceMedicine.h>
 
@@ -23,7 +24,7 @@ class ArmAndGripperController {
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   bool placeMedicineCallback(PlaceMedicine::Request&, PlaceMedicine::Response&);
   bool armPlaceMedicineCallback(ArmPlaceMedicine::Request&, ArmPlaceMedicine::Response&);
-  bool executePlaceSequence(int8_t box_id, bool reset_arm);
+  bool executePlaceSequence(int8_t box_id, bool reset_arm, int8_t bed_id = 1);
   bool initCanSocket();
   void closeCanSocket();
   bool sendArmAngleCommand(double first_deg, double second_deg);
@@ -43,7 +44,7 @@ class ArmAndGripperController {
   ros::NodeHandle nh_, pnh_;
   ros::Subscriber fine_tuning_done_sub_;
   ros::Subscriber estop_sub_, reset_sub_, cancel_sub_, actions_enabled_sub_;
-  ros::Publisher medicine_release_done_pub_;
+  ros::Publisher medicine_release_done_pub_, medicine_placed_pub_;
   ros::ServiceServer place_medicine_srv_, arm_place_medicine_srv_;
 
   std::string can_device_;

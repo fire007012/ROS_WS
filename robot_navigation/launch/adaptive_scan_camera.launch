@@ -1,0 +1,10 @@
+<launch>
+  <arg name="video_device" default=""/>
+  <arg name="mode" default="auto"/>
+  <include file="$(find robot_navigation)/config/camera_devices.launch">
+    <arg name="camera_role" value="scan"/>
+    <arg name="camera_device_override" value="$(arg video_device)"/>
+    <arg name="scan_capture_mode" value="$(arg mode)"/>
+    <arg name="scan_continuous" value="true"/>
+  </include>
+</launch>

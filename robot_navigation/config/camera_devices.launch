@@ -18,15 +18,41 @@
   <arg name="image_height" default="480"/>
   <arg name="framerate" default="30"/>
   <arg name="pixel_format" default="mjpeg"/>
+  <arg name="use_opencv_capture" default="false"/>
+  <arg name="scan_capture_mode" default=""/>
+  <arg name="scan_continuous" default="false"/>
+  <arg name="scan_config" default="$(find robot_navigation)/config/scan_camera.yaml"/>
   <arg name="io_method" default="mmap"/>
   <arg name="use_test_camera" default="false"/>
 
   <arg name="selected_device"
        value="$(eval arg('camera_device_override') if arg('camera_device_override') else (arg('scan_device') if arg('camera_role') == 'scan' else (arg('robot_audio_device') if arg('camera_role') == 'robot_audio' else arg('doctor_audio_device'))))"/>
 
+  <node pkg="robot_navigation" type="adaptive_scan_camera_node.py" name="adaptive_scan_camera_node"
+        output="screen" if="$(eval arg('scan_capture_mode') != '' and not arg('use_test_camera'))">
+    <rosparam file="$(arg scan_config)" command="load"/>
+    <param name="video_device" value="$(arg selected_device)"/>
+    <param name="mode" value="$(arg scan_capture_mode)"/>
+    <param name="continuous" value="$(arg scan_continuous)"/>
+  </node>
+
+  <node pkg="robot_navigation" type="adaptive_scan_camera_node.py" name="$(arg camera_node)"
+        ns="$(arg camera_ns)" output="screen"
+        if="$(eval arg('use_opencv_capture') and arg('scan_capture_mode') == '' and not arg('use_test_camera'))">
+    <param name="video_device" value="$(arg selected_device)"/>
+    <param name="image_topic" value="$(eval '/' + (arg('camera_ns') + '/' if arg('camera_ns') else '') + arg('camera_node') + '/image_raw')"/>
+    <param name="status_topic" value="$(eval '/' + (arg('camera_ns') + '/' if arg('camera_ns') else '') + arg('camera_node') + '/capture_status')"/>
+    <param name="mode" value="low"/>
+    <param name="continuous" value="true"/>
+    <param name="low_width" value="$(arg image_width)"/>
+    <param name="low_height" value="$(arg image_height)"/>
+    <param name="low_fps" value="$(arg framerate)"/>
+    <param name="low_pixel_format" value="$(arg pixel_format)"/>
+  </node>
+
   <group if="$(eval arg('camera_ns') == '')">
     <node pkg="usb_cam" type="usb_cam_node" name="$(arg camera_node)"
-          output="screen" unless="$(arg use_test_camera)">
+          output="screen" unless="$(eval arg('use_test_camera') or arg('scan_capture_mode') != '' or arg('use_opencv_capture'))">
       <param name="video_device" value="$(arg selected_device)"/>
       <param name="image_width" value="$(arg image_width)"/>
       <param name="image_height" value="$(arg image_height)"/>
@@ -44,7 +70,7 @@
 
   <group unless="$(eval arg('camera_ns') == '')">
     <node pkg="usb_cam" type="usb_cam_node" name="$(arg camera_node)"
-          ns="$(arg camera_ns)" output="screen" unless="$(arg use_test_camera)">
+          ns="$(arg camera_ns)" output="screen" unless="$(eval arg('use_test_camera') or arg('scan_capture_mode') != '' or arg('use_opencv_capture'))">
       <param name="video_device" value="$(arg selected_device)"/>
       <param name="image_width" value="$(arg image_width)"/>
       <param name="image_height" value="$(arg image_height)"/>

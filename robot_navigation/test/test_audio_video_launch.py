@@ -167,8 +167,8 @@ class AVLaunchLoading(unittest.TestCase):
             path = Path(directory) / 'custom.launch'
             ET.ElementTree(root).write(path, encoding='utf-8', xml_declaration=True)
             c = self.load_peer('slave', ['config_file:=' + str(path)])
-        self.assertEqual(self.value(c, 'video_sender_slave', 'stream_width'), 1280)
-        self.assertEqual(c.params['/lower_cam/lower_usb_cam/image_width'].value, 640)
+        self.assertEqual(self.value(c, 'video_sender_slave', 'stream_width'), 640)
+        self.assertEqual(c.params['/lower_cam/lower_usb_cam/low_width'].value, 640)
         self.assertNotIn('view_upper_cam', [n.name for n in c.nodes])
 
     def test_changed_network_from_environment(self):

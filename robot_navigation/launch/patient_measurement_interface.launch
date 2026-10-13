@@ -1,9 +1,5 @@
-<?xml version="1.0"?>
-<!--
-  Measurement interface placeholder.
-  Replace this launch file, or override patient_measurement_launch, with the
-  actual heart-rate/temperature driver launch. This file intentionally starts
-  no node and produces no measurement data.
--->
 <launch>
+  <arg name="config_file" default="$(find robot_navigation)/config/status_display.yaml"/>
+  <rosparam command="load" file="$(arg config_file)"/>
+  <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen"/>
 </launch>

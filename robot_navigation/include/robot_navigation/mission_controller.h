@@ -65,12 +65,14 @@ class MissionController {
     OPEN_BOX_A,
     PLACE_MEDICINE_A,
     VOICE_A,
+    BEDSIDE_A,
     GOTO_BED_B,
     POSITION_IN_CIRCLE_B,
     SCAN_BARCODE_B,
     OPEN_BOX_B,
     PLACE_MEDICINE_B,
     VOICE_B,
+    BEDSIDE_B,
     RETURN_HOME,
     HOME_CHECK,
     STOP,
@@ -92,6 +94,7 @@ class MissionController {
   void pathFinishedCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void fineTuningFailedCallback(const std_msgs::Bool::ConstPtr& msg);
+  void medicinePlacedCallback(const std_msgs::Int8::ConstPtr& msg);
   void medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg);
   void audioReadyCallback(const std_msgs::Int32::ConstPtr& msg);
   void audioActiveCallback(const std_msgs::Bool::ConstPtr& msg);
@@ -205,7 +208,7 @@ class MissionController {
   ros::Subscriber path_finished_sub_;
   ros::Subscriber fine_tuning_done_sub_;
   ros::Subscriber fine_tuning_failed_sub_;
-  ros::Subscriber medicine_release_done_sub_;
+  ros::Subscriber medicine_release_done_sub_, medicine_placed_sub_;
   ros::Subscriber audio_ready_sub_;
   ros::Subscriber audio_active_sub_;
 
@@ -218,14 +221,14 @@ class MissionController {
   ros::Publisher display_text_pub_;
   ros::Publisher chassis_lock_pub_;      // 底盘锁死信号
   ros::Publisher scan_target_bed_pub_;
-  ros::Publisher scan_session_pub_;
+  ros::Publisher scan_session_pub_, qr_enabled_pub_;
 
   // 服务客户端
   ros::ServiceClient path_select_client_;
   ros::ServiceClient fine_tuning_client_;     // std_srvs::Trigger
   ros::ServiceClient open_box_client_;
   ros::ServiceClient arm_place_client_;   // arm_and_gripper::ArmPlaceMedicine
-  ros::ServiceClient speak_client_;
+  ros::ServiceClient speak_client_, bedside_client_;
 
   // 定时器
   ros::Timer mission_timer_;      // 全局 180s 超时
@@ -238,7 +241,9 @@ class MissionController {
   uint64_t mission_generation_ = 0;
   uint64_t service_generation_ = 0;
   State service_state_ = State::IDLE;
-  std::future<CallResult> service_future_;
+  std::future<CallResult> service_future_, speech_future_;
+  bool speech_started_ = false;
+  uint64_t speech_generation_ = 0;
   std::atomic<bool> mission_completed_;
 
   // ── 状态动作保护（防止重复执行入口动作） ──

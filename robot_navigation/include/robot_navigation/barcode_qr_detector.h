@@ -8,6 +8,7 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Int8.h>
 #include <std_msgs/UInt32.h>
+#include <std_msgs/Bool.h>
 
 #include <zbar.h>
 
@@ -37,6 +38,7 @@ class BarcodeQrDetector {
   // ── 回调 ──
   void imageCallback(const sensor_msgs::Image::ConstPtr& msg);
   void scanTargetCallback(const std_msgs::Int8::ConstPtr& msg);
+  void qrEnabledCallback(const std_msgs::Bool::ConstPtr& msg);
   void scanSessionCallback(const std_msgs::UInt32::ConstPtr& msg);
 
   // ── 辅助 ──
@@ -50,6 +52,8 @@ class BarcodeQrDetector {
   ros::Subscriber      image_sub_;
   ros::Subscriber      scan_target_sub_;
   ros::Subscriber      scan_session_sub_;
+  ros::Subscriber      qr_enabled_sub_;
+  ros::Publisher       detected_pub_, completed_pub_;
   ros::Publisher       qr_result_pub_;
   ros::Publisher       barcode_bed1_pub_;
   ros::Publisher       barcode_bed3_pub_;
@@ -58,6 +62,12 @@ class BarcodeQrDetector {
   uint32_t scan_session_id_;
 
   // ── 状态 ──
+  bool qr_enabled_ = true;
+  bool allow_qr_updates_ = false;
+  std::string last_qr_;
+  double processing_rate_hz_ = 8.0;
+  ros::WallTime last_process_time_;
+  unsigned decode_attempt_ = 0;
   bool qr_detected_;
   bool barcode_bed1_detected_;
   bool barcode_bed3_detected_;

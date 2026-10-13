@@ -468,7 +468,7 @@ class VideoStreamNode {
     if (enable_ros_topic_) {
       sensor_msgs::CompressedImage compressed_msg;
       compressed_msg.header.stamp    = now;
-      compressed_msg.header.frame_id = "camera";
+      compressed_msg.header.frame_id = "no_signal";
       compressed_msg.format          = "jpeg";
       compressed_msg.data            = black_jpeg_;
       compressed_pub_.publish(compressed_msg);

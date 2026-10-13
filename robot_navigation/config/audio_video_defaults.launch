@@ -14,16 +14,19 @@
   <arg name="enable_display" default="true" />
   <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
   <arg name="start_lower_cam" default="true" />
+  <arg name="use_opencv_capture" default="true" />
   <arg name="use_test_camera" default="false" />
   <arg name="lower_cam_device" default="" />
-  <arg name="cam_width" default="1280" />
-  <arg name="cam_height" default="720" />
+  <arg name="cam_width" default="640" />
+  <arg name="cam_height" default="480" />
   <arg name="cam_framerate" default="25" />
+  <!-- MJPEG capture with OpenCV/V4L2 by default. Legacy usb_cam remains
+       available with use_opencv_capture:=false; YUYV is an explicit option. -->
   <arg name="cam_pixel_format" default="mjpeg" />
-  <arg name="jpeg_quality" default="85" />
-  <arg name="stream_width" default="1280" />
-  <arg name="stream_height" default="720" />
-  <arg name="stream_framerate" default="25.0" />
+  <arg name="jpeg_quality" default="75" />
+  <arg name="stream_width" default="640" />
+  <arg name="stream_height" default="480" />
+  <arg name="stream_framerate" default="15.0" />
   <arg name="http_port" default="8080" />
   <arg name="enable_http" default="false" />
   <arg name="enable_browser" default="false" />
