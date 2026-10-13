@@ -166,6 +166,7 @@ bool MissionController::init() {
   fine_tuning_failed_sub_ = nh_.subscribe("/fine_tuning_failed", 1,
                                         &MissionController::fineTuningFailedCallback, this);
 
+  medicine_placed_sub_ = nh_.subscribe("/medicine/placed",1,&MissionController::medicinePlacedCallback,this);
   medicine_release_done_sub_ = nh_.subscribe("/medicine_release_done", 1, &MissionController::medicineReleaseDoneCallback, this);
   audio_ready_sub_ = nh_.subscribe("/Ready", 1, &MissionController::audioReadyCallback, this);
   audio_active_sub_ = nh_.subscribe("/audio_chat/active", 1, &MissionController::audioActiveCallback, this);
@@ -179,6 +180,8 @@ bool MissionController::init() {
   display_text_pub_     = nh_.advertise<std_msgs::String>("/robot_display", 1, true);
   chassis_lock_pub_     = nh_.advertise<std_msgs::Bool>("/chassis_lock", 1, true);
   scan_target_bed_pub_ = nh_.advertise<std_msgs::Int8>("/barcode_scan/target_bed", 1, true);
+  qr_enabled_pub_ = nh_.advertise<std_msgs::Bool>("/barcode_scan/qr_enabled",1,true);
+  std_msgs::Bool qr_disabled; qr_disabled.data=false; qr_enabled_pub_.publish(qr_disabled);
   scan_session_pub_ = nh_.advertise<std_msgs::UInt32>("/barcode_scan/session", 1, true);
 
   // ── 服务客户端 ──
@@ -209,6 +212,7 @@ bool MissionController::init() {
     ROS_WARN("[mission_controller] /speak 未就绪");
   }
   speak_client_ = nh_.serviceClient<robot_navigation::Speak>("/speak");
+  bedside_client_ = nh_.serviceClient<std_srvs::Trigger>("/bedside/complete");
 
   // ── 定时器 ──
   // 全局任务定时器（3分钟），先不启动，收到 start_signal 后再启动
@@ -246,6 +250,10 @@ void MissionController::qrResultCallback(const robot_navigation::QrResult::Const
   if (current_state_ != State::SCAN_QR) return;
   if (qr_received_) return;
 
+  if ((msg->first_bed != 1 && msg->first_bed != 3) ||
+      msg->second_bed != (msg->first_bed == 1 ? 3 : 1) ||
+      (msg->first_box != 1 && msg->first_box != 3) ||
+      msg->second_box != (msg->first_box == 1 ? 3 : 1)) return;
   qr_result_ = *msg;
   qr_received_ = true;
 
@@ -400,6 +408,28 @@ void MissionController::fineTuningFailedCallback(const std_msgs::Bool::ConstPtr&
   }
 }
 
+void MissionController::medicinePlacedCallback(const std_msgs::Int8::ConstPtr& msg) {
+  if (!mission_started_ || estop_latched_ || speech_started_) return;
+  const int bed = current_state_ == State::PLACE_MEDICINE_A ? qr_result_.first_bed :
+                  current_state_ == State::PLACE_MEDICINE_B ? qr_result_.second_bed : 0;
+  if (!bed || msg->data != bed) return;
+  speech_started_ = true;
+  speech_generation_ = mission_generation_;
+  medicine_placed_time_ = ros::Time::now();
+  robot_navigation::Speak service;
+  service.request.text = std::to_string(bed) + "床病人请取药";
+  auto client = speak_client_;
+  std::packaged_task<CallResult()> task([client,service]() mutable {
+    try {
+      if (!client.call(service)) return CallResult{false,"speech service transport failed"};
+      return CallResult{service.response.success,service.response.message};
+    } catch(const std::exception& error) { return CallResult{false,error.what()}; }
+  });
+  speech_future_ = task.get_future();
+  std::thread(std::move(task)).detach();
+  ROS_INFO("[mission_controller] medicine placed: speech started while arm returns; chassis remains locked");
+}
+
 void MissionController::medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
   if (msg->data) { medicine_release_done_received_.store(true); ROS_INFO("[mission_controller] 收到放药完成信号"); }
 }
@@ -486,6 +516,10 @@ void MissionController::processState() {
       case State::OPEN_BOX_B:         actionOpenBoxB();           break;
       case State::PLACE_MEDICINE_B:   actionPlaceMedicineB();     break;
       case State::VOICE_B:            actionVoiceB();             break;
+      case State::BEDSIDE_A:
+      case State::BEDSIDE_B: {
+        std_srvs::Trigger service; beginServiceCall(bedside_client_,service); break;
+      }
       case State::RETURN_HOME:        actionReturnHome();         break;
       case State::HOME_CHECK:         actionHomeCheck();          break;
       default: break;
@@ -516,6 +550,15 @@ void MissionController::processState() {
       if (checkScanBarcodeComplete()) return;
       break;
 
+    case State::VOICE_A:
+    case State::VOICE_B:
+      if (speech_future_.valid() && speech_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        const auto result = speech_future_.get();
+        if (!result.success) { enterFailedState("speech failed: " + result.message); return; }
+        enterState(current_state_ == State::VOICE_A ? State::BEDSIDE_A : State::BEDSIDE_B);
+      }
+      break;
+
     case State::HOME_CHECK:
       if (checkHomeCheckComplete()) return;
       break;
@@ -529,6 +572,7 @@ void MissionController::processState() {
 // ── 进入新状态 ─────────────────────────────────────────────
 void MissionController::enterState(State new_state) {
   current_state_ = new_state;
+  std_msgs::Bool qr_enabled; qr_enabled.data = new_state == State::SCAN_QR; qr_enabled_pub_.publish(qr_enabled);
   const bool navigating = new_state == State::GOTO_NURSE ||
       new_state == State::GOTO_BED_A || new_state == State::GOTO_BED_B ||
       new_state == State::RETURN_HOME;
@@ -592,31 +636,17 @@ void MissionController::actionOpenBoxA() {
 }
 
 void MissionController::actionPlaceMedicineA() {
+  speech_started_ = false;
   int bed = qr_result_.first_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
   callArmPlaceMedicine(bed, qr_result_.first_box);
 }
 
 void MissionController::actionVoiceA() {
-  int bed = qr_result_.first_bed;
-
-  // ── 5秒内语音播报检查（P2-1） ──
-  if (voice_timing_active_) {
-    double elapsed = (ros::Time::now() - medicine_placed_time_).toSec();
-    if (elapsed > 5.0) {
-      ROS_WARN("[mission_controller] ⚠ 语音播报超时 (%.1f s > 5s)，不得分但继续流程", elapsed);
-    } else {
-      ROS_INFO("[mission_controller] ✅ 语音播报在 %.1f 秒内（5秒内有效）", elapsed);
-    }
-    voice_timing_active_ = false;
+  if (!speech_started_ || !speech_future_.valid() || speech_generation_ != mission_generation_) {
+    enterFailedState("missing medicine/placed event or speech result; remain stopped"); return;
   }
-
-  if (audio_video_enabled_ && (!audio_ready_ || !audio_active_)) {
-    enterFailedState("音视频链路未就绪"); return;
-  }
-  std::string text = std::to_string(bed) + "床病人请取药";
-  ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  callSpeak(text);
+  // A separate speech future is polled below. Arm return has completed here.
 }
 
 void MissionController::actionGotoBedB() {
@@ -655,30 +685,17 @@ void MissionController::actionOpenBoxB() {
 }
 
 void MissionController::actionPlaceMedicineB() {
+  speech_started_ = false;
   int bed = qr_result_.second_bed;
   ROS_INFO("[mission_controller] 动作: 放置药品到 %d 床（底盘已锁死）", bed);
   callArmPlaceMedicine(bed, qr_result_.second_box);
 }
 
 void MissionController::actionVoiceB() {
-  int bed = qr_result_.second_bed;
-
-  if (voice_timing_active_) {
-    double elapsed = (ros::Time::now() - medicine_placed_time_).toSec();
-    if (elapsed > 5.0) {
-      ROS_WARN("[mission_controller] ⚠ 语音播报超时 (%.1f s > 5s)，不得分但继续流程", elapsed);
-    } else {
-      ROS_INFO("[mission_controller] ✅ 语音播报在 %.1f 秒内（5秒内有效）", elapsed);
-    }
-    voice_timing_active_ = false;
+  if (!speech_started_ || !speech_future_.valid() || speech_generation_ != mission_generation_) {
+    enterFailedState("missing medicine/placed event or speech result; remain stopped"); return;
   }
-
-  if (audio_video_enabled_ && (!audio_ready_ || !audio_active_)) {
-    enterFailedState("音视频链路未就绪"); return;
-  }
-  std::string text = std::to_string(bed) + "床病人请取药";
-  ROS_INFO("[mission_controller] 动作: 播报 \"%s\"", text.c_str());
-  callSpeak(text);
+  // A separate speech future is polled below. Arm return has completed here.
 }
 
 void MissionController::actionReturnHome() {
@@ -905,12 +922,12 @@ bool MissionController::pollServiceCall() {
     case State::OPEN_BOX_B: enterState(State::PLACE_MEDICINE_B); break;
     case State::PLACE_MEDICINE_A:
     case State::PLACE_MEDICINE_B:
-      medicine_placed_time_ = ros::Time::now();
-      voice_timing_active_ = true;
+      // medicine/placed started concurrent speech; do not reset its timestamp here.
       enterState(service_state_ == State::PLACE_MEDICINE_A ? State::VOICE_A : State::VOICE_B);
       break;
-    case State::VOICE_A: unlockChassis(); enterState(State::GOTO_BED_B); break;
-    case State::VOICE_B: unlockChassis(); enterState(State::RETURN_HOME); break;
+
+    case State::BEDSIDE_A: unlockChassis(); enterState(State::GOTO_BED_B); break;
+    case State::BEDSIDE_B: unlockChassis(); enterState(State::RETURN_HOME); break;
     default: break;  // Navigation/fine tuning complete through their event topics.
   }
   return true;
@@ -1036,6 +1053,7 @@ bool MissionController::areVl53RangesValid() const {
 
 // ── 重置任务状态 ───────────────────────────────────────────
 void MissionController::resetMissionState() {
+  speech_started_ = false;
   qr_received_.store(false);
   barcode_bed1_received_.store(false);
   barcode_bed3_received_.store(false);
@@ -1112,12 +1130,14 @@ std::string MissionController::stateToString(State s) const {
     case State::OPEN_BOX_A:         return "OPEN_BOX_A";
     case State::PLACE_MEDICINE_A:   return "PLACE_MEDICINE_A";
     case State::VOICE_A:            return "VOICE_A";
+    case State::BEDSIDE_A:          return "BEDSIDE_A";
     case State::GOTO_BED_B:         return "GOTO_BED_B";
     case State::POSITION_IN_CIRCLE_B: return "POSITION_IN_CIRCLE_B";
     case State::SCAN_BARCODE_B:     return "SCAN_BARCODE_B";
     case State::OPEN_BOX_B:         return "OPEN_BOX_B";
     case State::PLACE_MEDICINE_B:   return "PLACE_MEDICINE_B";
     case State::VOICE_B:            return "VOICE_B";
+    case State::BEDSIDE_B:          return "BEDSIDE_B";
     case State::RETURN_HOME:        return "RETURN_HOME";
     case State::HOME_CHECK:         return "HOME_CHECK";
     case State::STOP:               return "STOP";
@@ -1165,7 +1185,7 @@ void MissionController::updatePersistentBarcodeDisplay() {
 }
 
 bool MissionController::isValidBarcode(const std::string& value) const {
-  if (value.size() < 4 || value.size() > 32) return false;
+  if (value.empty() || value.size() > 256) return false;
   for (unsigned char c : value) {
     if (c <= 0x20 || c > 0x7e) return false;
   }

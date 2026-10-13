@@ -36,6 +36,7 @@
   <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_camera"       default="true"/>
+  <arg name="scan_camera_device" default=""/>
   <arg name="enable_arm"          default="true"/>
   <!-- Legacy compatibility argument; Y42 joint control is no longer launched. -->
   <arg name="arm_joint_control" default="false"/>
@@ -71,19 +72,25 @@
   <!-- STM32 CAN1 0x112 is the authoritative physical start event. -->
   <arg name="enable_physical_start" default="false"/>
   <arg name="enable_can_start_signal" default="true"/>
-  <arg name="enable_emergency_stop" default="true"/>
+  <arg name="enable_emergency_stop" default="false"/>
   <arg name="enable_audio_video" default="true"/>
   <arg name="audio_role" default="slave"/>
-  <arg name="audio_local_ip" default="0.0.0.0"/>
-  <arg name="audio_remote_ip" default="192.168.15.128"/>
+  <arg name="audio_local_ip" default="$(optenv ROS_IP 0.0.0.0)"/>
+  <arg name="audio_remote_ip" default="$(optenv ROBOT_VM_IP)"/>
   <arg name="audio_ready_topic" default="/Ready"/>
   <!-- 外部测量装置接口：提供自己的 launch 后再启用，默认不伪造节点。 -->
-  <arg name="enable_patient_measurement" default="false"/>
+  <arg name="enable_patient_measurement" default="true"/>
   <arg name="patient_measurement_launch"
        default="$(find robot_navigation)/launch/patient_measurement_interface.launch"/>
-  <arg name="heart_rate_topic" default="/patient_measurement/heart_rate"/>
-  <arg name="temperature_topic" default="/patient_measurement/temperature"/>
+  <arg name="heart_rate_topic" default="/vitals/heart_rate"/>
+  <arg name="temperature_topic" default="/vitals/temperature"/>
 
+  <arg name="enable_gui" default="true"/>
+  <arg name="scan_pixel_format" default="mjpeg"/>
+  <arg name="scan_mode" default="auto"/>
+  <arg name="scan_camera_config" default="$(find robot_navigation)/config/scan_camera.yaml"/>
+  <arg name="bedside_timeout_s" default="28.0"/>
+  <arg name="call_duration_s" default="5.0"/>
   <!-- ======================== 配置文件路径 ======================== -->
   <arg name="robot_params"        default="$(find robot_bringup)/config/robot_params.yaml"/>
   <arg name="arm_params"          default="$(find robot_bringup)/config/arm_params.yaml"/>
@@ -222,21 +229,28 @@
 
   <!-- 6.1 USB 摄像头驱动（需要安装 usb_cam 包） -->
   <group if="$(arg enable_camera)">
-    <node pkg="usb_cam" type="usb_cam_node" name="usb_cam"
-          output="screen" required="false">
-      <param name="video_device" value="/dev/video0"/>
-      <param name="image_width" value="1280"/>
-      <param name="image_height" value="720"/>
-      <param name="pixel_format" value="yuyv"/>
-      <param name="framerate" value="25"/>
-    </node>
+    <include file="$(find robot_navigation)/config/camera_devices.launch">
+      <arg name="camera_role" value="scan"/>
+      <arg name="camera_device_override" value="$(arg scan_camera_device)"/>
+      <arg name="camera_node" value="usb_cam"/>
+      <arg name="scan_capture_mode" value="$(arg scan_mode)"/>
+      <arg name="scan_continuous" value="false"/>
+      <arg name="scan_config" value="$(arg scan_camera_config)"/>
+      <arg name="image_width" value="640"/>
+      <arg name="image_height" value="480"/>
+      <arg name="framerate" value="10"/>
+      <arg name="pixel_format" value="$(arg scan_pixel_format)"/>
+    </include>
 
     <!-- 6.2 二维码/条形码识别 -->
     <node pkg="robot_navigation" type="barcode_qr_detector_node"
           name="barcode_qr_detector_node" output="screen">
       <param name="qr_timeout_sec" value="30.0"/>
       <param name="barcode_timeout_sec" value="30.0"/>
-      <param name="image_queue_size" value="10"/>
+      <param name="image_queue_size" value="1"/>
+      <param name="allow_qr_updates" value="false"/>
+      <param name="qr_enabled" value="false"/>
+      <param name="processing_rate_hz" value="12.0"/>
     </node>
   </group>
 
@@ -271,30 +285,24 @@
     </node>
   </group>
 
-  <!-- 7.4 双向音视频：音视频节点已有，但 /Ready 仍需外部医生端/交互端触发。 -->
+  <!-- Dedicated call camera; shared defaults select /dev/video2 on the Pi. -->
   <group if="$(arg enable_audio_video)">
-    <node pkg="robot_navigation" type="video_stream_node"
-          name="video_stream_node" output="screen">
-      <param name="camera_topic" value="/usb_cam/image_raw"/>
-      <param name="http_port" value="8080"/>
-      <param name="jpeg_quality" value="85"/>
-      <param name="stream_width" value="1280"/>
-      <param name="stream_height" value="720"/>
-      <param name="framerate" value="25.0"/>
-      <param name="ready_topic" value="$(arg audio_ready_topic)"/>
-    </node>
-    <node pkg="robot_navigation" type="audio_chat_node"
-          name="audio_chat_node" output="screen">
-      <param name="enabled" value="true"/>
-      <param name="role" value="$(arg audio_role)"/>
-      <param name="sample_rate" value="48000"/>
-      <param name="local_ip" value="$(arg audio_local_ip)"/>
-      <param name="remote_ip" value="$(arg audio_remote_ip)"/>
-      <param name="rx_port" value="5004"/>
-      <param name="tx_port" value="5004"/>
-      <param name="ready_topic" value="$(arg audio_ready_topic)"/>
-    </node>
+    <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
+      <arg name="role" value="slave"/>
+      <arg name="local_ip" value="$(arg audio_local_ip)"/>
+      <arg name="remote_ip" value="$(arg audio_remote_ip)"/>
+      <arg name="ready_topic" value="$(arg audio_ready_topic)"/>
+      <arg name="enable_display" value="$(arg enable_gui)"/>
+    </include>
   </group>
+  <node pkg="robot_navigation" type="bedside_session_node.py" name="bedside_session_node" output="screen">
+    <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>
+    <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
+    <param name="timeout_s" value="$(arg bedside_timeout_s)"/>
+    <param name="call_duration_s" value="$(arg call_duration_s)"/>
+  </node>
+  <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node"
+        output="screen" if="$(arg enable_gui)"/>
 
   <!-- ============================================================ -->
   <!--  第8层：安全感知层                                            -->
@@ -346,7 +354,7 @@
   <!-- ============================================================ -->
 
   <!-- 9.1 语音播报服务 — 文字转语音输出 -->
-  <node pkg="robot_navigation" type="speak_node"
+  <node pkg="robot_navigation" type="speech_service_node.py"
         name="speak_node" output="screen">
     <param name="language" value="zh"/>
     <param name="speed" value="1.0"/>

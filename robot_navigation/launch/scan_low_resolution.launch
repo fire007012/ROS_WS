@@ -1,0 +1,14 @@
+<launch>
+  <!-- Scan+GUI only; no motion commands. Run just one scan launch at a time. -->
+  <arg name="video_device" default=""/>
+  <arg name="barcode_test_bed" default="0"/>
+  <arg name="enable_gui" default="true"/>
+  <arg name="scan_camera_config" default="$(find robot_navigation)/config/scan_camera.yaml"/>
+  <include file="$(find robot_navigation)/launch/scan_and_display.launch">
+    <arg name="video_device" value="$(arg video_device)"/>
+    <arg name="scan_mode" value="low"/>
+    <arg name="barcode_test_bed" value="$(arg barcode_test_bed)"/>
+    <arg name="enable_gui" value="$(arg enable_gui)"/>
+    <arg name="scan_camera_config" value="$(arg scan_camera_config)"/>
+  </include>
+</launch>

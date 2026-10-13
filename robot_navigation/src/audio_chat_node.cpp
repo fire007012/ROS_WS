@@ -45,7 +45,7 @@ class Pacat {
   // Deadline is measured from transfer start, not restarted for partial writes.
   bool transfer(void* data,size_t bytes,bool capture,std::atomic<bool>& run,int timeout_ms){
     size_t done=0;double deadline=nowMs()+timeout_ms;
-    while(run&&done<bytes&&nowMs()<deadline){
+    while(run&&ros::ok()&&done<bytes&&nowMs()<deadline){
       pollfd p{fd_,short(capture?POLLIN:POLLOUT),0};int n=poll(&p,1,10);
       if(n<0&&errno!=EINTR)return false;
       if(n<=0)continue;
@@ -67,7 +67,8 @@ class Pacat {
 class AudioChatNode {
  public:
   AudioChatNode():nh_(),pnh_("~"){
-    std::string role;pnh_.param<std::string>("role",role,"master");
+    pnh_.param<std::string>("role",role_,"master");
+    const std::string& role=role_;
     pnh_.param<std::string>("remote_ip",remote_,role=="slave"?"192.168.15.128":"192.168.15.129");
     pnh_.param("rx_port",rx_port_,5004);pnh_.param("tx_port",tx_port_,5004);
     pnh_.param<std::string>("mic_device",mic_,"default");pnh_.param<std::string>("speaker_device",speaker_,"default");
@@ -78,6 +79,8 @@ class AudioChatNode {
     std::string topic;pnh_.param<std::string>("ready_topic",topic,"/Ready");
     sub_=nh_.subscribe<std_msgs::Int32>(topic,1,[this](const std_msgs::Int32::ConstPtr& m){ready_=m->data==1;});
     state_=nh_.advertise<std_msgs::Bool>("/audio_chat/active",1,true);
+    role_state_=nh_.advertise<std_msgs::Bool>("/audio_chat/"+role+"/active",1,true);
+    peer_state_=nh_.advertise<std_msgs::Bool>("/audio_chat/"+role+"/peer_ready",1,true);
   }
   ~AudioChatNode(){stop();}
   bool init(){
@@ -86,18 +89,23 @@ class AudioChatNode {
     signal(SIGPIPE,SIG_IGN);
     ROS_INFO("Audio AV01/Opus mono: capture=%d playback=%d jitter=%d max_queue=%d ms. Both peers must upgrade. Pulse requests are NOT measured device latency.",capture_ms_,playback_ms_,jitter_ms_,max_ms_);return true;
   }
-  void spin(){ros::WallRate r(50);while(ros::ok()){ros::spinOnce();if(run_&&failed_)stop();if(ready_&&!run_&&!failed_)start();if(!ready_){if(run_)stop();failed_=false;}r.sleep();}stop();}
+  void spin(){ros::WallRate r(50);while(ros::ok()){ros::spinOnce();
+      std_msgs::Bool peer;peer.data=run_&&!failed_&&last_rx_ms_>0&&nowMs()-last_rx_ms_.load()<3000;
+      peer_state_.publish(peer);
+      if(run_&&!failed_&&nowMs()-started_ms_>5000&&!peer.data)
+        ROS_WARN_THROTTLE(5.0,"[audio_chat] no valid UDP received: check remote_ip, bidirectional UDP 5004, VM bridge/NAT, and peer /Ready=1");
+      if(run_&&failed_)stop();if(ready_&&!run_&&!failed_)start();if(!ready_){if(run_)stop();failed_=false;}r.sleep();}stop();}
  private:
-  void state(bool active){std_msgs::Bool b;b.data=active;state_.publish(b);}
-  void fail(const char* why){ROS_ERROR("[audio_chat] %s; toggle /Ready 0 then 1 to retry",why);failed_=true;}
+  void state(bool active){std_msgs::Bool b;b.data=active;state_.publish(b);role_state_.publish(b);if(!active){peer_state_.publish(b);last_rx_ms_=0;}}
+  void fail(const char* why){if(!ros::ok()||!run_)return; ROS_ERROR("[audio_chat] %s; toggle /Ready 0 then 1 to retry",why);failed_=true;}
   void start(){
     rx_=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);tx_=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
     sockaddr_in bind_addr{};bind_addr.sin_family=AF_INET;bind_addr.sin_port=htons(rx_port_);bind_addr.sin_addr.s_addr=INADDR_ANY;
     dest_={};dest_.sin_family=AF_INET;dest_.sin_port=htons(tx_port_);
-    if(rx_<0||tx_<0||inet_pton(AF_INET,remote_.c_str(),&dest_.sin_addr)!=1||bind(rx_,reinterpret_cast<sockaddr*>(&bind_addr),sizeof(bind_addr))<0){fail("Socket setup failed");stop();return;}
+    if(rx_<0||tx_<0||inet_pton(AF_INET,remote_.c_str(),&dest_.sin_addr)!=1||bind(rx_,reinterpret_cast<sockaddr*>(&bind_addr),sizeof(bind_addr))<0){ROS_ERROR("[audio_chat] Socket setup failed: remote=%s UDP=%d errno=%s",remote_.c_str(),rx_port_,strerror(errno));failed_=true;stop();return;}
     int capacity=16384;setsockopt(rx_,SOL_SOCKET,SO_RCVBUF,&capacity,sizeof(capacity));
     {std::lock_guard<std::mutex> lock(mutex_);queue_.reset();}
-    run_=true;rx_thread_=std::thread(&AudioChatNode::receive,this);play_thread_=std::thread(&AudioChatNode::play,this);tx_thread_=std::thread(&AudioChatNode::transmit,this);state(true);
+    started_ms_=nowMs();last_rx_ms_=0;run_=true;rx_thread_=std::thread(&AudioChatNode::receive,this);play_thread_=std::thread(&AudioChatNode::play,this);tx_thread_=std::thread(&AudioChatNode::transmit,this);state(true);
   }
   void stop(){
     run_=false;for(auto* t:{&rx_thread_,&play_thread_,&tx_thread_})if(t->joinable())t->join();
@@ -109,7 +117,7 @@ class AudioChatNode {
       sockaddr_in from{};socklen_t len=sizeof(from);ssize_t n=recvfrom(rx_,bytes,sizeof(bytes),0,reinterpret_cast<sockaddr*>(&from),&len);
       if(n<=0)continue;
       av::Packet p;if(from.sin_addr.s_addr!=dest_.sin_addr.s_addr||!av::decode(bytes,size_t(n),nowMs(),p)||opus_packet_get_nb_samples(p.data.data(),p.data.size(),48000)!=48000*frame_ms_/1000){++invalid;ROS_WARN_THROTTLE(5.0,"[audio_chat] rejected packet: require matching AV01/Opus frame duration and remote_ip on both peers");continue;}
-      {std::lock_guard<std::mutex> lock(mutex_);if(queue_.push(std::move(p)))++accepted;
+      {std::lock_guard<std::mutex> lock(mutex_);if(queue_.push(std::move(p))){++accepted;last_rx_ms_=nowMs();}
        if(nowMs()-report>5000){ROS_INFO("[audio_chat] rx=%llu invalid=%llu dropped=%llu queued=%zu",(unsigned long long)accepted,(unsigned long long)invalid,(unsigned long long)queue_.dropped,queue_.size());report=nowMs();}}
     }
   }
@@ -140,7 +148,7 @@ class AudioChatNode {
     Pacat input;if(!input.open(true,capture_ms_,mic_)){opus_encoder_destroy(enc);fail("Capture spawn failed");return;}
     int samples=48000*frame_ms_/1000;std::vector<int16_t> pcm(samples);uint8_t coded[1275];uint32_t session=std::random_device{}(),seq=0;double report=nowMs();uint64_t sent=0,errors=0;
     while(run_){
-      if(!input.transfer(pcm.data(),pcm.size()*2,true,run_,1000)){if(run_)fail("Capture EOF/timeout");break;}
+      if(!input.transfer(pcm.data(),pcm.size()*2,true,run_,1000)){if(run_&&ros::ok())fail("Capture EOF/timeout");break;}
       int n=opus_encode(enc,pcm.data(),samples,coded,sizeof(coded));if(n<0){++errors;continue;}
       // Timestamp when PCM is read, not a hardware capture timestamp.
       auto packet=av::encode(session,seq++,uint64_t(nowMs()),coded,size_t(n));
@@ -149,8 +157,9 @@ class AudioChatNode {
     }
     input.close();opus_encoder_destroy(enc);
   }
-  ros::NodeHandle nh_,pnh_;ros::Subscriber sub_;ros::Publisher state_;
-  std::string remote_,mic_,speaker_;int rx_port_,tx_port_,frame_ms_,rate_,channels_,bitrate_,complexity_,capture_ms_,playback_ms_,jitter_ms_,max_ms_;
+  ros::NodeHandle nh_,pnh_;ros::Subscriber sub_;ros::Publisher state_,role_state_,peer_state_;
+  std::string role_,remote_,mic_,speaker_;int rx_port_,tx_port_,frame_ms_,rate_,channels_,bitrate_,complexity_,capture_ms_,playback_ms_,jitter_ms_,max_ms_;
+  std::atomic<double> last_rx_ms_{0};double started_ms_=0;
   std::atomic<bool> run_{false},failed_{false};bool ready_=false;int rx_=-1,tx_=-1;sockaddr_in dest_{};
   std::thread rx_thread_,play_thread_,tx_thread_;std::mutex mutex_;av::Queue queue_;
 };

@@ -1,0 +1,13 @@
+# Scan camera only; call camera /dev/video2 has separate AV settings.
+# Each mission scan stage opens capture; completed scans release the device.
+mode: auto                 # auto / low / high
+switch_after_s: 5.0         # Each new scan gets a full five-second low-resolution attempt.
+continuous: false          # Standalone launch sets true to test changing codes.
+low_width: 640
+low_height: 480
+low_fps: 25.0
+low_pixel_format: mjpeg
+high_width: 1280
+high_height: 720
+high_fps: 5.0
+high_pixel_format: mjpeg    # 720p MJPEG support confirmed by user; YUYV unconfirmed.

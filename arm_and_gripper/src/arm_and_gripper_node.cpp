@@ -70,6 +70,7 @@ bool ArmAndGripperController::init(){
       [this](const std_msgs::Bool::ConstPtr& msg){
         if(msg->data) actions_enabled_=true; else cancelSequence();
       });
+  medicine_placed_pub_=nh_.advertise<std_msgs::Int8>("/medicine/placed",1,false);
   medicine_release_done_pub_=nh_.advertise<std_msgs::Bool>("/medicine_release_done",1,true);
   std_msgs::Bool initial; initial.data=false; medicine_release_done_pub_.publish(initial);
   place_medicine_srv_=nh_.advertiseService("/place_medicine",&ArmAndGripperController::placeMedicineCallback,this);
@@ -95,7 +96,7 @@ bool ArmAndGripperController::armPlaceMedicineCallback(ArmPlaceMedicine::Request
   if(sequence_running_.load()){res.success=false;res.message="busy";return true;}
   if(req.bed_id!=1&&req.bed_id!=3){res.success=false;res.message="invalid bed_id";return true;}
   if(req.box_id!=1&&req.box_id!=3){res.success=false;res.message="invalid box_id";return true;}
-  res.success=executePlaceSequence(req.box_id,true);
+  res.success=executePlaceSequence(req.box_id,true,req.bed_id);
   res.message=res.success?"commands acknowledged; timed release sequence complete (no position feedback)":"release failed or cancelled"; return true;
 }
 
@@ -169,7 +170,7 @@ bool ArmAndGripperController::sendServoTriggerCommand(uint8_t mask,int old_angle
   uint8_t d[8]={0x22,mask,static_cast<uint8_t>(old_angle),static_cast<uint8_t>(new_angle),0,0,0,0};
   return sendAcknowledged(0x700,0x703,0xA2,d);
 }
-bool ArmAndGripperController::executePlaceSequence(int8_t box_id,bool reset_arm){
+bool ArmAndGripperController::executePlaceSequence(int8_t box_id,bool reset_arm,int8_t bed_id){
   std::unique_lock<std::mutex> lock(seq_mutex_,std::try_to_lock);
   if(!lock.owns_lock() || estop_latched_ || !actions_enabled_) return false;
   sequence_generation_=cancel_generation_.load();
@@ -180,11 +181,15 @@ bool ArmAndGripperController::executePlaceSequence(int8_t box_id,bool reset_arm)
   if(ok&&box_id==1){
     ROS_INFO("[arm_and_gripper] 2/4 open box1 (PB0), then 3/4 close");
     ok=sendServoTriggerCommand(0x01,old_servo_open_angle_,0)&&waitInterruptibly(old_servo_move_duration_s_+servo_hold_duration_s_);
+    // Timed release point, not physical medicine-arrival feedback. No latch.
+    if(ok) {std_msgs::Int8 placed;placed.data=bed_id;medicine_placed_pub_.publish(placed);}
     if(ok) ok=sendServoTriggerCommand(0x01,old_servo_close_angle_,0)&&waitInterruptibly(old_servo_return_duration_s_);
   }else if(ok&&box_id==3){
     // PD14 now uses absolute angles, just like the PB0 positional servo.
     ROS_INFO("[arm_and_gripper] 2/4 open box3 (PD14), then 3/4 close");
     ok=sendServoTriggerCommand(0x02,0,new_servo_open_angle_)&&waitInterruptibly(new_servo_move_duration_s_+servo_hold_duration_s_);
+    // Timed release point, not physical medicine-arrival feedback. No latch.
+    if(ok) {std_msgs::Int8 placed;placed.data=bed_id;medicine_placed_pub_.publish(placed);}
     if(ok) ok=sendServoTriggerCommand(0x02,0,new_servo_close_angle_)&&waitInterruptibly(new_servo_return_duration_s_);
   }else ok=false;
   if(ok&&reset_arm) {

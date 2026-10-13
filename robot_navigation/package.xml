@@ -69,4 +69,6 @@
   <test_depend>fine_tuning</test_depend>
   <test_depend>motion_planner</test_depend>
   <test_depend>rosgraph_msgs</test_depend>
+  <exec_depend>espeak-ng</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
 </package>

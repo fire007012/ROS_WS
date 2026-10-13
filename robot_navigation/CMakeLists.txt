@@ -259,6 +259,8 @@ catkin_install_python(PROGRAMS
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
   scripts/button_autostart.py
+  scripts/scan_sequence_node.py
+  scripts/adaptive_scan_camera_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -319,6 +321,9 @@ endif()
 
 # ── Python 脚本 ─────────────────────────────────────────────
 catkin_install_python(PROGRAMS
+  scripts/speech_service_node.py
+  scripts/bedside_session_node.py
+  scripts/arm_demo_once.py
   scripts/test_camera.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -351,3 +356,11 @@ if(CATKIN_ENABLE_TESTING)
   add_test(NAME audio_video_launch_defaults
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_audio_video_launch.py)
 endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME scan_camera_five_second_policy
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_scan_camera_policy.py)
+endif()
+
+install(FILES scripts/scan_camera_policy.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
