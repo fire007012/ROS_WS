@@ -7,11 +7,12 @@ import unittest
 
 import rospy
 import rostest
+from std_srvs.srv import Trigger, TriggerResponse
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Range
 from rosgraph_msgs.msg import Clock
-from std_msgs.msg import Bool, Float32, Float32MultiArray, String, UInt32
+from std_msgs.msg import Bool, Int8, Float32, Float32MultiArray, String, UInt32
 from robot_navigation.msg import QrResult
 from robot_navigation.srv import OpenMedicineBox, OpenMedicineBoxResponse, Speak, SpeakResponse
 from arm_and_gripper.srv import ArmPlaceMedicine, ArmPlaceMedicineResponse
@@ -38,13 +39,16 @@ class ClosedLoop(unittest.TestCase):
                        for name in ['front', 'left', 'right']]
         self.qr = rospy.Publisher('/qr_result', QrResult, queue_size=1)
         self.start = rospy.Publisher('/start_signal/physical', UInt32, queue_size=1)
+        self.placed_event = rospy.Publisher('/medicine/placed', Int8, queue_size=1)
         subs = [rospy.Subscriber('/cmd_vel_muxed', Twist, self.on_velocity),
                 rospy.Subscriber('/mission_finished', Bool, self.on_finished),
                 rospy.Subscriber('/emergency_stop', Bool, self.on_estop),
                 rospy.Subscriber('/robot_display', String, self.on_display)]
         services = [rospy.Service('/open_medicine_box', OpenMedicineBox, self.open_box),
                     rospy.Service('/arm_place_medicine', ArmPlaceMedicine, self.place),
-                    rospy.Service('/speak', Speak, lambda req: SpeakResponse(True, 'mock'))]
+                    rospy.Service('/speak', Speak, lambda req: SpeakResponse(True, 'mock')),
+                    rospy.Service('/bedside/complete', Trigger,
+                                  lambda req: TriggerResponse(True, 'simulated bedside completion'))]
         thread = threading.Thread(target=self.simulate, daemon=True)
         thread.start()
         try:
@@ -139,7 +143,8 @@ class ClosedLoop(unittest.TestCase):
     def place(self, req):
         with self.guard:
             self.placed.append((req.bed_id, req.box_id))
-        return ArmPlaceMedicineResponse(True, 'mock')
+        self.placed_event.publish(Int8(req.bed_id))
+        return ArmPlaceMedicineResponse(True, 'mock release followed by arm return')
 
     def wait(self, predicate, timeout):
         deadline = time.monotonic()+timeout

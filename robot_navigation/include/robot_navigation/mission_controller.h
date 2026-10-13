@@ -60,6 +60,7 @@ class MissionController {
     GOTO_NURSE,
     SCAN_QR,
     GOTO_BED_A,
+    ARM_UPPER_ALIGN_A,
     POSITION_IN_CIRCLE_A,
     SCAN_BARCODE_A,
     OPEN_BOX_A,
@@ -67,6 +68,7 @@ class MissionController {
     VOICE_A,
     BEDSIDE_A,
     GOTO_BED_B,
+    ARM_UPPER_ALIGN_B,
     POSITION_IN_CIRCLE_B,
     SCAN_BARCODE_B,
     OPEN_BOX_B,
@@ -213,6 +215,11 @@ class MissionController {
   ros::Subscriber audio_active_sub_;
 
   // 发布
+  ros::Publisher mission_state_pub_;
+  ros::Subscriber alignment_done_sub_;
+  bool enable_arm_upper_alignment_ = false;
+  bool alignment_done_ = false;
+  bool alignment_ready_for_done_ = false;
   ros::Publisher mission_finished_pub_;
   ros::Publisher mission_timeout_pub_;
   ros::Publisher stop_all_pub_;
@@ -244,6 +251,11 @@ class MissionController {
   std::future<CallResult> service_future_, speech_future_;
   bool speech_started_ = false;
   uint64_t speech_generation_ = 0;
+  bool awaiting_medicine_placed_ = false;
+  int8_t expected_placed_bed_ = 0;
+  uint64_t medicine_placed_generation_ = 0;
+  ros::SteadyTime medicine_placed_deadline_;
+  double medicine_placed_event_timeout_sec_ = 1.0;
   std::atomic<bool> mission_completed_;
 
   // ── 状态动作保护（防止重复执行入口动作） ──

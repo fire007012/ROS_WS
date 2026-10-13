@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <linux/can.h>
 #include <ros/ros.h>
@@ -9,100 +10,12 @@
 #include <diagnostic_msgs/DiagnosticArray.h>
 
 #include "robot_navigation/can_utils.h"
+#include "robot_navigation/upper_alignment.h"
+#include <std_msgs/Bool.h>
+#include <std_msgs/String.h>
+#include <std_msgs/Empty.h>
 
 namespace robot_navigation {
-
-// STM32 range-frame status bits.  Keep these tied to the firmware protocol,
-// rather than inferring validity from the distance sentinel alone.
-constexpr uint8_t kStm32RangeValid = 0x01;
-constexpr uint8_t kStm32RangeOutOfRange = 0x02;
-constexpr uint8_t kStm32RangeTimeout = 0x04;
-constexpr uint8_t kStm32RangeI2cError = 0x08;
-constexpr uint8_t kStm32RangeLowQuality = 0x10;
-constexpr uint8_t kStm32RangeEmergency = 0x20;
-
-struct Vl53l1xSample {
-  uint8_t sensor_id = 0;
-  uint16_t distance_mm = 0xFFFF;
-  uint16_t sigma_mm = 0xFFFF;
-  uint8_t status = 0;
-  uint8_t sequence = 0;
-};
-
-struct Vl53l1xDiagnosticFrame {
-  uint8_t sensor_id = 0xFF;
-  uint8_t error_code = 0;
-  uint8_t consecutive_errors = 0;
-  uint16_t last_valid_distance_mm = 0xFFFF;
-  uint8_t last_status = 0;
-  uint8_t sequence = 0;
-};
-
-inline bool stm32RangeSampleValid(const Vl53l1xSample& sample) {
-  const uint8_t failure_flags = kStm32RangeOutOfRange | kStm32RangeTimeout |
-                                kStm32RangeI2cError;
-  return (sample.status & kStm32RangeValid) != 0 &&
-         (sample.status & failure_flags) == 0 && sample.distance_mm != 0xFFFF;
-}
-
-inline bool stm32RangeStatusHasFailure(uint8_t status) {
-  return (status & (kStm32RangeOutOfRange | kStm32RangeTimeout |
-                    kStm32RangeI2cError)) != 0;
-}
-
-inline uint8_t stm32RangeRadiationType(uint8_t sensor_id) {
-  return sensor_id == 0 ? sensor_msgs::Range::ULTRASOUND : sensor_msgs::Range::INFRARED;
-}
-
-inline const char* stm32RangeDeviceName(uint8_t sensor_id) {
-  switch (sensor_id) {
-    case 0: return "HC-SR04 ultrasonic";
-    case 1: return "VL53L1X ToF left";
-    case 2: return "VL53L1X ToF right";
-    default: return "unknown range sensor";
-  }
-}
-
-inline uint8_t vl53l1xSequenceDelta(uint8_t previous, uint8_t current) {
-  return static_cast<uint8_t>(current - previous);
-}
-
-inline bool vl53l1xSampleFresh(bool has_valid, const ros::Time& now,
-                               const ros::Time& last_valid, int timeout_ms) {
-  return has_valid && timeout_ms > 0 && (now - last_valid).toSec() * 1000.0 <= timeout_ms;
-}
-
-// Pure protocol helpers are kept separate so they can be tested without CAN hardware.
-inline bool parseVl53l1xSample(const struct can_frame& frame, Vl53l1xSample& sample) {
-  if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) != 0 ||
-      frame.can_id != 0x110 || frame.can_dlc != 8 || frame.data[0] != 0x01 || frame.data[1] > 2) {
-    return false;
-  }
-  sample.sensor_id = frame.data[1];
-  sample.distance_mm = static_cast<uint16_t>(frame.data[2]) |
-                       (static_cast<uint16_t>(frame.data[3]) << 8);
-  sample.sigma_mm = static_cast<uint16_t>(frame.data[4]) |
-                    (static_cast<uint16_t>(frame.data[5]) << 8);
-  sample.status = frame.data[6];
-  sample.sequence = frame.data[7];
-  return true;
-}
-
-inline bool parseVl53l1xDiagnostic(const struct can_frame& frame, Vl53l1xDiagnosticFrame& diagnostic) {
-  if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) != 0 ||
-      frame.can_id != 0x111 || frame.can_dlc != 8 || frame.data[0] != 0x01 ||
-      (frame.data[1] != 0xFF && frame.data[1] > 2)) {
-    return false;
-  }
-  diagnostic.sensor_id = frame.data[1];
-  diagnostic.error_code = frame.data[2];
-  diagnostic.consecutive_errors = frame.data[3];
-  diagnostic.last_valid_distance_mm = static_cast<uint16_t>(frame.data[4]) |
-                                      (static_cast<uint16_t>(frame.data[5]) << 8);
-  diagnostic.last_status = frame.data[6];
-  diagnostic.sequence = frame.data[7];
-  return true;
-}
 
 class Vl53l1xCanBridge {
  public:
@@ -112,6 +25,9 @@ class Vl53l1xCanBridge {
   bool init();
 
  private:
+  friend class Vl53l1xBridgeTestPeer;
+  bool configure();
+  void handleFrame(const struct can_frame& frame);
   struct SensorState {
     std::string name;
     std::string range_topic;
@@ -120,12 +36,13 @@ class Vl53l1xCanBridge {
     std::string device_name;
     uint8_t radiation_type = sensor_msgs::Range::INFRARED;
     double min_range = 0.05;
-    double max_range = 4.0;
+    double max_range = 3.0;
     double field_of_view = 0.47;
     ros::Publisher range_pub;
     ros::Publisher distance_pub;
     ros::Time last_receive;
-    ros::Time last_valid;
+    ros::SteadyTime last_valid;
+    ros::SteadyTime last_receive_steady;
     uint16_t distance_mm = 0xFFFF;
     uint16_t sigma_mm = 0xFFFF;
     uint8_t status = 0;
@@ -145,8 +62,8 @@ class Vl53l1xCanBridge {
     uint64_t consecutive_failures = 0;
   };
 
-  void pollTimerCallback(const ros::TimerEvent& event);
-  void diagnosticsTimerCallback(const ros::TimerEvent& event);
+  void pollTimerCallback(const ros::SteadyTimerEvent& event);
+  void diagnosticsTimerCallback(const ros::SteadyTimerEvent& event);
   void handleSample(const Vl53l1xSample& sample, const ros::Time& stamp);
   void handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic, const ros::Time& stamp);
   void publishDiagnostics(const ros::Time& now);
@@ -160,13 +77,27 @@ class Vl53l1xCanBridge {
                         double default_max_range, uint8_t radiation_type,
                         const std::string& device_name);
 
+  void publishRange(SensorState& state, const ros::Time& stamp, bool valid);
+  void publishAlignment();
+  void stageCallback(const std_msgs::String::ConstPtr& msg);
+  void cancelCallback(const std_msgs::Empty::ConstPtr& msg);
+  void enabledCallback(const std_msgs::Bool::ConstPtr& msg);
+  void estopCallback(const std_msgs::Bool::ConstPtr& msg);
+  UpperAlignment alignment_;
+  bool alignment_enabled_ = false;
+  bool actions_enabled_ = false;
+  bool estop_latched_ = false;
+  std::string stage_;
+  std::vector<std::string> alignment_stages_;
+  ros::Subscriber stage_sub_, cancel_sub_, enabled_sub_, estop_sub_, reset_sub_;
+  ros::Publisher alignment_cmd_pub_, alignment_mode_pub_, alignment_done_pub_, emergency_pub_;
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
   CanInterface can_;
-  ros::Timer poll_timer_;
-  ros::Timer diagnostics_timer_;
+  ros::SteadyTimer poll_timer_;
+  ros::SteadyTimer diagnostics_timer_;
   ros::Publisher diagnostics_pub_;
-  SensorState sensors_[3];
+  SensorState sensors_[5];
   uint32_t distance_can_id_ = 0x110;
   uint32_t diagnostic_can_id_ = 0x111;
   std::string can_interface_ = "can0";

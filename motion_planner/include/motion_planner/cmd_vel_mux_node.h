@@ -21,13 +21,17 @@ class CmdVelMuxNode {
   void teleopCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void externalCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void safetyCallback(const geometry_msgs::Twist::ConstPtr& msg);
+  void alignmentCallback(const geometry_msgs::Twist::ConstPtr& msg);
+  void alignmentModeCallback(const std_msgs::Bool::ConstPtr& msg);
+  void missionCancelCallback(const std_msgs::Empty::ConstPtr& msg);
+  void actionsEnabledCallback(const std_msgs::Bool::ConstPtr& msg);
   void estopCallback(const std_msgs::Bool::ConstPtr& msg);
   void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
   void chassisLockCallback(const std_msgs::Bool::ConstPtr& msg);
   void physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg);
-  void timerCallback(const ros::TimerEvent& event);
+  void timerCallback(const ros::SteadyTimerEvent& event);
   void updateSourceCommand(const std::string& source_name, const geometry_msgs::Twist& msg);
-  bool sourceActive(const std::string& source_name, const ros::Time& now) const;
+  bool sourceActive(const std::string& source_name, const ros::SteadyTime& now) const;
   geometry_msgs::Twist clampTwist(const geometry_msgs::Twist& input, double dt,
                                   bool bypass_acceleration_limit = false) const;
   void publishSelected(const geometry_msgs::Twist& twist, const std::string& source_name);
@@ -36,7 +40,7 @@ class CmdVelMuxNode {
  private:
   struct SourceState {
     geometry_msgs::Twist twist;
-    ros::Time stamp;
+    ros::SteadyTime stamp;
     bool has_msg;
   };
 
@@ -48,6 +52,11 @@ class CmdVelMuxNode {
   ros::Subscriber direct_cmd_sub_;  // Backward-compatible direct /cmd_vel teleop input.
   ros::Subscriber external_sub_;
   ros::Subscriber safety_sub_;
+  ros::Subscriber alignment_sub_, alignment_mode_sub_;
+  bool alignment_active_ = false;
+  bool mission_cancelled_ = false;
+  double alignment_cmd_timeout_sec_ = 0.2;
+  ros::Subscriber mission_cancel_sub_, actions_enabled_sub_;
   ros::Subscriber estop_sub_;
   ros::Subscriber emergency_reset_sub_;
   ros::Subscriber chassis_lock_sub_;
@@ -56,7 +65,7 @@ class CmdVelMuxNode {
   ros::Publisher requested_vel_pub_;
   ros::Publisher selected_source_pub_;
   ros::Publisher estop_state_pub_;
-  ros::Timer timer_;
+  ros::SteadyTimer timer_;
 
   std::map<std::string, SourceState> sources_;
   geometry_msgs::Twist last_output_;

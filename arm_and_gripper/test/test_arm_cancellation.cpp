@@ -159,6 +159,54 @@ TEST(ArmSequence, InvalidAnglesFailInitialization) {
   EXPECT_FALSE(controller.init());pnh.setParam("arm_place_angle_1",15.0);
 }
 
+TEST(ArmSequence, PublishesBedReleaseBeforeHomeReturnForBothBoxes) {
+  ros::NodeHandle nh, pnh("~");
+  pnh.setParam("arm_move_timeout_s", 0.01);
+  pnh.setParam("servo_hold_duration_s", 0.01);
+  pnh.setParam("old_servo_move_duration_s", 0.01);
+  pnh.setParam("new_servo_move_duration_s", 0.01);
+  pnh.setParam("old_servo_return_duration_s", 0.4);
+  pnh.setParam("new_servo_return_duration_s", 0.4);
+  arm_and_gripper::ArmAndGripperController controller(nh, pnh,
+      [](uint32_t, const uint8_t*, uint8_t, bool) { return true; },
+      [](uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, double) { return true; });
+  ASSERT_TRUE(controller.init());
+  std::mutex mutex;
+  std::condition_variable released;
+  std::vector<int> beds;
+  auto subscriber = nh.subscribe<std_msgs::Int8>("/medicine/placed", 10,
+      [&](const std_msgs::Int8::ConstPtr& msg) {
+        { std::lock_guard<std::mutex> lock(mutex); beds.push_back(msg->data); }
+        released.notify_all();
+      });
+  ros::AsyncSpinner spinner(3); spinner.start();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (subscriber.getNumPublishers() == 0 && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  ASSERT_GT(subscriber.getNumPublishers(), 0u);
+  auto client = nh.serviceClient<arm_and_gripper::ArmPlaceMedicine>("/arm_place_medicine");
+  size_t expected_count = 0;
+  for (int bed : {1, 3}) {
+    auto call = std::async(std::launch::async, [&client, bed] {
+      arm_and_gripper::ArmPlaceMedicine request;
+      request.request.bed_id = bed; request.request.box_id = bed;
+      return client.call(request) && request.response.success;
+    });
+    ++expected_count;
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      ASSERT_TRUE(released.wait_for(lock, std::chrono::seconds(2), [&] { return beds.size() >= expected_count; }));
+      EXPECT_EQ(beds.back(), bed);
+    }
+    // Transport/ACKs are simulated; exercise the real release-event publisher.
+    EXPECT_EQ(call.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    ASSERT_EQ(call.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(call.get());
+    { std::lock_guard<std::mutex> lock(mutex); EXPECT_EQ(beds.size(), expected_count); }
+  }
+  spinner.stop();
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   ros::init(argc, argv, "test_arm_cancellation");

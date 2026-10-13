@@ -20,13 +20,13 @@ class DistanceSafetyNode {
   void rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr& msg);
   void requestedCallback(const geometry_msgs::Twist::ConstPtr& msg);
   void measuredCallback(const geometry_msgs::Twist::ConstPtr& msg);
-  void safetyTimerCallback(const ros::TimerEvent&);
+  void safetyTimerCallback(const ros::SteadyTimerEvent&);
   void publishState(const std::string& state);
   ros::NodeHandle nh_, pnh_;
   std::array<ros::Subscriber, 4> range_subs_;
   ros::Subscriber requested_sub_, measured_sub_;
   ros::Publisher cmd_pub_, state_pub_;
-  ros::Timer timer_;
+  ros::SteadyTimer timer_;
   std::array<Sample, 4> samples_;
   geometry_msgs::Twist requested_, measured_;
   ros::SteadyTime requested_time_, measured_time_;

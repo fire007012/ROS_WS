@@ -1,6 +1,4 @@
-# STM32 range-sensor CAN bridge. sensor_id 0 is front HC-SR04 ultrasound;
-# sensor_id 1 and 2 are the left/right VL53L1X ToF modules. Protocol IDs are
-# fixed by the STM32 firmware, but remain configurable for a CAN gateway.
+# Five VL53L1X sensors; CAN1 must already be configured for 500000 bit/s.
 can_interface: can0
 distance_can_id: 0x110
 diagnostic_can_id: 0x111
@@ -8,12 +6,12 @@ poll_rate_hz: 200
 sensor_timeout_ms: 200
 
 front:
-  name: front_hc_sr04
+  name: front_vl53l1x
   range_topic: /front/range
   distance_topic: /vl53l1x_distance
   frame_id: front_range_link
-  min_range: 0.02
-  max_range: 4.0
+  min_range: 0.05
+  max_range: 3.0
   field_of_view: 0.47
 left:
   name: left_vl53l1x
@@ -31,3 +29,33 @@ right:
   min_range: 0.05
   max_range: 3.0
   field_of_view: 0.47
+
+arm_upper_left:
+  name: arm_upper_left_vl53l1x
+  range_topic: /arm_upper_left/range
+  distance_topic: /arm_upper_left/distance_mm
+  frame_id: arm_upper_left_range_link
+  min_range: 0.05
+  max_range: 3.0
+  field_of_view: 0.47
+
+arm_upper_right:
+  name: arm_upper_right_vl53l1x
+  range_topic: /arm_upper_right/range
+  distance_topic: /arm_upper_right/distance_mm
+  frame_id: arm_upper_right_range_link
+  min_range: 0.05
+  max_range: 3.0
+  field_of_view: 0.47
+
+# Only enabled when both this switch and mission/actions_enabled permit it,
+# and the mission enters an explicitly named stage. No movement on startup.
+upper_alignment:
+  enabled: false
+  stages: [ARM_UPPER_ALIGN_A, ARM_UPPER_ALIGN_B]
+  start_difference_mm: 50.0
+  stop_difference_mm: 20.0
+  speed_mps: 0.05
+  data_timeout_sec: 0.2
+  max_skew_sec: 0.1
+  settled_sec: 0.3

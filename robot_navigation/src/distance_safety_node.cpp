@@ -37,7 +37,7 @@ bool DistanceSafetyNode::init() {
   measured_sub_ = nh_.subscribe("/base_velocity", 1, &DistanceSafetyNode::measuredCallback, this);
   cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_safety", 1);
   state_pub_ = nh_.advertise<std_msgs::String>("/distance_safety/state", 1, true);
-  timer_ = nh_.createTimer(ros::Duration(1.0 / rate), &DistanceSafetyNode::safetyTimerCallback, this);
+  timer_ = nh_.createSteadyTimer(ros::WallDuration(1.0 / rate), &DistanceSafetyNode::safetyTimerCallback, this);
   publishState("CLEAR");
   ROS_INFO("[distance_safety] directional Range braking; reverse requires /rear/range");
   return true;
@@ -71,7 +71,7 @@ void DistanceSafetyNode::publishState(const std::string& state) {
   msg.data = state;
   state_pub_.publish(msg);
 }
-void DistanceSafetyNode::safetyTimerCallback(const ros::TimerEvent&) {
+void DistanceSafetyNode::safetyTimerCallback(const ros::SteadyTimerEvent&) {
   const auto now = ros::SteadyTime::now();
   geometry_msgs::Twist output;
   auto stop = [this, &output](const std::string& reason) {

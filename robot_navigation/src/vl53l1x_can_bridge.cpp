@@ -8,6 +8,8 @@
 #include <diagnostic_msgs/DiagnosticStatus.h>
 #include <diagnostic_msgs/KeyValue.h>
 #include <std_msgs/Float32.h>
+#include <geometry_msgs/Twist.h>
+#include <limits>
 
 namespace robot_navigation {
 namespace {
@@ -31,7 +33,7 @@ std::string rangeStatusText(uint8_t status) {
 
 Vl53l1xCanBridge::Vl53l1xCanBridge(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     : nh_(nh), pnh_(pnh) {
-  sensors_[0].name = "front_hc_sr04";
+  sensors_[0].name = "front_vl53l1x";
   sensors_[1].name = "left_vl53l1x";
   sensors_[2].name = "right_vl53l1x";
 }
@@ -39,6 +41,8 @@ Vl53l1xCanBridge::Vl53l1xCanBridge(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 Vl53l1xCanBridge::~Vl53l1xCanBridge() {
   poll_timer_.stop();
   diagnostics_timer_.stop();
+  alignment_.exit();
+  publishAlignment();
   can_.close();
 }
 
@@ -64,7 +68,7 @@ void Vl53l1xCanBridge::loadSensorParams(SensorState& state, const std::string& p
   state.field_of_view = std::max(0.001, state.field_of_view);
 }
 
-bool Vl53l1xCanBridge::init() {
+bool Vl53l1xCanBridge::configure() {
   pnh_.param("can_interface", can_interface_, std::string("can0"));
   int distance_can_id = static_cast<int>(distance_can_id_);
   int diagnostic_can_id = static_cast<int>(diagnostic_can_id_);
@@ -79,8 +83,8 @@ bool Vl53l1xCanBridge::init() {
   poll_rate_hz_ = std::max(10, poll_rate_hz_);
   sensor_timeout_ms_ = std::max(1, sensor_timeout_ms_);
 
-  loadSensorParams(sensors_[0], "front", "front_hc_sr04", "/front/range", "/vl53l1x_distance",
-                   "front_range_link", 0.02, 4.0, stm32RangeRadiationType(0),
+  loadSensorParams(sensors_[0], "front", "front_vl53l1x", "/front/range", "/vl53l1x_distance",
+                   "front_range_link", 0.05, 3.0, stm32RangeRadiationType(0),
                    stm32RangeDeviceName(0));
   loadSensorParams(sensors_[1], "left", "left_vl53l1x", "/left/range", "/vl53l1x_distance_left",
                    "left_range_link", 0.05, 3.0, stm32RangeRadiationType(1),
@@ -88,18 +92,55 @@ bool Vl53l1xCanBridge::init() {
   loadSensorParams(sensors_[2], "right", "right_vl53l1x", "/right/range", "/vl53l1x_distance_right",
                    "right_range_link", 0.05, 3.0, stm32RangeRadiationType(2),
                    stm32RangeDeviceName(2));
+  loadSensorParams(sensors_[3], "arm_upper_left", "arm_upper_left_vl53l1x",
+                   "/arm_upper_left/range", "/arm_upper_left/distance_mm",
+                   "arm_upper_left_range_link", 0.05, 3.0, stm32RangeRadiationType(3),
+                   stm32RangeDeviceName(3));
+  loadSensorParams(sensors_[4], "arm_upper_right", "arm_upper_right_vl53l1x",
+                   "/arm_upper_right/range", "/arm_upper_right/distance_mm",
+                   "arm_upper_right_range_link", 0.05, 3.0, stm32RangeRadiationType(4),
+                   stm32RangeDeviceName(4));
+  pnh_.param("upper_alignment/enabled", alignment_enabled_, false);
+  pnh_.param("upper_alignment/start_difference_mm", alignment_.start_mm, 50.0);
+  pnh_.param("upper_alignment/stop_difference_mm", alignment_.stop_mm, 20.0);
+  pnh_.param("upper_alignment/speed_mps", alignment_.speed_mps, 0.05);
+  pnh_.param("upper_alignment/data_timeout_sec", alignment_.timeout_sec, 0.2);
+  pnh_.param("upper_alignment/max_skew_sec", alignment_.skew_sec, 0.1);
+  pnh_.param("upper_alignment/settled_sec", alignment_.settled_sec, 0.3);
+  pnh_.param("upper_alignment/stages", alignment_stages_,
+             std::vector<std::string>{"ARM_UPPER_ALIGN_A", "ARM_UPPER_ALIGN_B"});
+  if (!alignment_.parametersValid() || (alignment_enabled_ && alignment_stages_.empty())) {
+    ROS_ERROR("[stm32_range_bridge] invalid upper_alignment parameters");
+    return false;
+  }
+  alignment_cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_arm_alignment", 1);
+  alignment_mode_pub_ = nh_.advertise<std_msgs::Bool>("/arm_upper_alignment/active", 1, true);
+  alignment_done_pub_ = nh_.advertise<std_msgs::Bool>("/arm_upper_alignment/done", 1);
+  emergency_pub_ = nh_.advertise<std_msgs::Bool>("/emergency_stop", 1);
+  stage_sub_ = nh_.subscribe("/mission/state", 1, &Vl53l1xCanBridge::stageCallback, this);
+  cancel_sub_ = nh_.subscribe("/mission/cancel", 1, &Vl53l1xCanBridge::cancelCallback, this);
+  enabled_sub_ = nh_.subscribe("/mission/actions_enabled", 1, &Vl53l1xCanBridge::enabledCallback, this);
+  estop_sub_ = nh_.subscribe("/emergency_stop", 1, &Vl53l1xCanBridge::estopCallback, this);
+  reset_sub_ = nh_.subscribe<std_msgs::Bool>("/emergency_stop/reset", 1,
+      [this](const std_msgs::Bool::ConstPtr& msg) { if (msg->data) estop_latched_ = false; });
+  publishAlignment();
   for (auto& sensor : sensors_) {
     sensor.range_pub = nh_.advertise<sensor_msgs::Range>(sensor.range_topic, 10);
     sensor.distance_pub = nh_.advertise<std_msgs::Float32>(sensor.distance_topic, 10);
   }
   diagnostics_pub_ = nh_.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 1);
+  return true;
+}
+
+bool Vl53l1xCanBridge::init() {
+  if (!configure()) return false;
   if (!can_.open(can_interface_)) {
     ROS_ERROR("[stm32_range_bridge] unable to open SocketCAN interface %s", can_interface_.c_str());
     return false;
   }
-  poll_timer_ = nh_.createTimer(ros::Duration(1.0 / poll_rate_hz_),
+  poll_timer_ = nh_.createSteadyTimer(ros::WallDuration(1.0 / poll_rate_hz_),
                                 &Vl53l1xCanBridge::pollTimerCallback, this);
-  diagnostics_timer_ = nh_.createTimer(ros::Duration(0.1),
+  diagnostics_timer_ = nh_.createSteadyTimer(ros::WallDuration(0.1),
                                         &Vl53l1xCanBridge::diagnosticsTimerCallback, this);
   ROS_INFO("[stm32_range_bridge] listening on %s (distance=0x%03X, diagnostics=0x%03X)",
            can_interface_.c_str(), distance_can_id_, diagnostic_can_id_);
@@ -141,8 +182,24 @@ bool Vl53l1xCanBridge::updateDiagnosticSequence(SensorState& state, uint8_t sequ
 void Vl53l1xCanBridge::handleSample(const Vl53l1xSample& sample, const ros::Time& stamp) {
   SensorState& state = sensors_[sample.sensor_id];
   ++state.received;
-  if (!updateSequence(state, sample.sequence)) return;
+  const auto received = ros::SteadyTime::now();
+  alignment_.update(sample, received.toSec());
+  if (sample.status & kStm32RangeEmergency) {
+    estop_latched_ = true;
+    actions_enabled_ = false;
+    alignment_.exit();
+    std_msgs::Bool emergency; emergency.data = true; emergency_pub_.publish(emergency);
+  }
+  if (!updateSequence(state, sample.sequence)) {
+    if (!stm32RangeSampleValid(sample)) {
+      state.has_valid = false;
+      publishRange(state, stamp, false);
+    }
+    publishAlignment();
+    return;
+  }
   state.last_receive = stamp;
+  state.last_receive_steady = received;
   state.status = sample.status;
   state.sigma_mm = sample.sigma_mm;
   state.distance_mm = sample.distance_mm;
@@ -154,7 +211,11 @@ void Vl53l1xCanBridge::handleSample(const Vl53l1xSample& sample, const ros::Time
                        state.device_name.c_str(), static_cast<unsigned int>(sample.distance_mm),
                        rangeStatusText(sample.status).c_str());
   }
+  if (!valid) alignment_.invalidate(sample.sensor_id);
+  state.has_valid = valid;
   if (!valid) {
+    publishRange(state, stamp, false);
+    publishAlignment();
     ++state.invalid_samples;
     ++state.consecutive_failures;
     ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] invalid %s sample: %u mm (status=%s)",
@@ -163,9 +224,18 @@ void Vl53l1xCanBridge::handleSample(const Vl53l1xSample& sample, const ros::Time
     return;
   }
   state.has_valid = true;
-  state.last_valid = stamp;
+  state.last_valid = received;
   state.consecutive_failures = 0;
   state.diagnostic_error_code = 0;
+  publishRange(state, stamp, true);
+  publishAlignment();
+  if (sample.status & kStm32RangeLowQuality) {
+    ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] %s sample has LOW_QUALITY status",
+                      state.device_name.c_str());
+  }
+}
+
+void Vl53l1xCanBridge::publishRange(SensorState& state, const ros::Time& stamp, bool valid) {
   sensor_msgs::Range range;
   range.header.stamp = stamp;
   range.header.frame_id = state.frame_id;
@@ -173,15 +243,67 @@ void Vl53l1xCanBridge::handleSample(const Vl53l1xSample& sample, const ros::Time
   range.field_of_view = state.field_of_view;
   range.min_range = state.min_range;
   range.max_range = state.max_range;
-  range.range = sample.distance_mm / 1000.0;
+  range.range = valid ? state.distance_mm / 1000.0 : std::numeric_limits<float>::quiet_NaN();
   state.range_pub.publish(range);
+  // Preserve the three legacy Float32 topics in millimetres, including invalidation.
   std_msgs::Float32 distance;
-  distance.data = static_cast<float>(sample.distance_mm);
+  distance.data = valid ? state.distance_mm : std::numeric_limits<float>::quiet_NaN();
   state.distance_pub.publish(distance);
-  if (sample.status & kStm32RangeLowQuality) {
-    ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] %s sample has LOW_QUALITY status",
-                      state.device_name.c_str());
+}
+
+void Vl53l1xCanBridge::publishAlignment() {
+  if (!alignment_mode_pub_) return;
+  const double now = ros::SteadyTime::now().toSec();
+  // Mirror the firmware's existing local stop scope even for a lateral
+  // request. Upper sensors are comparison inputs and never enter this check.
+  bool local_obstacle = false;
+  for (size_t id = 0; id < 3; ++id)
+    local_obstacle = local_obstacle || (sensors_[id].has_valid && sensors_[id].distance_mm <= 300);
+  geometry_msgs::Twist command;
+  if (local_obstacle) alignment_.stopMotion();
+  else command.linear.y = alignment_.velocity(now);
+  alignment_cmd_pub_.publish(command);
+  std_msgs::Bool active; active.data = alignment_.active(); alignment_mode_pub_.publish(active);
+  std_msgs::Bool done; done.data = !local_obstacle && alignment_.done(now); alignment_done_pub_.publish(done);
+}
+
+void Vl53l1xCanBridge::stageCallback(const std_msgs::String::ConstPtr& msg) {
+  if (stage_ == msg->data) return;
+  stage_ = msg->data;
+  alignment_.exit();
+  if (alignment_enabled_ && actions_enabled_ && !estop_latched_ &&
+      std::find(alignment_stages_.begin(), alignment_stages_.end(), stage_) != alignment_stages_.end()) {
+    // Consume buffered frames before setting the entry fence. Their sequences
+    // are retained, but neither side's preceding-stage value can drive motion.
+    struct can_frame buffered;
+    int drained = 0;
+    while (drained < 1000 && can_.receiveFrame(buffered, 0)) {
+      handleFrame(buffered);
+      ++drained;
+    }
+    if (drained == 1000) {
+      ROS_ERROR("[stm32_range_bridge] excessive CAN backlog; alignment entry refused");
+    } else if (actions_enabled_ && !estop_latched_) {
+      alignment_.enter(ros::SteadyTime::now().toSec());
+    }
   }
+  publishAlignment();
+}
+void Vl53l1xCanBridge::cancelCallback(const std_msgs::Empty::ConstPtr&) {
+  actions_enabled_ = false;
+  alignment_.exit();
+  publishAlignment();
+}
+void Vl53l1xCanBridge::enabledCallback(const std_msgs::Bool::ConstPtr& msg) {
+  actions_enabled_ = msg->data;
+  if (!actions_enabled_) { alignment_.exit(); publishAlignment(); }
+}
+void Vl53l1xCanBridge::estopCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (!msg->data) return;
+  estop_latched_ = true;
+  actions_enabled_ = false;
+  alignment_.exit();
+  publishAlignment();
 }
 
 void Vl53l1xCanBridge::handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic, const ros::Time& stamp) {
@@ -197,7 +319,20 @@ void Vl53l1xCanBridge::handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic
   state.diagnostic_error_code = diagnostic.error_code;
   state.status = diagnostic.last_status;
   state.distance_mm = diagnostic.last_valid_distance_mm;
-  (void)stamp;
+  if (diagnostic.error_code != 0 || diagnostic.consecutive_errors != 0 ||
+      stm32RangeStatusHasFailure(diagnostic.last_status) ||
+      !(diagnostic.last_status & kStm32RangeValid)) {
+    state.has_valid = false;
+    alignment_.invalidate(diagnostic.sensor_id);
+    publishRange(state, stamp, false);
+  }
+  if (diagnostic.last_status & kStm32RangeEmergency) {
+    estop_latched_ = true;
+    actions_enabled_ = false;
+    alignment_.exit();
+    std_msgs::Bool emergency; emergency.data = true; emergency_pub_.publish(emergency);
+  }
+  publishAlignment();
   if (diagnostic.error_code != 0 || diagnostic.consecutive_errors != 0) {
     ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] %s diagnostic error=%u consecutive=%u",
                       state.device_name.c_str(), diagnostic.error_code, diagnostic.consecutive_errors);
@@ -208,38 +343,63 @@ void Vl53l1xCanBridge::handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic
   }
 }
 
-void Vl53l1xCanBridge::pollTimerCallback(const ros::TimerEvent&) {
+void Vl53l1xCanBridge::handleFrame(const struct can_frame& frame) {
+  const ros::Time stamp = ros::Time::now();
+  Vl53l1xSample sample;
+  Vl53l1xDiagnosticFrame diagnostic;
+  if ((frame.can_id & CAN_SFF_MASK) == distance_can_id_) {
+    struct can_frame protocol_frame = frame;
+    protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x110;
+    if (!parseVl53l1xSample(protocol_frame, sample)) {
+      ++invalid_frame_count_;
+      if (frame.can_dlc >= 2 && frame.data[1] < 5) ++sensors_[frame.data[1]].invalid_frames;
+      if (frame.can_dlc >= 2 && frame.data[1] < 5) {
+        auto& state = sensors_[frame.data[1]];
+        state.has_valid = false;
+        alignment_.invalidate(frame.data[1]);
+        publishRange(state, stamp, false);
+      }
+      ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] discarded malformed distance CAN frame");
+    } else {
+      handleSample(sample, stamp);
+    }
+  } else if ((frame.can_id & CAN_SFF_MASK) == diagnostic_can_id_) {
+    struct can_frame protocol_frame = frame;
+    protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x111;
+    if (!parseVl53l1xDiagnostic(protocol_frame, diagnostic)) {
+      ++invalid_frame_count_;
+      if (frame.can_dlc >= 2 && frame.data[1] < 5) {
+        auto& state = sensors_[frame.data[1]];
+        state.has_valid = false;
+        alignment_.invalidate(frame.data[1]);
+        publishRange(state, stamp, false);
+      }
+    } else {
+      handleDiagnostic(diagnostic, stamp);
+    }
+  } else {
+    ++invalid_frame_count_;
+  }
+  publishAlignment();
+}
+
+void Vl53l1xCanBridge::pollTimerCallback(const ros::SteadyTimerEvent&) {
   struct can_frame frame;
   int processed = 0;
   while (processed++ < 100 && can_.receiveFrame(frame, 0)) {
-    const ros::Time stamp = ros::Time::now();
-    Vl53l1xSample sample;
-    Vl53l1xDiagnosticFrame diagnostic;
-    if ((frame.can_id & CAN_SFF_MASK) == distance_can_id_) {
-      struct can_frame protocol_frame = frame;
-      protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x110;
-      if (!parseVl53l1xSample(protocol_frame, sample)) {
-        ++invalid_frame_count_;
-        if (frame.can_dlc >= 2 && frame.data[1] < 3) ++sensors_[frame.data[1]].invalid_frames;
-        ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] discarded malformed distance CAN frame");
-      } else {
-        handleSample(sample, stamp);
-      }
-    } else if ((frame.can_id & CAN_SFF_MASK) == diagnostic_can_id_) {
-      struct can_frame protocol_frame = frame;
-      protocol_frame.can_id = (frame.can_id & ~CAN_SFF_MASK) | 0x111;
-      if (!parseVl53l1xDiagnostic(protocol_frame, diagnostic)) {
-        ++invalid_frame_count_;
-      } else {
-        handleDiagnostic(diagnostic, stamp);
-      }
-    } else {
-      ++invalid_frame_count_;
+    handleFrame(frame);
+  }
+  const auto now = ros::SteadyTime::now();
+  for (auto& state : sensors_) {
+    if (state.has_valid && !vl53l1xSampleFresh(true, now, state.last_valid, sensor_timeout_ms_)) {
+      state.has_valid = false;
+      publishRange(state, ros::Time::now(), false);
     }
   }
+  publishAlignment();
 }
 
-void Vl53l1xCanBridge::diagnosticsTimerCallback(const ros::TimerEvent&) {
+void Vl53l1xCanBridge::diagnosticsTimerCallback(const ros::SteadyTimerEvent&) {
   publishDiagnostics(ros::Time::now());
 }
 
@@ -249,7 +409,8 @@ void Vl53l1xCanBridge::publishDiagnostics(const ros::Time& now) {
   for (const auto& state : sensors_) {
     diagnostic_msgs::DiagnosticStatus status;
     status.name = "STM32 Range/" + state.name;
-    const bool fresh = vl53l1xSampleFresh(state.has_valid, now, state.last_valid, sensor_timeout_ms_);
+    const auto steady_now = ros::SteadyTime::now();
+    const bool fresh = vl53l1xSampleFresh(state.has_valid, steady_now, state.last_valid, sensor_timeout_ms_);
     if (!fresh || state.consecutive_failures != 0 || state.diagnostic_error_code != 0 ||
         stm32RangeStatusHasFailure(state.status)) {
       status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
@@ -267,7 +428,8 @@ void Vl53l1xCanBridge::publishDiagnostics(const ros::Time& now) {
     auto add = [&status](const std::string& key, const std::string& value) {
       diagnostic_msgs::KeyValue kv; kv.key = key; kv.value = value; status.values.push_back(kv);
     };
-    add("data_age_ms", state.has_valid ? toString(static_cast<uint64_t>((now - state.last_valid).toSec() * 1000.0)) : "inf");
+    add("data_age_ms", state.has_valid ? toString(static_cast<uint64_t>((steady_now - state.last_valid).toSec() * 1000.0)) : "inf");
+    add("receive_age_ms", state.has_sequence ? std::to_string((steady_now - state.last_receive_steady).toSec() * 1000.0) : "inf");
     add("last_receive_time", state.last_receive.isZero() ? "never" : std::to_string(state.last_receive.toSec()));
     add("valid", state.has_valid && fresh ? "true" : "false");
     add("status", toString(state.status));
@@ -302,6 +464,7 @@ void Vl53l1xCanBridge::publishDiagnostics(const ros::Time& now) {
 
 }  // namespace robot_navigation
 
+#ifndef VL53L1X_BRIDGE_NO_MAIN
 int main(int argc, char** argv) {
   ros::init(argc, argv, "vl53l1x_can_bridge_node");
   ros::NodeHandle nh;
@@ -311,3 +474,5 @@ int main(int argc, char** argv) {
   ros::spin();
   return 0;
 }
+
+#endif
