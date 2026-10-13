@@ -55,6 +55,43 @@ bool PathTracker::init() {
   nh_.param("/robot/max_linear_vel", max_linear_vel_, max_linear_vel_);
   nh_.param("/robot/max_angular_vel", max_angular_vel_, max_angular_vel_);
 
+  pnh_.param("range_avoidance/enabled", enable_range_avoidance_, false);
+  if (enable_range_avoidance_) {
+    auto& p = detour_.params;
+    pnh_.param("range_avoidance/trigger_m", p.trigger_m, p.trigger_m);
+    pnh_.param("range_avoidance/front_clear_m", p.front_clear_m, p.front_clear_m);
+    pnh_.param("range_avoidance/motion_clearance_m", p.motion_clearance_m, p.motion_clearance_m);
+    pnh_.param("range_avoidance/side_space_m", p.side_space_m, p.side_space_m);
+    pnh_.param("range_avoidance/min_offset_m", p.min_offset_m, p.min_offset_m);
+    pnh_.param("range_avoidance/edge_margin_m", p.edge_margin_m, p.edge_margin_m);
+    pnh_.param("range_avoidance/pass_margin_m", p.pass_margin_m, p.pass_margin_m);
+    pnh_.param("range_avoidance/wall_detect_m", p.wall_detect_m, p.wall_detect_m);
+    pnh_.param("range_avoidance/max_offset_m", p.max_offset_m, p.max_offset_m);
+    pnh_.param("range_avoidance/max_forward_m", p.max_forward_m, p.max_forward_m);
+    pnh_.param("range_avoidance/speed_mps", p.speed_mps, p.speed_mps);
+    pnh_.param("range_avoidance/timeout_sec", p.timeout_sec, p.timeout_sec);
+    pnh_.param("range_avoidance/stall_sec", p.stall_sec, p.stall_sec);
+    pnh_.param("range_avoidance/range_timeout_sec", p.range_timeout_sec, p.range_timeout_sec);
+    pnh_.param("range_avoidance/clear_hold_sec", p.clear_hold_sec, p.clear_hold_sec);
+    pnh_.param("range_avoidance/settle_sec", p.settle_sec, p.settle_sec);
+    pnh_.param("range_avoidance/line_tolerance_m", p.line_tolerance_m, p.line_tolerance_m);
+    pnh_.param("range_avoidance/heading_tolerance_rad", p.heading_tolerance_rad, p.heading_tolerance_rad);
+    pnh_.param("range_avoidance/prefer_left", p.prefer_left, p.prefer_left);
+    if (!std::isfinite(max_linear_vel_) || max_linear_vel_ <= 0.0 || !detour_.parametersValid()) {
+      ROS_ERROR("[path_tracker] invalid range_avoidance parameters");
+      return false;
+    }
+    p.speed_mps = std::min(p.speed_mps, max_linear_vel_);
+    const std::array<std::string, 4> names{{"front", "left", "right", "rear"}};
+    for (size_t i = 0; i < names.size(); ++i) {
+      std::string topic;
+      pnh_.param("range_avoidance/" + names[i] + "_range_topic", topic, "/" + names[i] + "/range");
+      range_subs_[i] = nh_.subscribe<sensor_msgs::Range>(topic, 1,
+          [this, i](const sensor_msgs::Range::ConstPtr& msg) { rangeCallback(i, msg); });
+    }
+    ROS_INFO("[path_tracker] four-range lateral detours enabled; speed=%.2f m/s", p.speed_mps);
+  }
+
   // ── 订阅与发布 ──
   path_points_sub_ = nh_.subscribe("/path_points", 10,
                                    &PathTracker::pathPointsCallback, this);
@@ -72,11 +109,13 @@ bool PathTracker::init() {
   cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_external", 10);
   path_finished_pub_ = nh_.advertise<std_msgs::Bool>("/path_finished", 10, true);  // latched
   current_target_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/path_tracker/current_target", 1, true);
+  avoidance_state_pub_ = nh_.advertise<std_msgs::String>("/path_tracker/avoidance_state", 1, true);
+  publishAvoidanceState(enable_range_avoidance_ ? "WAIT_PATH" : "DISABLED");
   next_point_client_ = nh_.serviceClient<std_srvs::Trigger>("/next_point");
 
   // ── 控制定时器 ──
   const double period = 1.0 / std::max(1.0, control_rate_hz_);
-  control_timer_ = nh_.createTimer(ros::Duration(period),
+  control_timer_ = nh_.createSteadyTimer(ros::WallDuration(period),
                                    &PathTracker::controlTimerCallback, this);
 
   ROS_INFO("[path_tracker] 初始化完成");
@@ -126,6 +165,8 @@ void PathTracker::pathPointsCallback(const path_manager::PathPoint::ConstPtr& ms
   const bool target_changed = !has_target_ || !same_target;
   if (!target_changed) return;
 
+  detour_.reset();
+
   current_target_ = *msg;
   has_target_ = true;
   waiting_for_next_point_ = false;
@@ -160,6 +201,7 @@ void PathTracker::pathHasNextCallback(const std_msgs::Bool::ConstPtr& msg) {
 void PathTracker::pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg) {
   if (msg->data == path_revision_) return;
   path_revision_ = msg->data;
+  detour_.reset();
   if (estop_latched_) return;
   require_new_path_ = false;
   has_target_ = false;
@@ -182,6 +224,11 @@ void PathTracker::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
       !std::isfinite(orientation.z) || !std::isfinite(orientation.w)) return;
   if (!msg->header.stamp.isZero() &&
       std::abs((ros::Time::now() - msg->header.stamp).toSec()) > odom_timeout_sec_) return;
+  if (enable_range_avoidance_ &&
+      (!std::isfinite(msg->twist.twist.linear.x) || !std::isfinite(msg->twist.twist.linear.y) ||
+       !std::isfinite(msg->twist.twist.angular.z))) return;
+  measured_speed_ = std::hypot(msg->twist.twist.linear.x, msg->twist.twist.linear.y);
+  measured_rotation_ = msg->twist.twist.angular.z;
   last_odom_time_ = ros::SteadyTime::now();
   current_x_ = msg->pose.pose.position.x;
   current_y_ = msg->pose.pose.position.y;
@@ -195,7 +242,28 @@ void PathTracker::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
   has_odom_ = true;
 }
 
+void PathTracker::rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr& msg) {
+  auto& sample = detour_.ranges[index];
+  const double age = msg->header.stamp.isZero() ? 0.0 : (ros::Time::now() - msg->header.stamp).toSec();
+  sample.valid = std::isfinite(msg->range) && std::isfinite(msg->min_range) &&
+      std::isfinite(msg->max_range) && msg->range > 0.0 && msg->range >= msg->min_range &&
+      msg->range <= msg->max_range && age >= -0.05 && age <= detour_.params.range_timeout_sec;
+  sample.distance = msg->range;
+  sample.received = ros::SteadyTime::now().toSec() - std::max(0.0, age);
+}
+
+void PathTracker::publishAvoidanceState(const std::string& state) {
+  if (avoidance_state_ == state) return;
+  avoidance_state_ = state;
+  std_msgs::String msg; msg.data = state;
+  avoidance_state_pub_.publish(msg);
+  if (state.compare(0, 7, "FAILED_") == 0)
+    ROS_ERROR("[path_tracker] range detour stopped: %s; new path required", state.c_str());
+}
+
 void PathTracker::cancelTarget() {
+  detour_.reset();
+  if (enable_range_avoidance_) publishAvoidanceState("CANCELLED");
   require_new_path_ = true;
   has_target_ = false;
   waiting_for_next_point_ = false;
@@ -225,14 +293,18 @@ void PathTracker::cancelCallback(const std_msgs::Empty::ConstPtr&) {
 }
 
 // ── 控制定时器 ─────────────────────────────────────────────
-void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
+void PathTracker::controlTimerCallback(const ros::SteadyTimerEvent& /*event*/) {
   if (estop_latched_ || require_new_path_ ||
       (has_odom_ && (ros::SteadyTime::now() - last_odom_time_).toSec() > odom_timeout_sec_)) {
     publishStop();
+    if (enable_range_avoidance_) publishAvoidanceState(
+        estop_latched_ || require_new_path_ ? "CANCELLED" : "WAIT_ODOMETRY");
     return;
   }
   if (!has_odom_) {
     ROS_WARN_THROTTLE(2.0, "[path_tracker] 等待 /odom 数据...");
+    publishStop();
+    if (enable_range_avoidance_) publishAvoidanceState("WAIT_ODOMETRY");
     return;
   }
 
@@ -247,10 +319,34 @@ void PathTracker::controlTimerCallback(const ros::TimerEvent& /*event*/) {
       state_ = State::WAITING_FOR_PATH;
     }
     publishStop();
+    if (enable_range_avoidance_) publishAvoidanceState("WAIT_PATH");
     return;
   }
 
   const path_manager::PathPoint& target = current_target_;
+
+  if (enable_range_avoidance_ && (state_ == State::MOVING || state_ == State::TURNING ||
+                                 state_ == State::ARRIVED_AT_POINT)) {
+    RangeDetour::Command nominal;
+    computeControl(target, current_x_, current_y_, current_yaw_, nominal.x, nominal.y, nominal.omega);
+    RangeDetour::Pose pose, goal;
+    pose.x = current_x_; pose.y = current_y_; pose.yaw = current_yaw_;
+    goal.x = target.x; goal.y = target.y;
+    const auto out = detour_.step(pose, goal, nominal, measured_speed_, measured_rotation_,
+                                  ros::SteadyTime::now().toSec());
+    publishAvoidanceState(out.state);
+    if (out.override_command) {
+      geometry_msgs::Twist twist;
+      twist.linear.x = out.command.x;
+      twist.linear.y = out.command.y;
+      twist.angular.z = out.command.omega;
+      cmd_vel_pub_.publish(twist);
+      // Arrival holds and /next_point must never advance during a detour or
+      // a sensor wait, even if the vehicle crosses a waypoint's tolerance.
+      state_ = State::MOVING;
+      return;
+    }
+  }
 
   // 检查是否到达
   bool reached = isPointReached(target, current_x_, current_y_, current_yaw_);

@@ -30,6 +30,10 @@ LOW_QUALITY 可保留 Range 用于观察，但禁止用于横移；EMERGENCY 触
 
 ## 后方传感器与防撞
 
+无激光雷达的航点模式现可用底盘四路测距做横移绕行；任务启动默认开启。
+实现位于路径跟踪器，防撞节点仍负责最高优先级停车。具体动作、参数和调试步骤见
+[四路测距航点绕行](../docs/四路测距航点绕行.md)。
+
 STM32 必须用 sensor_id=5 上报后方数据，保留原 ID 0～4。距离帧使用
 `0x110: 01 05 distance_lo distance_hi sigma_lo sigma_hi status sequence`；
 例如后方 800 mm、有效、序号 1：`01 05 20 03 FF FF 01 01`。

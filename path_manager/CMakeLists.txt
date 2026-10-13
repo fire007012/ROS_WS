@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_srvs
   nav_msgs
   geometry_msgs
+  sensor_msgs
   actionlib
   move_base_msgs
   message_generation
@@ -41,7 +42,7 @@ generate_messages(
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs std_srvs nav_msgs geometry_msgs actionlib move_base_msgs message_runtime dynamic_reconfigure
+  CATKIN_DEPENDS roscpp std_msgs std_srvs nav_msgs geometry_msgs sensor_msgs actionlib move_base_msgs message_runtime dynamic_reconfigure
 )
 
 include_directories(
@@ -77,6 +78,11 @@ if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/path_tracker_transitions.test)
   add_rostest(test/path_tracker_holonomic.test)
+  add_rostest(test/range_detour.test)
+  catkin_add_gtest(test_range_detour test/test_range_detour.cpp)
+  if(TARGET test_range_detour)
+    target_link_libraries(test_range_detour gtest_main ${catkin_LIBRARIES})
+  endif()
 endif()
 
 # ── move_base 路径适配器 ──────────────────────────────────────
@@ -98,5 +104,8 @@ install(TARGETS path_manager_node path_tracker_node move_base_path_adapter_node
 )
 
 install(DIRECTORY launch
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)
+install(DIRECTORY config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )

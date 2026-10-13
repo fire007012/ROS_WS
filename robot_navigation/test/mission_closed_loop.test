@@ -12,6 +12,7 @@
   <node pkg="path_manager" type="$(arg manager_node_type)" name="path_manager_node" required="true"/>
   <node pkg="path_manager" type="$(arg tracker_node_type)" name="path_tracker_node" required="true">
     <rosparam file="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
+    <rosparam file="$(find path_manager)/config/range_avoidance.yaml"/>
   </node>
   <node pkg="motion_planner" type="$(arg mux_node_type)" name="cmd_vel_mux_node" required="true"/>
   <node pkg="robot_navigation" type="$(arg safety_node_type)" name="distance_safety_node" required="true"/>

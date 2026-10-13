@@ -1,0 +1,17 @@
+<launch>
+  <!-- Real tracker, mux and brake; simulated geometry/odometry, no motor CAN. -->
+  <arg name="tracker_node_type" default="path_tracker_node"/>
+  <arg name="mux_node_type" default="cmd_vel_mux_node"/>
+  <arg name="safety_node_type" default="distance_safety_node"/>
+  <param name="use_sim_time" value="true"/>
+  <rosparam file="$(find robot_bringup)/config/robot_params.yaml"/>
+  <node pkg="path_manager" type="$(arg tracker_node_type)" name="path_tracker" required="true">
+    <rosparam file="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
+    <rosparam file="$(find path_manager)/config/range_avoidance.yaml"/>
+    <param name="range_avoidance/stall_sec" value="2.0"/>
+    <param name="arrival_hold_time" value="0.1"/>
+  </node>
+  <node pkg="motion_planner" type="$(arg mux_node_type)" name="mux" required="true"/>
+  <node pkg="robot_navigation" type="$(arg safety_node_type)" name="safety" required="true"/>
+  <test pkg="path_manager" type="test_range_detour_ros.py" test-name="range_detour" time-limit="100"/>
+</launch>

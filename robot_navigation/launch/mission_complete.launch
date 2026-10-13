@@ -69,6 +69,8 @@
   <arg name="right_range_topic" default="/right/range"/>
   <arg name="rear_range_topic" default="/rear/range"/>
   <arg name="use_dynamic_navigation" default="false"/>
+  <arg name="enable_range_avoidance" default="true"/>
+  <arg name="range_avoidance_config" default="$(find path_manager)/config/range_avoidance.yaml"/>
   <!-- Required when use_dynamic_navigation:=true. -->
   <arg name="dynamic_map_file" default="/absolute/path/to/arena.yaml"/>
   <!-- STM32 CAN1 0x112 is the authoritative physical start event. -->
@@ -170,6 +172,12 @@
     <node pkg="path_manager" type="path_tracker_node"
           name="path_tracker_node" output="screen" required="true">
       <rosparam file="$(arg path_tracker_params)" command="load"/>
+      <rosparam file="$(arg range_avoidance_config)" command="load"/>
+      <param name="range_avoidance/enabled" value="$(arg enable_range_avoidance)"/>
+      <param name="range_avoidance/front_range_topic" value="$(arg front_range_topic)"/>
+      <param name="range_avoidance/left_range_topic" value="$(arg left_range_topic)"/>
+      <param name="range_avoidance/right_range_topic" value="$(arg right_range_topic)"/>
+      <param name="range_avoidance/rear_range_topic" value="$(arg rear_range_topic)"/>
     </node>
   </group>
 

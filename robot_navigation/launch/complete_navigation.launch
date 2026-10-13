@@ -43,6 +43,8 @@
   <arg name="enable_arm_and_gripper" default="false"/>
   <arg name="enable_vl53l1x_can" default="false"/>
   <arg name="enable_range_safety" default="true"/>
+  <arg name="enable_range_avoidance" default="true"/>
+  <arg name="range_avoidance_config" default="$(find path_manager)/config/range_avoidance.yaml"/>
   <arg name="enable_emergency_stop" default="false"/>
   <arg name="enable_physical_start" default="false"/>
   <arg name="vl53l1x_can_interface" default="can0"/>
@@ -54,7 +56,7 @@
   <arg name="arm_params"         default="$(find robot_bringup)/config/arm_params.yaml"/>
   <arg name="paths_file"         default="$(find robot_bringup)/config/paths.yaml"/>
   <arg name="fixed_route_file"   default="$(find robot_bringup)/config/fixed_route.yaml"/>
-  <arg name="path_tracker_params" default="$(find robot_bringup)/config/path_tracker.yaml"/>
+  <arg name="path_tracker_params" default="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
   <arg name="fine_tuning_config" default="$(find fine_tuning)/config/fine_tuning.yaml"/>
   <arg name="servo_config"       default="$(find arm_and_gripper)/config/servo_params.yaml"/>
   <arg name="arm_gripper_config" default="$(find arm_and_gripper)/config/arm_and_gripper.yaml"/>
@@ -155,15 +157,8 @@
               ns="path_tracker_node"/>
     <node pkg="path_manager" type="path_tracker_node"
           name="path_tracker_node" output="screen" required="true">
-      <param name="control_rate_hz" value="30.0"/>
-      <param name="kp_linear" value="0.5"/>
-      <param name="kp_angular" value="1.5"/>
-      <param name="max_linear_vel" value="1.0"/>
-      <param name="max_angular_vel" value="2.0"/>
-      <param name="position_tolerance" value="0.05"/>
-      <param name="heading_tolerance" value="0.08"/>
-      <param name="use_turn_then_move" value="false"/>
-      <param name="arrival_hold_time" value="0.5"/>
+      <rosparam file="$(arg range_avoidance_config)" command="load"/>
+      <param name="range_avoidance/enabled" value="$(arg enable_range_avoidance)"/>
     </node>
   </group>
 

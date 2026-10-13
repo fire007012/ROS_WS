@@ -9,6 +9,9 @@
 #include <geometry_msgs/Twist.h>
 #include <path_manager/PathPoint.h>
 #include <std_srvs/Trigger.h>
+#include <sensor_msgs/Range.h>
+#include <std_msgs/String.h>
+#include "path_manager/range_detour.h"
 
 namespace path_manager {
 
@@ -33,7 +36,9 @@ class PathTracker {
   void pathHasNextCallback(const std_msgs::Bool::ConstPtr& msg);
   void pathRevisionCallback(const std_msgs::UInt32::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
-  void controlTimerCallback(const ros::TimerEvent& event);
+  void controlTimerCallback(const ros::SteadyTimerEvent& event);
+  void rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr& msg);
+  void publishAvoidanceState(const std::string& state);
   void emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg);
   void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
   void cancelCallback(const std_msgs::Empty::ConstPtr& msg);
@@ -65,7 +70,13 @@ class PathTracker {
   ros::Publisher  path_finished_pub_;
   ros::Publisher  current_target_pub_;
   ros::ServiceClient next_point_client_;
-  ros::Timer      control_timer_;
+  ros::SteadyTimer control_timer_;
+  std::array<ros::Subscriber, 4> range_subs_;
+  ros::Publisher avoidance_state_pub_;
+  RangeDetour detour_;
+  bool enable_range_avoidance_ = false;
+  std::string avoidance_state_;
+  double measured_speed_ = 0.0, measured_rotation_ = 0.0;
 
   // ── 当前路径点 ──
   path_manager::PathPoint current_target_;
