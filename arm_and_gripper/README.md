@@ -54,7 +54,7 @@ rostopic echo /medicine_release_done
 - 默认SG90关闭180度、打开0度，与此前上电180度目标对齐；按真实机构校准开关方向。
 - `arm_ack_timeout_s`：等待STM32命令接受确认，默认0.5秒。
 
-允许两路角度分别设置，当前ROS校验范围为-60～60度，STM32也有独立限位。
+允许两路角度分别设置，当前ROS校验范围为-80～80度，STM32也有独立限位。
 STM32的 `Core/Inc/arm_servo_config.h` 保存每路零位脉宽、180/270度行程及方向。
 使用其它接口可传 `can_device:=...`；其它配置传 `arm_config:=/absolute/path/config.yaml`。
 
