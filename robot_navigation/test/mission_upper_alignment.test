@@ -1,0 +1,9 @@
+<launch>
+  <node pkg="robot_navigation" type="mission_controller_node" name="mission_controller_node" required="true">
+    <rosparam file="$(find robot_navigation)/config/mission_params.yaml"/>
+    <param name="enable_arm_upper_alignment" value="true"/>
+    <param name="enable_vl53_circle_check" value="false"/>
+    <param name="mission/state_machine_rate_hz" value="30.0"/>
+  </node>
+  <test pkg="robot_navigation" type="test_mission_upper_alignment.py" test-name="mission_upper_alignment" time-limit="25"/>
+</launch>

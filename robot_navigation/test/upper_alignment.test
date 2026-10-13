@@ -1,0 +1,30 @@
+<launch>
+  <!-- Freeze ROS time: reception deadlines and braking must still run. -->
+  <param name="use_sim_time" value="true"/>
+  <!-- Transport injection only. No real CAN motor node or physical actuators. -->
+  <node pkg="robot_navigation" type="upper_alignment_bridge_fixture" name="range_bridge" required="true">
+    <rosparam file="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
+    <param name="upper_alignment/enabled" value="true"/>
+  </node>
+  <node pkg="motion_planner" type="cmd_vel_mux_node" name="mux" required="true"/>
+  <node pkg="robot_navigation" type="distance_safety_node" name="distance_safety" required="true"/>
+  <node pkg="motion_planner" type="planner_node" name="planner" required="true"/>
+  <group ns="expiry">
+    <node pkg="motion_planner" type="cmd_vel_mux_node" name="mux" required="true">
+      <remap from="/cmd_vel_arm_alignment" to="alignment_command"/>
+      <remap from="/arm_upper_alignment/active" to="active"/>
+      <remap from="/cmd_vel_muxed" to="output"/>
+      <remap from="/cmd_vel_requested" to="requested"/>
+      <remap from="/cmd_vel_external" to="nav"/>
+      <remap from="/cmd_vel_safety" to="safety"/>
+      <remap from="/cmd_vel_mux/selected_source" to="source"/>
+      <remap from="/cmd_vel_mux/estop_active" to="estop_active"/>
+      <remap from="/emergency_stop" to="estop"/>
+      <remap from="/emergency_stop/reset" to="reset"/>
+      <remap from="/mission/cancel" to="cancel"/>
+      <remap from="/mission/actions_enabled" to="enabled"/>
+      <remap from="/chassis_lock" to="lock"/>
+    </node>
+  </group>
+  <test pkg="robot_navigation" type="test_upper_alignment_ros.py" test-name="upper_alignment" time-limit="55"/>
+</launch>

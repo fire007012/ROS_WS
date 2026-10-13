@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="enable_arm_upper_alignment" default="false"/>
   <arg name="config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
   <arg name="can_interface" default="can0"/>
-  <arg name="publish_tf" default="true"/>
+  <arg name="publish_tf" default="false"/>
 
   <!-- Coordinates are installation parameters; override these for the actual chassis. -->
   <arg name="front_x" default="0.0"/><arg name="front_y" default="0.0"/><arg name="front_z" default="0.0"/>
@@ -16,6 +17,7 @@
         name="vl53l1x_can_bridge_node" output="screen" required="true">
     <rosparam command="load" file="$(arg config)"/>
     <param name="can_interface" value="$(arg can_interface)"/>
+    <param name="upper_alignment/enabled" value="$(arg enable_arm_upper_alignment)"/>
   </node>
 
   <group if="$(arg publish_tf)">

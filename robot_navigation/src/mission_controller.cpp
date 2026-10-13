@@ -79,6 +79,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   mission_nh.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
   mission_nh.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
   mission_nh.param("odom_timeout_sec", odom_timeout_sec_, 0.5);
+  mission_nh.param("medicine_placed_event_timeout_sec", medicine_placed_event_timeout_sec_, 1.0);
   pnh_.param<bool>("competition_mode", competition_mode_, true);
   pnh_.param<bool>("audio_video_enabled", audio_video_enabled_, false);
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
@@ -132,6 +133,11 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 }
 
 bool MissionController::init() {
+  if (!std::isfinite(medicine_placed_event_timeout_sec_) || medicine_placed_event_timeout_sec_ <= 0) {
+    ROS_ERROR("[mission_controller] medicine_placed_event_timeout_sec must be positive and finite");
+    return false;
+  }
+
   pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, true);
   pnh_.param<double>("bedside_scan_skip_wait_s", bedsideScanSkipWaitSec_, 1.0);
   bedsideScanSkipWaitSec_ = std::max(0.0, bedsideScanSkipWaitSec_);
@@ -175,6 +181,16 @@ bool MissionController::init() {
   mission_finished_pub_ = nh_.advertise<std_msgs::Bool>("/mission_finished", 1, true);
   mission_timeout_pub_  = nh_.advertise<std_msgs::Bool>("/mission_timeout", 1, true);
   stop_all_pub_         = nh_.advertise<std_msgs::Empty>("/stop_all", 1, true);
+  pnh_.param("enable_arm_upper_alignment", enable_arm_upper_alignment_, false);
+  mission_state_pub_ = nh_.advertise<std_msgs::String>("/mission/state", 1, true);
+  std_msgs::String initial_state; initial_state.data = "IDLE"; mission_state_pub_.publish(initial_state);
+  alignment_done_sub_ = nh_.subscribe<std_msgs::Bool>("/arm_upper_alignment/done", 1,
+      [this](const std_msgs::Bool::ConstPtr& msg) {
+        if (current_state_ == State::ARM_UPPER_ALIGN_A || current_state_ == State::ARM_UPPER_ALIGN_B) {
+          if (!msg->data) alignment_ready_for_done_ = true;
+          alignment_done_ = msg->data && alignment_ready_for_done_;
+        }
+      });
   cancel_pub_           = nh_.advertise<std_msgs::Empty>("/mission/cancel", 1);
   actions_enabled_pub_  = nh_.advertise<std_msgs::Bool>("/mission/actions_enabled", 1, true);
   display_text_pub_     = nh_.advertise<std_msgs::String>("/robot_display", 1, true);
@@ -313,6 +329,13 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
     }
     service_future_.get();  // Discard a result from the cancelled generation.
   }
+  if (speech_future_.valid()) {
+    if (speech_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      ROS_WARN("[mission_controller] start ignored until cancelled speech service has returned");
+      return;
+    }
+    speech_future_.get();  // Discard speech belonging to the cancelled generation.
+  }
   // 如果上次任务已完成/失败/超时，允许重新启动
   if (mission_completed_.load()) {
     ROS_INFO("[mission_controller] 上次任务已结束，准备重新启动");
@@ -350,6 +373,7 @@ void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& ms
   mission_timer_.stop();
   action_initiated_ = false;
   current_state_ = State::STOP;
+  std_msgs::String state; state.data = "STOP"; mission_state_pub_.publish(state);
   chassis_locked_ = true;
   std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
   std_msgs::String display; display.data = "急停: 任务已停止"; display_text_pub_.publish(display);
@@ -361,6 +385,7 @@ void MissionController::emergencyResetCallback(const std_msgs::Bool::ConstPtr& m
   mission_started_.store(false);
   mission_completed_.store(false);
   current_state_ = State::IDLE;
+  std_msgs::String state; state.data = "IDLE"; mission_state_pub_.publish(state);
   chassis_locked_ = true;
   std_msgs::Bool lock; lock.data = true; chassis_lock_pub_.publish(lock);
   std_msgs::String display; display.data = "急停已复位，等待启动"; display_text_pub_.publish(display);
@@ -409,10 +434,14 @@ void MissionController::fineTuningFailedCallback(const std_msgs::Bool::ConstPtr&
 }
 
 void MissionController::medicinePlacedCallback(const std_msgs::Int8::ConstPtr& msg) {
-  if (!mission_started_ || estop_latched_ || speech_started_) return;
-  const int bed = current_state_ == State::PLACE_MEDICINE_A ? qr_result_.first_bed :
-                  current_state_ == State::PLACE_MEDICINE_B ? qr_result_.second_bed : 0;
-  if (!bed || msg->data != bed) return;
+  if (!mission_started_ || mission_completed_ || estop_latched_ || speech_started_ ||
+      !awaiting_medicine_placed_ || medicine_placed_generation_ != mission_generation_) return;
+  const bool placing = current_state_ == State::PLACE_MEDICINE_A || current_state_ == State::PLACE_MEDICINE_B;
+  const bool waiting = current_state_ == State::VOICE_A || current_state_ == State::VOICE_B;
+  if ((!placing && !waiting) || msg->data != expected_placed_bed_) return;
+  if (waiting && ros::SteadyTime::now() > medicine_placed_deadline_) return;
+  const int bed = expected_placed_bed_;
+  awaiting_medicine_placed_ = false;
   speech_started_ = true;
   speech_generation_ = mission_generation_;
   medicine_placed_time_ = ros::Time::now();
@@ -422,12 +451,13 @@ void MissionController::medicinePlacedCallback(const std_msgs::Int8::ConstPtr& m
   std::packaged_task<CallResult()> task([client,service]() mutable {
     try {
       if (!client.call(service)) return CallResult{false,"speech service transport failed"};
-      return CallResult{service.response.success,service.response.message};
+      return CallResult{static_cast<bool>(service.response.success),service.response.message};
     } catch(const std::exception& error) { return CallResult{false,error.what()}; }
   });
   speech_future_ = task.get_future();
   std::thread(std::move(task)).detach();
-  ROS_INFO("[mission_controller] medicine placed: speech started while arm returns; chassis remains locked");
+  ROS_INFO("[mission_controller] /medicine/placed bed=%d accepted in %s: speech started; chassis remains locked",
+           bed, stateToString(current_state_).c_str());
 }
 
 void MissionController::medicineReleaseDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
@@ -502,6 +532,8 @@ void MissionController::processState() {
     action_initiated_ = true;
 
     switch (current_state_) {
+      case State::ARM_UPPER_ALIGN_A:
+      case State::ARM_UPPER_ALIGN_B: unlockChassis(); break;
       case State::GOTO_NURSE:         actionGotoNurse();          break;
       case State::SCAN_QR:            actionScanQr();             break;
       case State::GOTO_BED_A:         actionGotoBedA();           break;
@@ -529,6 +561,11 @@ void MissionController::processState() {
 
   // ── 检查完成条件，驱动状态迁移 ──
   switch (current_state_) {
+    case State::ARM_UPPER_ALIGN_A:
+    case State::ARM_UPPER_ALIGN_B:
+      if (alignment_done_)
+        enterState(current_state_ == State::ARM_UPPER_ALIGN_A ? State::POSITION_IN_CIRCLE_A : State::POSITION_IN_CIRCLE_B);
+      break;
     case State::GOTO_NURSE:
     case State::GOTO_BED_A:
     case State::GOTO_BED_B:
@@ -552,6 +589,13 @@ void MissionController::processState() {
 
     case State::VOICE_A:
     case State::VOICE_B:
+      if (!speech_started_) {
+        if (!awaiting_medicine_placed_ || ros::SteadyTime::now() >= medicine_placed_deadline_) {
+          enterFailedState("missing /medicine/placed for bed " + std::to_string(expected_placed_bed_) +
+                           " after successful arm service; remain stopped");
+        }
+        break;
+      }
       if (speech_future_.valid() && speech_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         const auto result = speech_future_.get();
         if (!result.success) { enterFailedState("speech failed: " + result.message); return; }
@@ -572,6 +616,9 @@ void MissionController::processState() {
 // ── 进入新状态 ─────────────────────────────────────────────
 void MissionController::enterState(State new_state) {
   current_state_ = new_state;
+  alignment_done_ = false;
+  alignment_ready_for_done_ = false;
+  std_msgs::String state; state.data = stateToString(new_state); mission_state_pub_.publish(state);
   std_msgs::Bool qr_enabled; qr_enabled.data = new_state == State::SCAN_QR; qr_enabled_pub_.publish(qr_enabled);
   const bool navigating = new_state == State::GOTO_NURSE ||
       new_state == State::GOTO_BED_A || new_state == State::GOTO_BED_B ||
@@ -643,8 +690,13 @@ void MissionController::actionPlaceMedicineA() {
 }
 
 void MissionController::actionVoiceA() {
-  if (!speech_started_ || !speech_future_.valid() || speech_generation_ != mission_generation_) {
-    enterFailedState("missing medicine/placed event or speech result; remain stopped"); return;
+  if (!speech_started_) {
+    ROS_INFO("[mission_controller] waiting up to %.3f s for /medicine/placed, bed=%d; chassis remains locked",
+             medicine_placed_event_timeout_sec_, expected_placed_bed_);
+    return;
+  }
+  if (!speech_future_.valid() || speech_generation_ != mission_generation_) {
+    enterFailedState("missing speech result for current medicine/placed event; remain stopped"); return;
   }
   // A separate speech future is polled below. Arm return has completed here.
 }
@@ -692,8 +744,13 @@ void MissionController::actionPlaceMedicineB() {
 }
 
 void MissionController::actionVoiceB() {
-  if (!speech_started_ || !speech_future_.valid() || speech_generation_ != mission_generation_) {
-    enterFailedState("missing medicine/placed event or speech result; remain stopped"); return;
+  if (!speech_started_) {
+    ROS_INFO("[mission_controller] waiting up to %.3f s for /medicine/placed, bed=%d; chassis remains locked",
+             medicine_placed_event_timeout_sec_, expected_placed_bed_);
+    return;
+  }
+  if (!speech_future_.valid() || speech_generation_ != mission_generation_) {
+    enterFailedState("missing speech result for current medicine/placed event; remain stopped"); return;
   }
   // A separate speech future is polled below. Arm return has completed here.
 }
@@ -726,8 +783,8 @@ bool MissionController::checkGotoComplete() {
     // 根据当前状态决定下一状态
     switch (current_state_) {
       case State::GOTO_NURSE:  enterState(State::SCAN_QR);            break;
-      case State::GOTO_BED_A:  enterState(State::POSITION_IN_CIRCLE_A); break;
-      case State::GOTO_BED_B:  enterState(State::POSITION_IN_CIRCLE_B); break;
+      case State::GOTO_BED_A:  enterState(enable_arm_upper_alignment_ ? State::ARM_UPPER_ALIGN_A : State::POSITION_IN_CIRCLE_A); break;
+      case State::GOTO_BED_B:  enterState(enable_arm_upper_alignment_ ? State::ARM_UPPER_ALIGN_B : State::POSITION_IN_CIRCLE_B); break;
       case State::RETURN_HOME: enterState(State::HOME_CHECK);          break;
       default: break;
     }
@@ -896,6 +953,12 @@ void MissionController::callOpenMedicineBox(int8_t box_id) {
 }
 
 void MissionController::callArmPlaceMedicine(int8_t bed_id, int8_t box_id) {
+  // Arm this gate before starting the service thread. The topic event may
+  // precede the service response or arrive shortly after it on another connection.
+  expected_placed_bed_ = bed_id;
+  medicine_placed_generation_ = mission_generation_;
+  medicine_placed_deadline_ = ros::SteadyTime();
+  awaiting_medicine_placed_ = true;
   arm_and_gripper::ArmPlaceMedicine srv;
   srv.request.bed_id = bed_id;
   srv.request.box_id = box_id;
@@ -922,7 +985,9 @@ bool MissionController::pollServiceCall() {
     case State::OPEN_BOX_B: enterState(State::PLACE_MEDICINE_B); break;
     case State::PLACE_MEDICINE_A:
     case State::PLACE_MEDICINE_B:
-      // medicine/placed started concurrent speech; do not reset its timestamp here.
+      // Preserve concurrent speech if the release event already arrived. If
+      // the service response wins the topic race, wait for the event in VOICE.
+      medicine_placed_deadline_ = ros::SteadyTime::now() + ros::WallDuration(medicine_placed_event_timeout_sec_);
       enterState(service_state_ == State::PLACE_MEDICINE_A ? State::VOICE_A : State::VOICE_B);
       break;
 
@@ -934,6 +999,7 @@ bool MissionController::pollServiceCall() {
 }
 
 void MissionController::cancelMissionActions() {
+  awaiting_medicine_placed_ = false;
   ++mission_generation_;
   mission_timer_.stop();
   lockChassis();
@@ -1053,6 +1119,8 @@ bool MissionController::areVl53RangesValid() const {
 
 // ── 重置任务状态 ───────────────────────────────────────────
 void MissionController::resetMissionState() {
+  awaiting_medicine_placed_ = false;
+  expected_placed_bed_ = 0;
   speech_started_ = false;
   qr_received_.store(false);
   barcode_bed1_received_.store(false);
@@ -1086,6 +1154,7 @@ void MissionController::enterFailedState(const std::string& reason) {
   cancelMissionActions();
   ROS_ERROR("[mission_controller] ====== 任务失败: %s ======", reason.c_str());
   current_state_ = State::FAILED;
+  std_msgs::String state; state.data = "FAILED"; mission_state_pub_.publish(state);
   mission_completed_.store(true);
 
   std_msgs::Bool fail_msg;
@@ -1104,6 +1173,7 @@ void MissionController::enterFailedState(const std::string& reason) {
 void MissionController::enterTimeoutState() {
   cancelMissionActions();
   current_state_ = State::TIMEOUT;
+  std_msgs::String state; state.data = "TIMEOUT"; mission_state_pub_.publish(state);
   mission_completed_.store(true);
 
   std_msgs::Bool timeout_msg;
@@ -1121,6 +1191,8 @@ void MissionController::enterTimeoutState() {
 // ── 状态描述 ───────────────────────────────────────────────
 std::string MissionController::stateToString(State s) const {
   switch (s) {
+    case State::ARM_UPPER_ALIGN_A:  return "ARM_UPPER_ALIGN_A";
+    case State::ARM_UPPER_ALIGN_B:  return "ARM_UPPER_ALIGN_B";
     case State::IDLE:               return "IDLE";
     case State::GOTO_NURSE:         return "GOTO_NURSE";
     case State::SCAN_QR:            return "SCAN_QR";
