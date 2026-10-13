@@ -324,6 +324,7 @@ catkin_install_python(PROGRAMS
   scripts/speech_service_node.py
   scripts/bedside_session_node.py
   scripts/arm_demo_once.py
+  scripts/speech_test_node.py
   scripts/test_camera.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

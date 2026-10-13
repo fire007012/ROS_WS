@@ -1,0 +1,7 @@
+<launch>
+  <!-- Only tests the Raspberry Pi speaker; no mission or motor nodes. -->
+  <arg name="config_file" default="$(find robot_navigation)/config/speech_test.yaml"/>
+  <node pkg="robot_navigation" type="speech_test_node.py" name="speech_test_node" output="screen">
+    <rosparam command="load" file="$(arg config_file)"/>
+  </node>
+</launch>
