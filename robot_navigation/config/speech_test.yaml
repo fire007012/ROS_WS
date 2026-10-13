@@ -1,0 +1,10 @@
+# 独立语音测试配置（不启动机械臂、底盘或摄像头）
+# mode=text: 由 TTS 生成并播放 text；mode=file: 播放 audio_file
+mode: text
+text: "1床病人请取药"
+audio_file: ""
+voice: zh
+speaker_device: default
+speed: 175
+volume: 100
+playback_timeout_s: 15.0

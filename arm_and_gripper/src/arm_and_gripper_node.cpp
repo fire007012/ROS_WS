@@ -47,8 +47,8 @@ bool ArmAndGripperController::init(){
   pnh_.param("new_servo_open_angle",new_servo_open_angle_,0);
   pnh_.param("new_servo_close_angle",new_servo_close_angle_,180);
   for (double value : {arm_place_angle_1_,arm_place_angle_2_,arm_home_angle_1_,arm_home_angle_2_}) {
-    if (!std::isfinite(value) || std::fabs(value) > 60.0) {
-      ROS_ERROR("[arm_and_gripper] angles must be finite and inside firmware default +/-60 deg"); return false;
+    if (!std::isfinite(value) || std::fabs(value) > 80.0) {
+      ROS_ERROR("[arm_and_gripper] angles must be finite and inside firmware default +/-80 deg"); return false;
     }
   }
   for (double value : {arm_move_timeout_s_,servo_hold_duration_s_,old_servo_move_duration_s_,
