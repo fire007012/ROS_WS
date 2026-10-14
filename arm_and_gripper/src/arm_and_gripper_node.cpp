@@ -176,7 +176,7 @@ bool ArmAndGripperController::executePlaceSequence(int8_t box_id,bool reset_arm,
   sequence_generation_=cancel_generation_.load();
   sequence_running_.store(true);bool ok=true;
   std_msgs::Bool pending;pending.data=false;medicine_release_done_pub_.publish(pending);
-  ROS_INFO("[arm_and_gripper] 1/4 arm place: PC6=%.1f PC7=%.1f",arm_place_angle_1_,arm_place_angle_2_);
+  ROS_INFO("[arm_and_gripper] 1/4 arm place: PC6+PC8 right=%.1f PC7 left=%.1f",arm_place_angle_1_,arm_place_angle_2_);
   ok=sendArmAngleCommand(arm_place_angle_1_,arm_place_angle_2_)&&waitInterruptibly(arm_move_timeout_s_);
   if(ok&&box_id==1){
     ROS_INFO("[arm_and_gripper] 2/4 open box1 (PB0), then 3/4 close");
@@ -193,7 +193,7 @@ bool ArmAndGripperController::executePlaceSequence(int8_t box_id,bool reset_arm,
     if(ok) ok=sendServoTriggerCommand(0x02,0,new_servo_close_angle_)&&waitInterruptibly(new_servo_return_duration_s_);
   }else ok=false;
   if(ok&&reset_arm) {
-    ROS_INFO("[arm_and_gripper] 4/4 arm return: PC6=%.1f PC7=%.1f",arm_home_angle_1_,arm_home_angle_2_);
+    ROS_INFO("[arm_and_gripper] 4/4 arm return: PC6+PC8 right=%.1f PC7 left=%.1f",arm_home_angle_1_,arm_home_angle_2_);
     ok=sendArmAngleCommand(arm_home_angle_1_,arm_home_angle_2_)&&waitInterruptibly(arm_move_timeout_s_);
   }
   if(ok) ok=sendArmOwnershipCommand(0x24);

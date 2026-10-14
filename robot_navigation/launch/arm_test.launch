@@ -1,0 +1,13 @@
+<launch>
+  <!-- Compatibility name for the once-only arm+SG90+speech test. -->
+  <arg name="can_device" default="can0"/>
+  <arg name="bed_id" default="1"/>
+  <arg name="box_id" default="1"/>
+  <arg name="arm_config" default="$(find arm_and_gripper)/config/arm_and_gripper.yaml"/>
+  <include file="$(find robot_navigation)/launch/arm_demo.launch">
+    <arg name="can_device" value="$(arg can_device)"/>
+    <arg name="bed_id" value="$(arg bed_id)"/>
+    <arg name="box_id" value="$(arg box_id)"/>
+    <arg name="arm_config" value="$(arg arm_config)"/>
+  </include>
+</launch>
