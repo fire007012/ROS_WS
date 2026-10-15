@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <linux/can.h>
+#include <linux/can/error.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -110,6 +111,7 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   move_base_cancel_pub_ = nh_.advertise<actionlib_msgs::GoalID>("/move_base/cancel", 2, false);
   can_rx_pub_ = nh_.advertise<can_msgs::Frame>("/can_rx", 50);
   link_ready_pub_ = nh_.advertise<std_msgs::Bool>("/motor_link_ready", 2, true);
+  can_diagnostics_pub_ = nh_.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 2);
   monitor_timer_ = nh_.createWallTimer(ros::WallDuration(0.1), &CanInterfaceNode::timerCallback, this);
   command_timer_ = nh_.createWallTimer(ros::WallDuration(1.0 / command_publish_rate_hz_),
       &CanInterfaceNode::commandTimerCallback, this);
@@ -139,11 +141,17 @@ bool CanInterfaceNode::openSocket() {
   if (socket_fd_ >= 0) {
     return true;
   }
+  const double now = ros::SteadyTime::now().toSec();
+  if (now < next_open_attempt_sec_) return false;
+  next_open_attempt_sec_ = now + reconnect_delay_sec_;
+  reconnect_delay_sec_ = std::min(5.0, reconnect_delay_sec_ * 2.0);
+  ++socket_open_attempts_;
 
   // Nonblocking I/O keeps a full TX queue or a silent/disconnected peer from
   // blocking command expiry, shutdown, or socket reconnection.
   int fd = socket(PF_CAN, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, CAN_RAW);
   if (fd < 0) {
+    last_io_errno_.store(errno);
     ROS_ERROR_THROTTLE(1.0, "socket(PF_CAN, SOCK_RAW) failed: %s", std::strerror(errno));
     return false;
   }
@@ -152,6 +160,7 @@ bool CanInterfaceNode::openSocket() {
   std::memset(&ifr, 0, sizeof(ifr));
   std::snprintf(ifr.ifr_name, IFNAMSIZ, "%s", can_device_.c_str());
   if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0) {
+    last_io_errno_.store(errno);
     ROS_ERROR_THROTTLE(1.0, "ioctl(SIOCGIFINDEX) failed for %s: %s", can_device_.c_str(), std::strerror(errno));
     close(fd);
     return false;
@@ -162,7 +171,9 @@ bool CanInterfaceNode::openSocket() {
   addr.can_family = AF_CAN;
   addr.can_ifindex = ifr.ifr_ifindex;
 
-  if (ioctl(fd, SIOCGIFFLAGS, &ifr) < 0 || !(ifr.ifr_flags & IFF_UP)) {
+  const int flags_result = ioctl(fd, SIOCGIFFLAGS, &ifr);
+  if (flags_result < 0 || !(ifr.ifr_flags & IFF_UP)) {
+    last_io_errno_.store(flags_result < 0 ? errno : ENETDOWN);
     ROS_ERROR_THROTTLE(1.0, "CAN interface %s is not UP; check ip -details link show %s "
                        "and configure the same bitrate as STM32 CAN1.",
                        can_device_.c_str(), can_device_.c_str());
@@ -170,13 +181,28 @@ bool CanInterfaceNode::openSocket() {
     return false;
   }
 
+  const can_err_mask_t errors = CAN_ERR_TX_TIMEOUT | CAN_ERR_LOSTARB |
+      CAN_ERR_CRTL | CAN_ERR_PROT | CAN_ERR_TRX | CAN_ERR_ACK |
+      CAN_ERR_BUSOFF | CAN_ERR_BUSERROR | CAN_ERR_RESTARTED;
+  if (setsockopt(fd, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &errors, sizeof(errors)) < 0) {
+    last_io_errno_.store(errno);
+    ROS_ERROR_THROTTLE(1.0, "CAN error-frame subscription failed on %s: %s",
+                       can_device_.c_str(), std::strerror(errno));
+    close(fd);
+    return false;
+  }
+
   if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+    last_io_errno_.store(errno);
     ROS_ERROR_THROTTLE(1.0, "bind() failed on %s: %s", can_device_.c_str(), std::strerror(errno));
     close(fd);
     return false;
   }
 
   socket_fd_ = fd;
+  last_io_errno_.store(0);
+  controller_fault_.store(false);
+  last_controller_status_.store(0);
   report_configured_.store(false);
   heartbeat_ack_time_sec_.store(0);
   link_open_time_sec_.store(ros::SteadyTime::now().toSec());
@@ -189,6 +215,33 @@ bool CanInterfaceNode::openSocket() {
   }
   ROS_INFO("SocketCAN bound on %s; binding/queued TX does not prove STM32 reception.", can_device_.c_str());
   return true;
+}
+
+void CanInterfaceNode::invalidateSocketLocked(double now) {
+  if (socket_fd_ >= 0) close(socket_fd_);
+  socket_fd_ = -1;
+  next_open_attempt_sec_ = now + reconnect_delay_sec_;
+}
+
+bool CanInterfaceNode::backgroundTrafficAllowed(double now) const {
+  return !stop_pending_.load() && !controller_fault_.load() &&
+         !tx_congested_.load() && now - last_tx_failure_sec_.load() >= 0.5;
+}
+
+void CanInterfaceNode::retryStop() {
+  // A disconnected tick must not consume the retry slot: if openSocket()
+  // succeeds later in this tick, STOP must still be attempted before heartbeat.
+  if (!socketAvailable()) {
+    stop_pending_.store(true);
+    return;
+  }
+  const double now = ros::SteadyTime::now().toSec();
+  if (now - last_stop_attempt_sec_ < 0.095) return;
+  last_stop_attempt_sec_ = now;
+  // "pending" tracks local submission only. Even an accepted write is not
+  // proof of delivery; continue retrying while latched and require real feedback
+  // plus explicit reset before motion can resume.
+  stop_pending_.store(!sendControlCommand(0x03));
 }
 
 void CanInterfaceNode::closeSocket() {
@@ -217,15 +270,29 @@ bool CanInterfaceNode::sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_
   frame.can_dlc = safe_dlc;
   std::memcpy(frame.data, data, safe_dlc);
 
-  const int nbytes = write(socket_fd_, &frame, sizeof(frame));
+  int nbytes = write(socket_fd_, &frame, sizeof(frame));
+  if (nbytes < 0 && errno == EINTR) nbytes = write(socket_fd_, &frame, sizeof(frame));
   if (nbytes != static_cast<int>(sizeof(frame))) {
+    const int error = nbytes < 0 ? errno : EIO;
+    const double now = ros::SteadyTime::now().toSec();
+    last_io_errno_.store(error);
+    last_tx_failure_sec_.store(now);
+    last_failure_time_sec_.store(now);
     ROS_ERROR_THROTTLE(1.0, "CAN TX failed on %s ID=0x%X: %s; check link state, "
                        "bitrate, STM32 ACK and bus wiring.", can_device_.c_str(),
-                       can_id & CAN_EFF_MASK, std::strerror(errno));
-    close(socket_fd_);
-    socket_fd_ = -1;
+                       can_id & CAN_EFF_MASK, std::strerror(error));
+    if (error == ENOBUFS || error == EAGAIN || error == EWOULDBLOCK || error == EINTR) {
+      tx_congested_.store(true);
+      ++tx_backpressure_count_;
+      // Keep RX, the CAN error subscription and health baselines alive. Opening
+      // another socket cannot drain the interface's qdisc/controller TX queue.
+    } else {
+      invalidateSocketLocked(now);
+    }
     return false;
   }
+  tx_congested_.store(false);
+  last_io_errno_.store(0);
   ROS_INFO_ONCE("First CAN TX queued on %s: ID=0x%X %s DLC=%u. "
                 "Use STM32 RX/feedback to confirm delivery.", can_device_.c_str(),
                 can_id & CAN_EFF_MASK, (can_id & CAN_EFF_FLAG) ? "extended" : "standard", safe_dlc);
@@ -414,9 +481,10 @@ void CanInterfaceNode::triggerEmergencyStop(const char* reason) {
   last_failure_time_sec_.store(ros::SteadyTime::now().toSec());
   clearCachedMotion();
   start_state_.estopLatched();
-  const bool send_stop = !motion_.latched();
-  const bool first = motion_.stop([&] { if (send_stop) sendControlCommand(0x03); });
+  stop_pending_.store(true);
+  const bool first = motion_.stop([&] { retryStop(); });
   if (first) {
+    std_msgs::Bool ready; ready.data = false; link_ready_pub_.publish(ready);
     ROS_ERROR("[can_interface] ESTOP latched: %s", reason);
     publishStopSignals();
     publishMotionStartState();
@@ -587,6 +655,7 @@ void CanInterfaceNode::parseDiagnostics(const can_frame& frame) {
 
 bool CanInterfaceNode::linkHealthy() {
   const double now = ros::SteadyTime::now().toSec();
+  if (!socketAvailable() || !backgroundTrafficAllowed(now)) return false;
   if (!report_configured_.load() || heartbeat_ack_time_sec_.load() == 0 ||
       now - heartbeat_ack_time_sec_.load() > heartbeat_timeout_sec_) return false;
   std::lock_guard<std::mutex> lock(telemetry_mutex_);
@@ -617,6 +686,97 @@ void CanInterfaceNode::publishTelemetry() {
   motor_status_flag_pub_.publish(mflag);
 }
 
+void CanInterfaceNode::handleCanErrorFrame(const can_frame& frame) {
+  if (frame.can_dlc != CAN_ERR_DLC) return;
+  const uint32_t errors = frame.can_id & CAN_ERR_MASK;
+  ++can_error_count_;
+  last_can_error_class_.store(errors);
+  if (errors & CAN_ERR_CRTL) last_controller_status_.store(frame.data[1]);
+  const bool crc = (errors & CAN_ERR_PROT) &&
+      (frame.data[3] == CAN_ERR_PROT_LOC_CRC_SEQ || frame.data[3] == CAN_ERR_PROT_LOC_CRC_DEL);
+  const bool format = (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_FORM);
+  const bool stuff = (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_STUFF);
+  const bool overflow = (errors & CAN_ERR_CRTL) &&
+      (frame.data[1] & (CAN_ERR_CRTL_RX_OVERFLOW | CAN_ERR_CRTL_TX_OVERFLOW));
+  if (crc) ++can_crc_error_count_;
+  if (format) ++can_format_error_count_;
+  if (stuff) ++can_stuff_error_count_;
+  if (overflow) ++can_overflow_count_;
+  const bool passive = (errors & CAN_ERR_CRTL) &&
+      (frame.data[1] & (CAN_ERR_CRTL_RX_PASSIVE | CAN_ERR_CRTL_TX_PASSIVE));
+  const bool warning = (errors & CAN_ERR_CRTL) &&
+      (frame.data[1] & (CAN_ERR_CRTL_RX_WARNING | CAN_ERR_CRTL_TX_WARNING));
+  const bool bus_off = errors & CAN_ERR_BUSOFF;
+  const bool recovered = (errors & CAN_ERR_RESTARTED) ||
+      ((errors & CAN_ERR_CRTL) && (frame.data[1] & CAN_ERR_CRTL_ACTIVE));
+  if (recovered && !passive && !bus_off) {
+    controller_fault_.store(false);
+    if (!(errors & CAN_ERR_CRTL)) last_controller_status_.store(CAN_ERR_CRTL_ACTIVE);
+    ROS_INFO("CAN controller on %s reported recovery; fresh feedback and explicit ESTOP reset still required",
+             can_device_.c_str());
+  }
+  if (errors & (CAN_ERR_TX_TIMEOUT | CAN_ERR_PROT | CAN_ERR_TRX | CAN_ERR_ACK |
+                CAN_ERR_BUSOFF | CAN_ERR_BUSERROR) || passive || warning || overflow) {
+    last_failure_time_sec_.store(ros::SteadyTime::now().toSec());
+    ROS_ERROR_THROTTLE(1.0,
+        "CAN bus error on %s: class=0x%X controller=%s flags=0x%02X protocol=0x%02X location=0x%02X "
+        "CRC=%s format=%s bit-stuffing=%s overflow=%s (not an application RX timeout)",
+        can_device_.c_str(), errors,
+        bus_off ? "BUS-OFF" : passive ? "ERROR-PASSIVE" : warning ? "ERROR-WARNING" : "see-flags",
+        frame.data[1], frame.data[2], frame.data[3], crc ? "yes" : "no",
+        format ? "yes" : "no", stuff ? "yes" : "no", overflow ? "yes" : "no");
+  }
+  if (passive || bus_off) {
+    controller_fault_.store(true);
+    if (!motion_.latched())
+      triggerEmergencyStop(bus_off ? "CAN controller BUS-OFF" : "CAN controller ERROR-PASSIVE");
+  }
+}
+
+void CanInterfaceNode::publishCanDiagnostics(double now) {
+  if (now - last_diagnostics_sec_ < 1.0) return;
+  last_diagnostics_sec_ = now;
+  diagnostic_msgs::DiagnosticArray array;
+  array.header.stamp = ros::Time::now();
+  diagnostic_msgs::DiagnosticStatus status;
+  status.name = "STM32 Motor/CAN";
+  status.hardware_id = can_device_;
+  const bool available = socketAvailable();
+  status.level = !available || controller_fault_.load() || tx_congested_.load()
+      ? diagnostic_msgs::DiagnosticStatus::ERROR
+      : motion_.latched() ? diagnostic_msgs::DiagnosticStatus::WARN
+                         : diagnostic_msgs::DiagnosticStatus::OK;
+  status.message = !available ? "Socket unavailable; reconnect uses backoff"
+      : controller_fault_.load() ? "CAN controller fault; awaiting recovery event"
+      : tx_congested_.load() ? "TX backpressure; RX retained, STOP has priority"
+      : motion_.latched() ? "ESTOP latched; STOP submission is retried"
+      : linkHealthy() ? "Fresh STM32 and motor feedback" : "Waiting for fresh feedback";
+  if (status.level == diagnostic_msgs::DiagnosticStatus::OK && !linkHealthy())
+    status.level = diagnostic_msgs::DiagnosticStatus::WARN;
+  const auto add = [&](const std::string& key, const std::string& value) {
+    diagnostic_msgs::KeyValue item; item.key = key; item.value = value;
+    status.values.push_back(item);
+  };
+  add("socket_open_attempts", std::to_string(socket_open_attempts_.load()));
+  add("last_io_errno", std::to_string(last_io_errno_.load()));
+  add("tx_backpressure_count", std::to_string(tx_backpressure_count_.load()));
+  add("can_error_frames", std::to_string(can_error_count_.load()));
+  add("crc_errors", std::to_string(can_crc_error_count_.load()));
+  add("format_errors", std::to_string(can_format_error_count_.load()));
+  add("bit_stuffing_errors", std::to_string(can_stuff_error_count_.load()));
+  add("controller_overflows", std::to_string(can_overflow_count_.load()));
+  add("last_error_class", std::to_string(last_can_error_class_.load()));
+  add("last_controller_flags", std::to_string(last_controller_status_.load()));
+  add("stop_pending_local_submission", stop_pending_.load() ? "true" : "false");
+  {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    add("next_reconnect_in_sec", std::to_string(available ? 0.0 : std::max(0.0, next_open_attempt_sec_ - now)));
+    add("reconnect_delay_sec", std::to_string(reconnect_delay_sec_));
+  }
+  array.status.push_back(status);
+  can_diagnostics_pub_.publish(array);
+}
+
 void CanInterfaceNode::canReceiveThread() {
   while (running_.load() && ros::ok()) {
     struct can_frame raw_frame;
@@ -628,9 +788,10 @@ void CanInterfaceNode::canReceiveThread() {
       if (socket_fd_ >= 0) {
         nbytes = read(socket_fd_, &raw_frame, sizeof(raw_frame));
         if (nbytes < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+          const int error = errno;
+          last_io_errno_.store(error);
           ROS_ERROR_THROTTLE(1.0, "CAN read error on %s: %s", can_device_.c_str(), std::strerror(errno));
-          close(socket_fd_);
-          socket_fd_ = -1;
+          invalidateSocketLocked(ros::SteadyTime::now().toSec());
         }
       }
     }
@@ -638,7 +799,12 @@ void CanInterfaceNode::canReceiveThread() {
       ros::WallDuration(0.005).sleep();
       continue;
     }
-    if (raw_frame.can_dlc > 8 || (raw_frame.can_id & (CAN_RTR_FLAG | CAN_ERR_FLAG))) continue;
+    if (raw_frame.can_dlc > 8) continue;
+    if (raw_frame.can_id & CAN_ERR_FLAG) {
+      handleCanErrorFrame(raw_frame);
+      continue;  // An error frame must never refresh feedback/ACK timestamps.
+    }
+    if (raw_frame.can_id & CAN_RTR_FLAG) continue;
 
     const ros::Time frame_time = ros::Time::now();
 
@@ -672,7 +838,12 @@ void CanInterfaceNode::canReceiveThread() {
 }
 
 void CanInterfaceNode::probeTimerCallback(const ros::WallTimerEvent&) {
-  if (!socketAvailable()) return;
+  const double now = ros::SteadyTime::now().toSec();
+  if (!socketAvailable() || !backgroundTrafficAllowed(now)) return;
+  // Retain enough queries for all eight speed/status replies to stay fresh
+  // (0.8 s per round at 10 Hz), but reduce traffic while the stop is latched.
+  if (motion_.latched() && now - last_probe_attempt_sec_ < 0.095) return;
+  last_probe_attempt_sec_ = now;
   // Interleave speed/status: each of four motors is checked every 400 ms.
   const size_t wheel = (probe_slot_ / 2) % 4;
   const auto frame = driverRead(static_cast<uint8_t>(wheel_map_.indices[wheel] + 1),
@@ -683,24 +854,24 @@ void CanInterfaceNode::probeTimerCallback(const ros::WallTimerEvent&) {
 }
 
 void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
-  std_msgs::Bool ready;
-  ready.data = linkHealthy() && !motion_.latched();
-  link_ready_pub_.publish(ready);
+  const double now = ros::SteadyTime::now().toSec();
   if (!socketAvailable()) {
     if (!motion_.latched()) triggerEmergencyStop("CAN socket unavailable");
     openSocket();
-    return;
   }
-  if (!sendControlCommand(0x09)) {
+  // Retry STOP first, including in the same tick as a successful reconnect.
+  // Heartbeat failure and link monitoring must not bypass this path.
+  if (motion_.latched()) motion_.stop([&] { retryStop(); });
+  if (socketAvailable() && !sendControlCommand(0x09)) {
     triggerEmergencyStop("CAN heartbeat transmit failure");
-    return;
   }
-  const double now = ros::SteadyTime::now().toSec();
   // Firmware boots with basic+position only (mask=3), so velocity feedback must
   // be requested explicitly. Retry until ACK and reconfigure after reconnect.
-  if (!report_configured_.load() && now - last_report_request_sec_ >= 1.0) {
+  if (socketAvailable() && backgroundTrafficAllowed(now) &&
+      !report_configured_.load() && now - last_report_request_sec_ >= 1.0) {
     last_report_request_sec_ = now;
-    sendControlCommand(0x07, report_mask_);
+    if (!sendControlCommand(0x07, report_mask_))
+      triggerEmergencyStop("CAN report configuration transmit failure");
   }
   if (now - last_rx_time_sec_.load() > heartbeat_timeout_sec_) {
     ROS_WARN_THROTTLE(1.0, "CAN heartbeat timeout: no STM32 reply on %s ID=0x%X %s for %.2f s. "
@@ -721,12 +892,20 @@ void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
   }
   if (motion_ack_expired && !motion_.latched() && start_state_.state() == MotionStartState::RUNNING)
     triggerEmergencyStop("CAN2 per-wheel F6 motion ACK timeout");
-  // Retry the stop after a lost write/reconnect; never emit F6 while latched.
-  if (motion_.latched()) motion_.stop([&] { sendControlCommand(0x03); });
+  const bool healthy = linkHealthy();
+  if (healthy && now - last_failure_time_sec_.load() >= 1.0) {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    reconnect_delay_sec_ = 0.5;
+  }
+  std_msgs::Bool ready;
+  ready.data = healthy && !motion_.latched();
+  link_ready_pub_.publish(ready);
+  publishCanDiagnostics(now);
 }
 
 }  // namespace can_motor_interface
 
+#ifndef CAN_MOTOR_INTERFACE_NO_MAIN
 int main(int argc, char** argv) {
   ros::init(argc, argv, "can_interface_node");
   ros::NodeHandle nh;
@@ -741,3 +920,4 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
+#endif

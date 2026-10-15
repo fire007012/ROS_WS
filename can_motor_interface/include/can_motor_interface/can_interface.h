@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <can_msgs/Frame.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 #include <actionlib_msgs/GoalID.h>
 #include <ros/ros.h>
 #include <std_msgs/Float32MultiArray.h>
@@ -28,6 +29,7 @@ class CanInterfaceNode {
   ~CanInterfaceNode();
 
  private:
+  friend class CanInterfaceNodeTestPeer;
   void cmdCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
   void commandTimerCallback(const ros::WallTimerEvent& event);
   void timerCallback(const ros::WallTimerEvent& event);
@@ -40,6 +42,11 @@ class CanInterfaceNode {
   bool openSocket();
   void closeSocket();
   bool socketAvailable();
+  void invalidateSocketLocked(double now);
+  bool backgroundTrafficAllowed(double now) const;
+  void retryStop();  // Called under MotionInterlock's mutex.
+  void handleCanErrorFrame(const can_frame& frame);
+  void publishCanDiagnostics(double now);
   bool sendSpeedCommand(uint8_t motor_index, float target_rpm, bool cached);
   bool sendControlCommand(uint8_t command, int32_t value = 0);
   bool sendCanFrame(uint32_t can_id, const uint8_t* data, uint8_t dlc);
@@ -75,6 +82,7 @@ class CanInterfaceNode {
   ros::Publisher move_base_cancel_pub_;
   ros::Publisher can_rx_pub_;
   ros::Publisher link_ready_pub_;
+  ros::Publisher can_diagnostics_pub_;
   ros::WallTimer monitor_timer_;
   ros::WallTimer command_timer_;
   ros::WallTimer probe_timer_;
@@ -85,6 +93,28 @@ class CanInterfaceNode {
   std::atomic<bool> running_;
   MotionInterlock motion_;
   std::thread rx_thread_;
+
+  // Socket lifecycle/backoff is protected by socket_mutex_. A successful bind
+  // does not reset the backoff; fresh application feedback must confirm recovery.
+  double next_open_attempt_sec_ = 0;
+  double reconnect_delay_sec_ = 0.5;
+  std::atomic<bool> tx_congested_{false};
+  std::atomic<bool> controller_fault_{false};
+  std::atomic<bool> stop_pending_{false};
+  std::atomic<double> last_tx_failure_sec_{0};
+  std::atomic<int> last_io_errno_{0};
+  std::atomic<uint64_t> socket_open_attempts_{0};
+  std::atomic<uint64_t> tx_backpressure_count_{0};
+  std::atomic<uint64_t> can_error_count_{0};
+  std::atomic<uint64_t> can_crc_error_count_{0};
+  std::atomic<uint64_t> can_format_error_count_{0};
+  std::atomic<uint64_t> can_stuff_error_count_{0};
+  std::atomic<uint64_t> can_overflow_count_{0};
+  std::atomic<uint32_t> last_can_error_class_{0};
+  std::atomic<uint8_t> last_controller_status_{0};
+  double last_stop_attempt_sec_ = 0;  // Protected by MotionInterlock's mutex.
+  double last_probe_attempt_sec_ = 0;  // ROS callback thread only.
+  double last_diagnostics_sec_ = 0;
 
   WheelMap wheel_map_;
   DriverHealth driver_health_;

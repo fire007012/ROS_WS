@@ -7,12 +7,13 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   can_msgs
+  diagnostic_msgs
   actionlib_msgs
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp std_msgs can_msgs actionlib_msgs
+  CATKIN_DEPENDS roscpp std_msgs can_msgs diagnostic_msgs actionlib_msgs
 )
 
 include_directories(
@@ -47,7 +48,14 @@ catkin_install_python(PROGRAMS scripts/y42_direct_node.py scripts/check_stm32_ca
 )
 
 if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
   catkin_add_gtest(test_can_protocol test/test_can_protocol.cpp)
   target_include_directories(test_can_protocol PRIVATE include)
   target_link_libraries(test_can_protocol gtest_main)
+  add_rostest_gtest(test_can_transport test/can_transport.test
+    test/test_can_transport.cpp src/can_interface_node.cpp)
+  target_compile_definitions(test_can_transport PRIVATE CAN_MOTOR_INTERFACE_NO_MAIN)
+  target_link_libraries(test_can_transport ${catkin_LIBRARIES} pthread
+    -Wl,--wrap=socket -Wl,--wrap=ioctl -Wl,--wrap=bind
+    -Wl,--wrap=setsockopt -Wl,--wrap=read -Wl,--wrap=write -Wl,--wrap=close)
 endif()

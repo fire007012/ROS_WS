@@ -1,0 +1,6 @@
+<launch>
+  <!-- All PF_CAN system calls in this binary are intercepted. No real CAN
+       interface or motor controller is opened, configured or transmitted to. -->
+  <test test-name="can_transport" pkg="can_motor_interface"
+        type="test_can_transport" time-limit="60"/>
+</launch>
