@@ -7,6 +7,7 @@
   <arg name="enable_audio" />
   <arg name="enable_video" />
   <arg name="enable_display" />
+  <arg name="enable_image_view" />
   <arg name="start_lower_cam" />
   <arg name="use_opencv_capture" />
   <arg name="use_test_camera" />
@@ -36,6 +37,7 @@
   <arg name="tx_port" />
   <arg name="mic_device" />
   <arg name="speaker_device" />
+  <arg name="video_display_fps" />
   <arg name="local_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
   <arg name="local_camera_node" value="$(eval 'upper_usb_cam' if arg('role') == 'master' else 'lower_usb_cam')" />
   <arg name="remote_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
@@ -54,8 +56,10 @@
         <arg name="image_height" value="$(arg cam_height)"/>
         <arg name="framerate" value="$(arg cam_framerate)"/>
         <arg name="pixel_format" value="$(arg cam_pixel_format)"/>
-  <arg name="use_test_camera" value="$(arg use_test_camera)"/>
+        <arg name="use_test_camera" value="$(arg use_test_camera)"/>
         <arg name="use_opencv_capture" value="$(arg use_opencv_capture)"/>
+        <arg name="capture_wait_for_ready" value="true"/>
+        <arg name="capture_ready_topic" value="$(arg ready_topic)"/>
       </include>
       <node pkg="robot_navigation" type="video_stream_node" name="video_sender_$(arg role)" output="screen">
         <param name="camera_topic" value="/$(arg local_camera_ns)/$(arg local_camera_node)/image_raw" />
@@ -70,7 +74,7 @@
         <param name="ready_topic" value="$(arg ready_topic)" />
       </node>
     </group>
-    <node pkg="robot_navigation" type="video_stream_node" name="video_stream_$(arg role)" output="screen">
+      <node pkg="robot_navigation" type="video_stream_node" name="video_stream_$(arg role)" output="screen">
       <param name="camera_topic" value="/$(arg remote_camera_ns)/network/compressed" />
       <param name="input_compressed" value="true" />
       <param name="enable_ros_topic" value="false" />
@@ -84,7 +88,7 @@
       <param name="framerate" value="$(arg stream_framerate)" />
       <param name="ready_topic" value="$(arg ready_topic)" />
     </node>
-    <node pkg="image_view" type="image_view" name="$(arg remote_view_node)" output="screen" if="$(arg enable_display)">
+    <node pkg="image_view" type="image_view" name="$(arg remote_view_node)" output="screen" if="$(eval arg('enable_image_view') and arg('enable_display'))">
       <remap from="image" to="$(arg remote_display_topic)" />
       <param name="queue_size" value="1" />
     </node>

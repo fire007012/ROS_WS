@@ -295,7 +295,8 @@
     </node>
   </group>
 
-  <!-- Dedicated call camera; shared defaults select /dev/video2 on the Pi. -->
+  <!-- PC1 mission start keeps /Ready=1 through both beds and return.
+       Shared defaults capture the Pi call camera at 640x480@25 from /dev/video2. -->
   <group if="$(arg enable_audio_video)">
     <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
       <arg name="role" value="slave"/>
@@ -303,6 +304,7 @@
       <arg name="remote_ip" value="$(arg audio_remote_ip)"/>
       <arg name="ready_topic" value="$(arg audio_ready_topic)"/>
       <arg name="enable_display" value="$(arg enable_gui)"/>
+      <arg name="enable_image_view" value="false"/>
     </include>
   </group>
   <node pkg="robot_navigation" type="bedside_session_node.py" name="bedside_session_node" output="screen">
@@ -312,7 +314,13 @@
     <param name="call_duration_s" value="$(arg call_duration_s)"/>
   </node>
   <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node"
-        output="screen" if="$(arg enable_gui)"/>
+        output="screen" if="$(arg enable_gui)">
+    <param name="fullscreen" value="true"/>
+    <param name="video_topic" value="/camera/upper_display"/>
+    <param name="scan_mode_topic" value="/barcode_scan/camera_mode"/>
+    <param name="call_camera_status_topic" value="/lower_cam/lower_usb_cam/capture_status"/>
+    <param name="video_display_fps" value="15.0"/>
+  </node>
 
   <!-- ============================================================ -->
   <!--  第8层：安全感知层                                            -->

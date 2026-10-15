@@ -231,6 +231,7 @@ class MissionController {
   ros::Publisher chassis_lock_pub_;      // 底盘锁死信号
   ros::Publisher scan_target_bed_pub_;
   ros::Publisher scan_session_pub_, qr_enabled_pub_;
+  ros::Publisher av_ready_pub_;
 
   // 服务客户端
   ros::ServiceClient path_select_client_;

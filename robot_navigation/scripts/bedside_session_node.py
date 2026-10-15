@@ -6,7 +6,7 @@ import threading
 import time
 import rospy
 from sensor_msgs.msg import CompressedImage
-from std_msgs.msg import Bool, Int32, String, Empty
+from std_msgs.msg import Bool, String, Empty
 from std_srvs.srv import Trigger, TriggerResponse
 
 class BedsideSession:
@@ -28,7 +28,6 @@ class BedsideSession:
         self.peer_time = self.video_time = self.vitals_time = 0.0
         self.vitals_valid = False
         self.last_seq = None
-        self.ready = rospy.Publisher('/Ready', Int32, queue_size=1, latch=True)
         self.status = rospy.Publisher('/bedside/status', String, queue_size=1, latch=True)
         self.subs = [rospy.Subscriber('/audio_chat/slave/peer_ready', Bool, self.on_peer),
                      rospy.Subscriber('/upper_cam/network/compressed', CompressedImage, self.on_video),
@@ -65,7 +64,6 @@ class BedsideSession:
     def cancel(self, _):
         self.generation += 1
         self.enabled = False
-        self.ready.publish(Int32(data=0))
 
     def on_estop(self, msg):
         if msg.data:
@@ -93,8 +91,6 @@ class BedsideSession:
             call_since = measure_since = None
             call_done = not self.audio
             measure_done = not self.measure
-            if self.audio:
-                self.ready.publish(Int32(data=1))
             self.status.publish('waiting for doctor video/audio and fresh bedside measurement')
             while not rospy.is_shutdown():
                 now = time.monotonic()
@@ -116,8 +112,6 @@ class BedsideSession:
                 time.sleep(0.05)
             return TriggerResponse(False, 'ROS shutdown')
         finally:
-            if self.audio:
-                self.ready.publish(Int32(data=0))
             self.lock.release()
 
 if __name__ == '__main__':

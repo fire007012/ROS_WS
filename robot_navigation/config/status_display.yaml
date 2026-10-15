@@ -10,5 +10,9 @@ esp32_vitals_bridge_node:
   tcp_port: 8899
 
 robot_status_display_node:
-  fullscreen: false
+  fullscreen: true
   vitals_timeout_s: 3.0
+  video_topic: /camera/upper_display
+  scan_mode_topic: /barcode_scan/camera_mode
+  call_camera_status_topic: /lower_cam/lower_usb_cam/capture_status
+  video_display_fps: 15.0

@@ -35,7 +35,20 @@ class AVSettingsStructure(unittest.TestCase):
                     if arg.get('value') is None}
         self.assertEqual(set(names), required)
         self.assertEqual(settings.find("arg[@name='enable_http']").get('default'), 'false')
+        self.assertEqual(settings.find("arg[@name='stream_framerate']").get('default'), '25.0')
+        self.assertEqual(settings.find("arg[@name='video_display_fps']").get('default'), '15.0')
         self.assertEqual(settings.find('include').get('pass_all_args'), 'true')
+        camera = PEER.read_text(encoding='utf-8')
+        self.assertIn('<arg name="capture_wait_for_ready" value="true"/>', camera)
+        self.assertIn('<arg name="capture_ready_topic" value="$(arg ready_topic)"/>', camera)
+
+    def test_call_stream_defaults_match_480p_25fps_pi_test(self):
+        settings = ET.parse(SETTINGS).getroot()
+        for name, expected in [('cam_width','640'),('cam_height','480'),
+                               ('cam_framerate','25'),('stream_width','640'),
+                               ('stream_height','480'),('stream_framerate','25.0'),
+                               ('mic_device','default')]:
+            self.assertEqual(settings.find("arg[@name='%s']" % name).get('default'), expected)
 
     def test_wrappers_fix_roles_and_forward_cli(self):
         for role in ('master', 'slave'):
@@ -91,9 +104,11 @@ class AVLaunchLoading(unittest.TestCase):
         ):
             with self.subTest(role=role):
                 c = self.load_peer(role)
-                self.assertEqual({n.name for n in c.nodes},
-                                 {camera, 'video_sender_' + role, 'video_stream_' + role,
-                                  view, 'audio_chat_' + role})
+                expected_nodes = {camera, 'video_sender_' + role,
+                                  'video_stream_' + role, 'audio_chat_' + role}
+                if role == 'master':
+                    expected_nodes.add(view)
+                self.assertEqual({n.name for n in c.nodes}, expected_nodes)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'role'), role)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'local_ip'), local)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'remote_ip'), remote)
