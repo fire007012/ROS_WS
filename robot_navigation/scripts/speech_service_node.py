@@ -21,20 +21,31 @@ class SpeechService:
         self.voice = rospy.get_param('~voice', 'zh')
         self.device = rospy.get_param('~speaker_device', 'default')
         self.timeout = float(rospy.get_param('~playback_timeout_s', 15.0))
+        self.bed_audio = {1: os.path.expanduser(str(rospy.get_param('~bed1_audio_file', ''))),
+                          3: os.path.expanduser(str(rospy.get_param('~bed3_audio_file', '')))}
         self.directory = tempfile.TemporaryDirectory(prefix='robot-speech-')
         self.cache = {}
-        if self.engine and self.player:
-            for bed in (1, 3):
-                text = '%d床病人请取药' % bed
-                path = os.path.join(self.directory.name, '%d.wav' % bed)
-                try:
-                    subprocess.run([self.engine, '-v', self.voice, '-s', '175', '-w', path, text],
-                                   check=True, timeout=5, stdout=subprocess.DEVNULL)
-                    self.cache[text] = path
-                except (OSError, subprocess.SubprocessError) as exc:
-                    rospy.logerr('[speech] cannot prepare phrase: %s', exc)
-        else:
-            rospy.logerr('[speech] install espeak-ng and pulseaudio-utils; speech will fail until available')
+        if not self.player:
+            rospy.logerr('[speech] install pulseaudio-utils (paplay)')
+        for bed in (1, 3):
+            text = '%d床病人请取药' % bed
+            selected_file = self.bed_audio[bed]
+            if selected_file:
+                if not os.path.isfile(selected_file):
+                    rospy.logerr('[speech] configured audio file not found: %s', selected_file)
+                else:
+                    self.cache[text] = selected_file
+                continue
+            if not self.engine:
+                rospy.logerr('[speech] set a local audio file or install espeak-ng')
+                continue
+            path = os.path.join(self.directory.name, '%d.wav' % bed)
+            try:
+                subprocess.run([self.engine, '-v', self.voice, '-s', '175', '-w', path, text],
+                               check=True, timeout=5, stdout=subprocess.DEVNULL)
+                self.cache[text] = path
+            except (OSError, subprocess.SubprocessError) as exc:
+                rospy.logerr('[speech] cannot prepare phrase: %s', exc)
         self.subs = [rospy.Subscriber('/mission/cancel', Empty, self.cancel),
                      rospy.Subscriber('/emergency_stop', Bool, self.on_estop),
                      rospy.Subscriber('/emergency_stop/reset', Bool, self.on_reset),
@@ -87,11 +98,13 @@ class SpeechService:
         try:
             if not request.text or len(request.text) > 256 or not self.enabled or self.estop:
                 raise RuntimeError('invalid text or speech disabled')
-            if not self.engine or not self.player:
-                raise RuntimeError('espeak(-ng)/paplay is missing')
+            if not self.player:
+                raise RuntimeError('paplay is missing')
             generation = self.generation
             path = self.cache.get(request.text)
             if path is None:
+                if not self.engine:
+                    raise RuntimeError('espeak-ng/espeak is missing for unconfigured text')
                 path = os.path.join(self.directory.name, 'custom.wav')
                 self.run([self.engine, '-v', self.voice, '-s', '175', '-w', path, request.text], generation, 5)
             args = [self.player]
