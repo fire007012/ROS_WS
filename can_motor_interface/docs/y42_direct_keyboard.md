@@ -11,7 +11,7 @@ source devel/setup.bash
 roslaunch robot_bringup y42_keyboard_test.launch can_device:=can0 max_rpm:=30
 ```
 can0应已UP且和所有电机一致为500000。电机必须设置X固件、CAN通信、固定6B校验以及正常默认速度单位。代码不会修改电机参数、写Flash、自动使能。
-架空四轮，确保机械急停可用；确认电机已使能、无故障。启动时只查询/停止，不会自行运动。
+架空四轮，确认电机已使能、无故障。启动时只查询/停止，不会自行运动。
 
 终端2：
 ```bash
@@ -31,7 +31,7 @@ ready表示反馈就绪，不表示已解锁。arm必须返回success:true，再
 ```bash
 rosservice call /y42_direct/disarm '{}'
 ```
-手动停止。Ctrl+C也会尽力逐轮发送FE停止；USB拔出/进程kill -9/电源故障无法保证停止命令送达，必须有硬件急停并检查电机通信丢失保护。
+手动停止。Ctrl+C也会尽力逐轮发送FE停止；USB拔出/进程kill -9/电源故障无法保证停止命令送达，需检查电机通信丢失保护。
 
 ## 协议
 发送速度：扩展ID=(地址<<8)，DLC8，F6 direction accel_hi accel_lo speed_hi speed_lo 00 6B。
@@ -92,7 +92,7 @@ python3 src/can_motor_interface/test/test_y42_direct.py
 roslaunch robot_bringup y42_keyboard_test.launch can_device:=can0 max_rpm:=30 stall_warning_timeout:=0.5
 ```
 按实际验证过的轮位另加motor_ids；本次未改映射。
-仍然需要硬件急停，软件/USB-CAN断开时不能保证停止命令送达。
+软件/USB-CAN断开时不能保证停止命令送达。
 
 
 ## 2026-10-02：ENOBUFS / Errno 105发送队列修正
@@ -100,7 +100,7 @@ roslaunch robot_bringup y42_keyboard_test.launch can_device:=can0 max_rpm:=30 st
 新TxSchedule一次只选一帧，最小发送间隔4ms，不补发因调度延迟错过的周期，不缓存旧运动目标。
 运动指令和查询轮询错开；正常运行每轮速度目标约20Hz、每个查询约10Hz（实际取决于调度）。
 未解锁时降低停止帧频率。发送失败立即取消armed并锁存故障；停止普通查询和运动，仅做两轮逐轮FE停止尝试，帧间至少50ms。后续不自动清故障、不重放运动。
-FE成功写入socket仍不证明电机已执行停止，断线/堵总线必须使用硬件急停。
+FE成功写入socket仍不证明电机已执行停止，断线/堵总线后需确认实际轮速。
 /arm不能清CAN发送故障，必须修复链路并重启节点。
 
 排查步骤：

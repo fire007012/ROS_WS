@@ -77,7 +77,6 @@
   <!-- STM32 CAN1 0x112 is the authoritative physical start event. -->
   <arg name="enable_physical_start" default="false"/>
   <arg name="enable_can_start_signal" default="true"/>
-  <arg name="enable_emergency_stop" default="false"/>
   <arg name="enable_audio_video" default="true"/>
   <arg name="audio_role" default="slave"/>
   <arg name="audio_local_ip" default="$(optenv ROS_IP 0.0.0.0)"/>
@@ -346,18 +345,6 @@
     <param name="release_hysteresis_mm" value="30.0"/>
     <param name="rotation_clearance_mm" value="100.0"/> <!-- 圆形车体外缘的转向净空 -->
   </node>
-
-  <!-- 8.3 急停按钮（GPIO 直连） -->
-  <group if="$(arg enable_emergency_stop)">
-    <node pkg="robot_navigation" type="emergency_stop_node"
-          name="emergency_stop_node" output="screen" required="true">
-      <param name="estop_pin" value="22"/>
-      <param name="led_pin" value="23"/>
-      <param name="debounce_ms" value="30"/>
-      <param name="active_low" value="true"/>
-      <param name="poll_rate_hz" value="100.0"/>
-    </node>
-  </group>
 
   <!-- 外部心率/体温测量装置接入点。接口由外部 launch 提供，默认关闭。 -->
   <group if="$(arg enable_patient_measurement)">

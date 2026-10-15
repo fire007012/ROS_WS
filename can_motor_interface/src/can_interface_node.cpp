@@ -450,12 +450,6 @@ void CanInterfaceNode::handleCanEvent(const CanEvent& event) {
       std_msgs::String display; display.data = motion_.latched() ? "急停中" : "物理启动"; display_pub_.publish(display);
       break;
     }
-    case CanEventType::PHYSICAL_ESTOP:
-      if (!isDuplicateEvent(0x20, ros::SteadyTime::now())) {
-        ROS_ERROR("[can_interface] physical emergency stop event; cancelling START_PENDING");
-        triggerEmergencyStop("physical estop button");
-      }
-      break;
     case CanEventType::HEARTBEAT_TIMEOUT:
       if (!isDuplicateEvent(0x21, ros::SteadyTime::now())) {
         ROS_ERROR("[can_interface] STM32 heartbeat timeout event; reason=0x%02X", event.detail);

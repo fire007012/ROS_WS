@@ -243,18 +243,6 @@ target_link_libraries(start_button_node
   ${catkin_LIBRARIES}
 )
 
-# ── 急停按钮节点 (GPIO) ────────────────────────────────────
-add_executable(emergency_stop_node
-  src/emergency_stop_node.cpp
-)
-add_dependencies(emergency_stop_node
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS}
-)
-target_link_libraries(emergency_stop_node
-  ${catkin_LIBRARIES}
-)
-
 catkin_install_python(PROGRAMS
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
@@ -279,7 +267,6 @@ install(TARGETS
   health_monitor_node
   video_stream_node
   start_button_node
-  emergency_stop_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )

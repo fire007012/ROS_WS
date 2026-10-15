@@ -375,7 +375,7 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
 
 void MissionController::emergencyStopCallback(const std_msgs::Bool::ConstPtr& msg) {
   if (!msg->data || estop_latched_) return;
-  ROS_ERROR("[mission_controller] physical/software ESTOP: cancelling mission and navigation");
+  ROS_ERROR("[mission_controller] software ESTOP: cancelling mission and navigation");
   estop_latched_ = true;
   cancelMissionActions();
   mission_started_.store(false);
