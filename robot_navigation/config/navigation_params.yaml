@@ -8,7 +8,7 @@
 # ── 机器人物理参数 ──────────────────────────────────────────────
 robot:
   wheel_radius: 0.075           # 轮径 150 mm，轮半径 75 mm (m)
-  wheel_base: 0.18              # 轮心到底盘中心距离 (m)
+  wheel_base: 0.20              # 轮心到底盘中心距离 (m)，用户确认 200 mm
 
   max_linear_vel: 0.25          # 最大线速度 (m/s)
   max_angular_vel: 0.5          # 最大角速度 (rad/s)
