@@ -32,6 +32,7 @@
 #include <cerrno>
 #include <cstring>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -407,12 +408,13 @@ class VideoStreamNode {
     try {
       cv::Mat frame=cv::imdecode(msg->data, cv::IMREAD_COLOR);
       if(frame.empty()) { ROS_WARN_THROTTLE(5.0,"Invalid compressed image"); return; }
-      processAndPublish(frame,msg->header.stamp,&msg->data);
+      processAndPublish(frame,msg->header.stamp,&msg->data,msg->header.frame_id);
     } catch(const cv::Exception& e) {ROS_WARN_THROTTLE(5.0,"Video decode: %s",e.what());}
   }
 
   void processAndPublish(const cv::Mat& input, ros::Time stamp,
-                         const std::vector<uint8_t>* original_jpeg=nullptr) {
+                         const std::vector<uint8_t>* original_jpeg=nullptr,
+                         const std::string& frame_id="camera") {
     const double begin=ros::WallTime::now().toSec();
     cv::Mat frame=input;
     // Fit inside the configured box; never enlarge a low-resolution source.
@@ -427,12 +429,12 @@ class VideoStreamNode {
       }
       if(enable_http_&&server_) server_->updateFrame(*jpeg);
       if(enable_ros_topic_) {
-        sensor_msgs::CompressedImage out;out.header.stamp=stamp;out.header.frame_id="camera";
+        sensor_msgs::CompressedImage out;out.header.stamp=stamp;out.header.frame_id=frame_id;
         out.format="jpeg";out.data=*jpeg;compressed_pub_.publish(out);
       }
     }
     if(enable_local_display_) {
-      cv_bridge::CvImage out;out.header.stamp=stamp;out.header.frame_id="camera";
+      cv_bridge::CvImage out;out.header.stamp=stamp;out.header.frame_id=frame_id;
       out.encoding=sensor_msgs::image_encodings::BGR8;out.image=frame;
       local_display_pub_.publish(out.toImageMsg());
     }

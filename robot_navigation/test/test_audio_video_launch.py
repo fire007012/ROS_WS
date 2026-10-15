@@ -35,6 +35,8 @@ class AVSettingsStructure(unittest.TestCase):
                     if arg.get('value') is None}
         self.assertEqual(set(names), required)
         self.assertEqual(settings.find("arg[@name='enable_http']").get('default'), 'false')
+        self.assertEqual(settings.find("arg[@name='stream_framerate']").get('default'), '25.0')
+        self.assertEqual(settings.find("arg[@name='video_display_fps']").get('default'), '15.0')
         self.assertEqual(settings.find('include').get('pass_all_args'), 'true')
         camera = PEER.read_text(encoding='utf-8')
         self.assertIn('<arg name="capture_wait_for_ready" value="true"/>', camera)
@@ -102,9 +104,11 @@ class AVLaunchLoading(unittest.TestCase):
         ):
             with self.subTest(role=role):
                 c = self.load_peer(role)
-                self.assertEqual({n.name for n in c.nodes},
-                                 {camera, 'video_sender_' + role, 'video_stream_' + role,
-                                  view, 'audio_chat_' + role})
+                expected_nodes = {camera, 'video_sender_' + role,
+                                  'video_stream_' + role, 'audio_chat_' + role}
+                if role == 'master':
+                    expected_nodes.add(view)
+                self.assertEqual({n.name for n in c.nodes}, expected_nodes)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'role'), role)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'local_ip'), local)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'remote_ip'), remote)

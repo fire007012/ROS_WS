@@ -200,9 +200,13 @@ class Label:
     def __init__(self):
         self.text = None
         self.threads = []
-    def config(self, text):
-        self.text = text
+    def config(self, text=None, **kwargs):
+        if text is not None:
+            self.text = text
+        elif 'text' in kwargs:
+            self.text = kwargs['text']
         self.threads.append(threading.get_ident())
+    configure = config
 
 
 class Root:
@@ -220,6 +224,19 @@ def make_window():
     obj.stale_timeout = 3.0
     obj.vitals_state = 'offline'
     obj.measuring_state = False
+    obj.video_lock = threading.Lock()
+    obj.latest_video = None
+    obj.last_video_time = 0.0
+    obj.last_video_render = 0.0
+    obj.video_has_signal = False
+    obj.video_display_fps = 15.0
+    obj.video_photo = None
+    obj.video_label = Label()
+    obj.video_info = Label()
+    obj.scan_summary = 'scan profile'
+    obj.call_summary = 'call profile'
+    obj.scan_camera_state = 'idle'
+    obj.call_camera_state = 'waiting'
     obj.labels = {key: Label() for key in ('hr', 'temp', 'esp', 'measure', 'task', 'scan')}
     obj.root = Root()
     return obj

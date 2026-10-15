@@ -12,6 +12,8 @@
   <arg name="enable_audio" default="true" />
   <arg name="enable_video" default="true" />
   <arg name="enable_display" default="true" />
+  <!-- Doctor keeps the standalone remote view; robot embeds it in status GUI. -->
+  <arg name="enable_image_view" default="$(eval arg('role') == 'master')" />
   <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
   <arg name="start_lower_cam" default="true" />
   <arg name="use_opencv_capture" default="true" />
@@ -47,6 +49,7 @@
        /dev/videoN setting. Use a source name from `pactl list short sources`. -->
   <arg name="mic_device" default="default" />
   <arg name="speaker_device" default="default" />
+  <arg name="video_display_fps" default="15.0" />
   <!-- Old CLI network options remain available, but must match the shell environment used by roslaunch. -->
   <include file="$(find robot_navigation)/launch/audio_video_peer.launch" pass_all_args="true" />
 </launch>
