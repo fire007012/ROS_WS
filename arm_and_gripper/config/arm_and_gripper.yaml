@@ -9,8 +9,8 @@ arm_ack_timeout_s: 0.5
 # PC8/right follows channel 1: same place/home angle and PWM calibration.
 # There are still two logical angles; do not add an independent angle_3.
 # Both logical axes use positive forward angles; pulse inversion is in STM32.
-arm_place_angle_1: 15.0
-arm_place_angle_2: 15.0
+arm_place_angle_1: 45.0
+arm_place_angle_2: 45.0
 arm_home_angle_1: 0.0
 arm_home_angle_2: 0.0
 arm_move_timeout_s: 3.0 # ACK后等待机械动作的时间，不是到位反馈

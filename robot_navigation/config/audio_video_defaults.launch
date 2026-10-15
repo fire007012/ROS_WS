@@ -26,11 +26,11 @@
   <arg name="jpeg_quality" default="75" />
   <arg name="stream_width" default="640" />
   <arg name="stream_height" default="480" />
-  <arg name="stream_framerate" default="15.0" />
+  <arg name="stream_framerate" default="25.0" />
   <arg name="http_port" default="8080" />
   <arg name="enable_http" default="false" />
   <arg name="enable_browser" default="false" />
-  <!-- 音频：两端采样率、声道和帧长必须一致；不自动开始通话，仍等待 /Ready=1。 -->
+  <!-- Audio/video remains enabled from accepted PC1 mission start through mission termination. -->
   <arg name="sample_rate" default="48000" />
   <arg name="frame_duration_ms" default="20" />
   <arg name="opus_bitrate" default="32000" />
@@ -43,6 +43,8 @@
   <arg name="upper_cam_device" default="" />
   <arg name="rx_port" default="5004" />
   <arg name="tx_port" default="5004" />
+  <!-- "default" selects the PulseAudio default source; this is not a V4L2
+       /dev/videoN setting. Use a source name from `pactl list short sources`. -->
   <arg name="mic_device" default="default" />
   <arg name="speaker_device" default="default" />
   <!-- Old CLI network options remain available, but must match the shell environment used by roslaunch. -->

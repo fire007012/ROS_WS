@@ -295,7 +295,8 @@
     </node>
   </group>
 
-  <!-- Dedicated call camera; shared defaults select /dev/video2 on the Pi. -->
+  <!-- PC1 mission start keeps /Ready=1 through both beds and return.
+       Shared defaults capture the Pi call camera at 640x480@25 from /dev/video2. -->
   <group if="$(arg enable_audio_video)">
     <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
       <arg name="role" value="slave"/>

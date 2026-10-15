@@ -357,6 +357,8 @@ endif()
 if(CATKIN_ENABLE_TESTING)
   add_test(NAME audio_video_launch_defaults
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_audio_video_launch.py)
+  add_test(NAME mission_wide_av_lifecycle
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_mission_av_lifecycle.py)
 endif()
 
 if(CATKIN_ENABLE_TESTING)

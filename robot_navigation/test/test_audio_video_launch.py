@@ -36,6 +36,17 @@ class AVSettingsStructure(unittest.TestCase):
         self.assertEqual(set(names), required)
         self.assertEqual(settings.find("arg[@name='enable_http']").get('default'), 'false')
         self.assertEqual(settings.find('include').get('pass_all_args'), 'true')
+        camera = PEER.read_text(encoding='utf-8')
+        self.assertIn('<arg name="capture_wait_for_ready" value="true"/>', camera)
+        self.assertIn('<arg name="capture_ready_topic" value="$(arg ready_topic)"/>', camera)
+
+    def test_call_stream_defaults_match_480p_25fps_pi_test(self):
+        settings = ET.parse(SETTINGS).getroot()
+        for name, expected in [('cam_width','640'),('cam_height','480'),
+                               ('cam_framerate','25'),('stream_width','640'),
+                               ('stream_height','480'),('stream_framerate','25.0'),
+                               ('mic_device','default')]:
+            self.assertEqual(settings.find("arg[@name='%s']" % name).get('default'), expected)
 
     def test_wrappers_fix_roles_and_forward_cli(self):
         for role in ('master', 'slave'):

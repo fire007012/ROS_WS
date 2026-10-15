@@ -10,7 +10,7 @@ import cv2
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool, Int8, String
+from std_msgs.msg import Bool, Int8, Int32, String
 from scan_camera_policy import ScanCameraPolicy
 
 class AdaptiveScanCamera:
@@ -27,9 +27,14 @@ class AdaptiveScanCamera:
         self.capture = None
         self.current = None
         self.failed_modes = set()
+        self.wait_for_ready = bool(rospy.get_param('~wait_for_ready', False))
+        self.ready_topic = rospy.get_param('~ready_topic', '/Ready')
+        self.ready = not self.wait_for_ready
         self.bridge = CvBridge()
         self.publisher = rospy.Publisher(self.topic, Image, queue_size=1)
         self.status = rospy.Publisher(rospy.get_param('~status_topic','/barcode_scan/camera_mode'), String, queue_size=1, latch=True)
+        self.ready_subscriber = (rospy.Subscriber(self.ready_topic, Int32, self.ready_callback, queue_size=1)
+                                 if self.wait_for_ready else None)
         self.subscribers = [rospy.Subscriber('/barcode_scan/target_bed', Int8, self.target, queue_size=1),
                             rospy.Subscriber('/barcode_scan/qr_enabled', Bool, self.qr_enable, queue_size=1),
                             rospy.Subscriber('/barcode_scan/completed', Int8, self.completed, queue_size=1)]
@@ -45,6 +50,10 @@ class AdaptiveScanCamera:
         if result['pixel_format'] not in ('mjpeg', 'yuyv'):
             raise ValueError('camera pixel format must be mjpeg or yuyv')
         return result
+
+    def ready_callback(self, msg):
+        with self.lock:
+            self.ready = msg.data == 1
 
     def target(self, msg):
         with self.lock:
@@ -109,13 +118,16 @@ class AdaptiveScanCamera:
         try:
             while not rospy.is_shutdown():
                 with self.lock:
-                    desired = self.policy.requested(time.monotonic())
+                    desired = self.policy.requested(time.monotonic()) if self.ready else None
                     if desired == 'high' and 'high' in self.failed_modes:
                         desired = 'low' # Automatic mode recovers without retrying unsupported HD forever.
                 if desired is None:
                     if self.capture is not None:
                         self.close()
-                        self.status.publish('idle: camera released between scan stages')
+                        if self.wait_for_ready and not self.ready:
+                            self.status.publish('waiting for /Ready: camera device closed')
+                        else:
+                            self.status.publish('idle: camera released between scan stages')
                     time.sleep(0.05)
                     continue
                 if desired != self.current:

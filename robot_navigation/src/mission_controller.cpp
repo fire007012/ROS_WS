@@ -200,6 +200,8 @@ bool MissionController::init() {
   display_text_pub_     = nh_.advertise<std_msgs::String>("/robot_display", 1, true);
   chassis_lock_pub_     = nh_.advertise<std_msgs::Bool>("/chassis_lock", 1, true);
   scan_target_bed_pub_ = nh_.advertise<std_msgs::Int8>("/barcode_scan/target_bed", 1, true);
+  av_ready_pub_ = nh_.advertise<std_msgs::Int32>("/Ready",1,true);
+  std_msgs::Int32 av_off; av_off.data=0; av_ready_pub_.publish(av_off);
   qr_enabled_pub_ = nh_.advertise<std_msgs::Bool>("/barcode_scan/qr_enabled",1,true);
   std_msgs::Bool qr_disabled; qr_disabled.data=false; qr_enabled_pub_.publish(qr_disabled);
   scan_session_pub_ = nh_.advertise<std_msgs::UInt32>("/barcode_scan/session", 1, true);
@@ -360,6 +362,7 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
   enabled.data = true;
   actions_enabled_pub_.publish(enabled);
   unlockChassis();
+  std_msgs::Int32 av_on; av_on.data=1; av_ready_pub_.publish(av_on);
   mission_started_.store(true);
   enterState(State::GOTO_NURSE);
 
@@ -915,6 +918,7 @@ bool MissionController::checkHomeCheckComplete() {
     // ── 全部完成! ──
     enterState(State::STOP);
     mission_completed_.store(true);
+    std_msgs::Int32 av_off; av_off.data=0; av_ready_pub_.publish(av_off);
 
     mission_timer_.stop();
     lockChassis();
@@ -1009,6 +1013,7 @@ bool MissionController::pollServiceCall() {
 }
 
 void MissionController::cancelMissionActions() {
+  std_msgs::Int32 av_off; av_off.data=0; av_ready_pub_.publish(av_off);
   awaiting_medicine_placed_ = false;
   ++mission_generation_;
   mission_timer_.stop();

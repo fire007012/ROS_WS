@@ -19,6 +19,8 @@
   <arg name="framerate" default="30"/>
   <arg name="pixel_format" default="mjpeg"/>
   <arg name="use_opencv_capture" default="false"/>
+  <arg name="capture_wait_for_ready" default="false"/>
+  <arg name="capture_ready_topic" default="/Ready"/>
   <arg name="scan_capture_mode" default=""/>
   <arg name="scan_continuous" default="false"/>
   <arg name="scan_config" default="$(find robot_navigation)/config/scan_camera.yaml"/>
@@ -44,6 +46,8 @@
     <param name="status_topic" value="$(eval '/' + (arg('camera_ns') + '/' if arg('camera_ns') else '') + arg('camera_node') + '/capture_status')"/>
     <param name="mode" value="low"/>
     <param name="continuous" value="true"/>
+    <param name="wait_for_ready" value="$(arg capture_wait_for_ready)"/>
+    <param name="ready_topic" value="$(arg capture_ready_topic)"/>
     <param name="low_width" value="$(arg image_width)"/>
     <param name="low_height" value="$(arg image_height)"/>
     <param name="low_fps" value="$(arg framerate)"/>
