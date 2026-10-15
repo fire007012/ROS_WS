@@ -82,6 +82,33 @@ rosrun can_motor_interface check_stm32_can.py --device can0 --bitrate 500000 \
 `ENOBUFS`、TX error 增长或 BUS-OFF 时先处理 ACK/波特率/收发器/H-L-GND/终端电阻。
 STM32 CAN1 外设名不等于 Linux `can1`；单 CANable 通常只有 Linux `can0`。
 
+## ROS 故障处理修复（2026-10-15）
+
+历史记录中出现过 ENOBUFS 后每 100 ms 重建 socket 的循环。当前节点将
+`ENOBUFS/EAGAIN` 作为发送拥塞处理，保留接收 socket、错误帧订阅与反馈统计基线；
+`EINTR` 最多立即重试一次。发送失败仍锁存急停并清除运动目标，不缓存失败运动指令供恢复后重放。
+设备掉线等错误才关闭 socket；重连以 0.5 s 为基准指数退避，最长 5 s，收到新鲜反馈后恢复基准间隔。
+这只重建 ROS socket，不修改接口位速率，也不自动重置 USB 或恢复 BUS-OFF。
+
+急停锁存期间，每个 100 ms 监控周期先尝试停车，再发送心跳；重连成功当周期同样先尝试停车。
+心跳失败不会跳过停车重试。停车尚未提交、控制器故障或刚发生拥塞时暂停后台查询与上报配置；
+可恢复后，急停期间查询降至 10 Hz，八项轮速/状态查询一轮约 0.8 s。
+仍须新鲜真实反馈、至少 1 s 无新故障和显式 `/emergency_stop/reset` 才能复位；复位清除旧目标。
+
+节点订阅 SocketCAN 错误帧，记录 ERROR-PASSIVE、BUS-OFF、CRC、格式、位填充和控制器溢出。
+ERROR-PASSIVE/BUS-OFF 会锁存急停；错误帧不刷新心跳或电机反馈时间。
+`/diagnostics` 每秒发布 `STM32 Motor/CAN`，含重连次数、最近 I/O errno、拥塞和协议错误计数。
+`stop_pending_local_submission=false` 仅表示最近停车写入被主机接受，不能证明 STM32 已执行停车。
+用户态发送顺序也不能抢占已进入内核/控制器队列的旧报文；实际停车仍需真实轮速反馈确认。
+
+故障注入测试使用生产节点代码，拦截 CAN 系统调用，不打开真实 CAN 接口：
+
+```bash
+catkin_make --pkg can_motor_interface
+catkin_make --pkg can_motor_interface tests
+rostest can_motor_interface can_transport.test
+```
+
 ## 联调当前固件
 
 若接口未配置，电机停止后在运行主机配置 500 kbps：
