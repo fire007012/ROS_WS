@@ -1,4 +1,4 @@
-# 两只 DS3230MG + 两只位置型 SG90，通过 STM32 PWM 控制
+# 三只 DS3230MG + 两只位置型 SG90，通过 STM32 PWM 控制
 can_device: can0
 arm_can_id: 0x701
 arm_ack_timeout_s: 0.5
@@ -6,7 +6,9 @@ arm_ack_timeout_s: 0.5
 # 相对 STM32 校准零位的绝对目标，单位度；15度只是联调默认，不是正式放药标定。
 # 按键验证后分别标定两只伸出/收回位置；镜像方向在 STM32 配置中设置。
 # channel 1 = PC6/right/old ID5; channel 2 = PC7/left/old ID6.
-# Both use positive logical forward angles; pulse inversion is in STM32.
+# PC8/right follows channel 1: same place/home angle and PWM calibration.
+# There are still two logical angles; do not add an independent angle_3.
+# Both logical axes use positive forward angles; pulse inversion is in STM32.
 arm_place_angle_1: 15.0
 arm_place_angle_2: 15.0
 arm_home_angle_1: 0.0
