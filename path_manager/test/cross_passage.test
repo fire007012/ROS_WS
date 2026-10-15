@@ -1,0 +1,14 @@
+<launch>
+  <!-- Real route manager/control/safety, synthetic sensors; never opens CAN. -->
+  <param name="use_sim_time" value="true"/>
+  <rosparam file="$(find robot_bringup)/config/robot_params.yaml"/>
+  <node pkg="path_manager" type="path_manager_node" name="path_manager_node" required="true"/>
+  <node pkg="path_manager" type="path_tracker_node" name="path_tracker" required="true">
+    <rosparam file="$(find robot_bringup)/config/path_tracker_forward_only.yaml"/>
+    <rosparam file="$(find path_manager)/config/range_avoidance.yaml"/>
+    <param name="arrival_hold_time" value="0.1"/>
+  </node>
+  <node pkg="motion_planner" type="cmd_vel_mux_node" name="mux" required="true"/>
+  <node pkg="robot_navigation" type="distance_safety_node" name="safety" required="true"/>
+  <test pkg="path_manager" type="test_cross_passage_ros.py" test-name="cross_passage" time-limit="110"/>
+</launch>

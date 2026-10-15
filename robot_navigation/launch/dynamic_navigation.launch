@@ -21,6 +21,7 @@
   ==============================================================================
 -->
 <launch>
+  <rosparam file="$(find robot_navigation)/config/chassis_geometry.yaml"/>
   <!-- This launch owns the base stack. Do not run it alongside
        complete_navigation.launch or mission_complete.launch. -->
   <arg name="start_base_stack" default="true"/>
@@ -73,11 +74,11 @@
     </include>
     <node pkg="robot_navigation" type="distance_safety_node"
           name="distance_safety_node" output="screen" required="true">
-      <param name="safety_distance_mm" value="300.0"/>
+      <param name="safety_distance_mm" value="150.0"/>
       <param name="critical_distance_mm" value="100.0"/>
       <param name="braking_deceleration_mps2" value="1.0"/>
       <param name="reaction_time_sec" value="0.2"/>
-      <param name="stop_margin_mm" value="300.0"/>
+      <param name="stop_margin_mm" value="100.0"/>
     </node>
   </group>
 
@@ -143,6 +144,8 @@
     <rosparam ns="global_costmap" subst_value="true">
       global_frame: map
       robot_base_frame: base_link
+      robot_radius: 0.25
+      footprint_padding: 0.10
       update_frequency: 5.0
       publish_frequency: 2.0
       static_map: true
@@ -162,6 +165,8 @@
     <rosparam ns="local_costmap" subst_value="true">
       global_frame: odom
       robot_base_frame: base_link
+      robot_radius: 0.25
+      footprint_padding: 0.10
       update_frequency: 10.0
       publish_frequency: 5.0
       static_map: false
@@ -202,7 +207,8 @@
 
       dt_ref: 0.3
       dt_hysteresis: 0.1
-      min_obstacle_dist: 0.25
+      footprint_model: {type: circular, radius: 0.25}
+      min_obstacle_dist: 0.10
       include_costmap_obstacles: true
       costmap_obstacles_behind_robot_dist: 1.0
 
@@ -216,9 +222,6 @@
     <!-- costmap 通用 -->
     <param name="obstacle_range" value="3.0"/>
     <param name="raytrace_range" value="3.5"/>
-    <rosparam param="footprint">
-      [[-0.25, -0.20], [-0.25, 0.20], [0.25, 0.20], [0.25, -0.20]]
-    </rosparam>
     <param name="inflation_radius" value="0.30"/>
     <param name="cost_scaling_factor" value="3.0"/>
 

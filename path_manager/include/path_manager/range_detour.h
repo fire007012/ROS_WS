@@ -16,9 +16,11 @@ class RangeDetour {
     double front_clear_m = 0.90;
     double motion_clearance_m = 0.40;
     double side_space_m = 0.80;
-    double min_offset_m = 0.60;
+    double min_offset_m = 0.70;
     double edge_margin_m = 0.35;
     double pass_margin_m = 0.45;
+    double obstacle_length_m = 0.50;  // Confirmed cone base diameter along travel.
+    double body_radius_m = 0.25;     // Samples already measure clearance from the body edge.
     double wall_detect_m = 1.30;
     double max_offset_m = 1.25;
     double max_forward_m = 3.0;
@@ -45,6 +47,7 @@ class RangeDetour {
   bool parametersValid() const {
     for (double value : {params.trigger_m, params.front_clear_m, params.motion_clearance_m,
          params.side_space_m, params.min_offset_m, params.edge_margin_m, params.pass_margin_m,
+         params.obstacle_length_m, params.body_radius_m,
          params.wall_detect_m, params.max_offset_m, params.max_forward_m, params.speed_mps,
          params.timeout_sec, params.stall_sec, params.range_timeout_sec, params.clear_hold_sec,
          params.settle_sec, params.line_tolerance_m, params.heading_tolerance_rad})
@@ -83,19 +86,11 @@ class RangeDetour {
       }
       if (now - progressed_ > params.stall_sec) return fail("STALLED");
     }
-    for (const auto& range : ranges)
-      if (!range.valid || !std::isfinite(range.distance) || range.distance <= 0.0 ||
-          !std::isfinite(range.received) || now < range.received ||
-          now - range.received > params.range_timeout_sec) {
-        clear_since_ = settled_since_ = -1.0;
-        return stopped("WAIT_RANGES");
-      }
-
     if (phase_ == Phase::TRACKING) {
       const std::array<double, 4> toward{{nominal.x, nominal.y, -nominal.y, -nominal.x}};
       travel_ = std::max_element(toward.begin(), toward.end()) - toward.begin();
       if (toward[travel_] <= 0.001 || std::abs(nominal.omega) > 0.15 ||
-          ranges[travel_].distance > params.trigger_m) return Output{};
+          !near(travel_, params.trigger_m, now)) return Output{};
       const double dx = goal.x - pose.x, dy = goal.y - pose.y;
       const double distance = std::hypot(dx, dy);
       const double bearing = std::atan2(dy, dx);
@@ -110,6 +105,7 @@ class RangeDetour {
       heading_ = pose.yaw;
       ux_ = dx / distance; uy_ = dy / distance;
       goal_distance_ = distance;
+      obstacle_end_along_ = ranges[travel_].distance + params.body_radius_m + params.obstacle_length_m;
       started_ = progressed_ = now;
       wall_seen_ = false;
       side_ = 0;
@@ -137,11 +133,13 @@ class RangeDetour {
       if (now - settled_since_ < params.settle_sec) return stopped("BRAKING");
       if (side_ == 0) {
         const auto left = leftBeam(travel_), right = rightBeam(travel_);
-        const bool left_free = ranges[left].distance >= params.side_space_m;
-        const bool right_free = ranges[right].distance >= params.side_space_m;
+        const bool left_free = !observed(left, now) || ranges[left].distance >= params.side_space_m;
+        const bool right_free = !observed(right, now) || ranges[right].distance >= params.side_space_m;
         if (!left_free && !right_free) return stopped("NO_SIDE_SPACE");
-        side_ = left_free && (!right_free || ranges[left].distance > ranges[right].distance + 0.05 ||
-                    (std::abs(ranges[left].distance - ranges[right].distance) <= 0.05 && params.prefer_left)) ? 1 : -1;
+        const double left_space = observed(left, now) ? ranges[left].distance : params.side_space_m;
+        const double right_space = observed(right, now) ? ranges[right].distance : params.side_space_m;
+        side_ = left_free && (!right_free || left_space > right_space + 0.05 ||
+                    (std::abs(left_space - right_space) <= 0.05 && params.prefer_left)) ? 1 : -1;
         outer_ = side_ > 0 ? left : right;
         inner_ = side_ > 0 ? right : left;
       }
@@ -151,7 +149,7 @@ class RangeDetour {
     }
 
     if (phase_ == Phase::SIDESTEP) {
-      if (ranges[travel_].distance >= params.front_clear_m) {
+      if (!near(travel_, params.front_clear_m, now)) {
         if (clear_since_ < 0.0) { clear_since_ = now; clear_offset_ = offset; }
         if (offset >= std::max(params.min_offset_m, clear_offset_ + params.edge_margin_m) &&
             now - clear_since_ >= params.clear_hold_sec) {
@@ -160,25 +158,28 @@ class RangeDetour {
         }
       } else clear_since_ = -1.0;
       if (offset >= params.max_offset_m) return fail("OFFSET_LIMIT");
-      if (ranges[outer_].distance <= params.motion_clearance_m) return stopped("SIDE_BLOCKED");
-      return motion(pose, 0.0, side_ * params.speed_mps);
+      if (near(outer_, params.motion_clearance_m, now)) return stopped("SIDE_BLOCKED");
+      return motion(pose, 0.0, side_ * params.speed_mps, now);
     }
 
     if (phase_ == Phase::BYPASS || phase_ == Phase::EDGE_CLEAR) {
       const double return_space = offset + params.motion_clearance_m + params.line_tolerance_m;
-      if (ranges[inner_].distance <= params.wall_detect_m &&
+      if (observed(inner_, now) && ranges[inner_].distance <= params.wall_detect_m &&
           ranges[inner_].distance <= return_space) wall_seen_ = true;
-      if (ranges[travel_].distance <= params.motion_clearance_m) return stopped("FRONT_BLOCKED");
+      if (near(travel_, params.motion_clearance_m, now)) return stopped("FRONT_BLOCKED");
       // Increase separation when the inner beam first reaches the obstacle;
       // never steer toward it based on a single distant reading.
-      if (ranges[inner_].distance <= params.motion_clearance_m + 0.03) {
+      if (near(inner_, params.motion_clearance_m + 0.03, now)) {
         clear_since_ = -1.0;
         if (offset >= params.max_offset_m) return fail("OFFSET_LIMIT");
-        if (ranges[outer_].distance <= params.motion_clearance_m) return stopped("SIDE_BLOCKED");
-        return motion(pose, 0.0, side_ * params.speed_mps);
+        if (near(outer_, params.motion_clearance_m, now)) return stopped("SIDE_BLOCKED");
+        return motion(pose, 0.0, side_ * params.speed_mps, now);
       }
-      const bool return_corridor_clear = wall_seen_ &&
-          ranges[inner_].distance > return_space;
+      // A cone may leave every beam after the sidestep. Keep its remembered
+      // position and footprint until odometry confirms we have passed it.
+      // Missing returns alone never mean the remembered cone has been passed.
+      const bool return_corridor_clear = !near(inner_, return_space, now) &&
+          ((wall_seen_ && observed(inner_, now)) || along >= obstacle_end_along_);
       if (phase_ == Phase::BYPASS) {
         if (return_corridor_clear) {
           if (clear_since_ < 0.0) clear_since_ = now;
@@ -194,7 +195,7 @@ class RangeDetour {
         beginBrake(Phase::RETURN);
         return stopped("BRAKING");
       }
-      return motion(pose, params.speed_mps, 0.0);
+      return motion(pose, params.speed_mps, 0.0, now);
     }
 
     if (phase_ == Phase::RETURN) {
@@ -202,10 +203,10 @@ class RangeDetour {
         beginBrake(Phase::TRACKING);
         return stopped("BRAKING");
       }
-      if (ranges[inner_].distance <= std::abs(offset) + params.motion_clearance_m)
+      if (near(inner_, std::abs(offset) + params.motion_clearance_m, now))
         return stopped("RETURN_BLOCKED");
       const double speed = std::min(params.speed_mps, 0.8 * std::abs(offset));
-      return motion(pose, 0.0, -side_ * std::copysign(speed, offset));
+      return motion(pose, 0.0, -side_ * std::copysign(speed, offset), now);
     }
     return Output{};
   }
@@ -217,9 +218,19 @@ class RangeDetour {
   int travel_ = 0, outer_ = 1, inner_ = 2, side_ = 0;
   double ux_ = 1.0, uy_ = 0.0, heading_ = 0.0, goal_distance_ = 0.0;
   double started_ = 0.0, progressed_ = 0.0;
+  double obstacle_end_along_ = 0.0;
   double clear_since_ = -1.0, settled_since_ = -1.0, clear_offset_ = 0.0, edge_along_ = 0.0;
   bool wall_seen_ = false;
   std::string reason_;
+
+  bool observed(size_t index, double now) const {
+    const auto& r = ranges[index];
+    return r.valid && std::isfinite(r.distance) && r.distance >= 0.0 &&
+        std::isfinite(r.received) && now >= r.received && now - r.received <= params.range_timeout_sec;
+  }
+  bool near(size_t index, double limit, double now) const {
+    return observed(index, now) && ranges[index].distance <= limit;
+  }
 
   static bool finite(const Pose& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.yaw); }
   static double angle(double a) { return std::atan2(std::sin(a), std::cos(a)); }
@@ -250,7 +261,7 @@ class RangeDetour {
       default: return "FAILED";
     }
   }
-  Output motion(const Pose& pose, double forward, double lateral) const {
+  Output motion(const Pose& pose, double forward, double lateral, double now) const {
     Output out; out.override_command = true; out.state = phaseName();
     const double wx = ux_ * forward - uy_ * lateral;
     const double wy = uy_ * forward + ux_ * lateral;
@@ -258,7 +269,7 @@ class RangeDetour {
     out.command.y = -std::sin(pose.yaw) * wx + std::cos(pose.yaw) * wy;
     const std::array<double, 4> toward{{out.command.x, out.command.y, -out.command.y, -out.command.x}};
     for (size_t i = 0; i < toward.size(); ++i)
-      if (toward[i] > 0.001 && ranges[i].distance <= params.motion_clearance_m)
+      if (toward[i] > 0.001 && near(i, params.motion_clearance_m, now))
         return stopped("DIRECTION_BLOCKED");
     return out;
   }

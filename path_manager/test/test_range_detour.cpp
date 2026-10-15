@@ -102,15 +102,57 @@ TEST(RangeDetour, BlockedSidesStopAndStallFailureRequiresNewTarget) {
   EXPECT_FALSE(f.step(1.3).override_command);
 }
 
-TEST(RangeDetour, InvalidOrOldRangesStopEvenWithFreshOtherBeams) {
+TEST(RangeDetour, MissingRangesDoNotStopTrackingOrAnExistingConeDetour) {
   Fixture f;
+  for (auto& r : f.detour.ranges) r.valid = false;
+  EXPECT_FALSE(f.step(0).override_command);
+  f.refresh();
   f.start();
   f.detour.ranges[3].valid = false;
-  EXPECT_EQ("WAIT_RANGES", f.step(.6).state);
+  EXPECT_GT(f.step(.6).command.y, 0.0);
   f.detour.ranges[3].valid = true;
   EXPECT_GT(f.step(.7).command.y, 0.0);
   f.now = 1.0;
-  EXPECT_EQ("WAIT_RANGES", f.detour.step(f.pose, f.goal, f.nominal, 0, 0, f.now).state);
+  EXPECT_GT(f.detour.step(f.pose, f.goal, f.nominal, 0, 0, f.now).command.y, 0.0);
+}
+
+TEST(RangeDetour, LostConeReturnUsesRememberedPositionBeforeReturningToRoute) {
+  Fixture f;
+  f.start();
+  for (auto& r : f.detour.ranges) r.valid = false;
+  f.pose.y = .1; f.step(.6);
+  f.pose.y = .7;
+  EXPECT_EQ("BRAKING", f.step(.9).state);
+  f.step(1.0);
+  EXPECT_EQ("BYPASS", f.step(1.3).state);
+  f.pose.x = .5;
+  EXPECT_EQ("BYPASS", f.step(1.4).state);  // Cone still ahead, no early return.
+  f.pose.x = 1.6;
+  f.step(1.5);
+  EXPECT_EQ("EDGE_CLEAR", f.step(1.8).state);
+  f.pose.x = 2.1;
+  EXPECT_EQ("BRAKING", f.step(1.9).state);
+  f.step(2.0);
+  EXPECT_EQ("RETURN", f.step(2.3).state);
+  EXPECT_LT(f.step(2.4).command.y, 0.0);
+  f.pose.y = .01;
+  f.step(2.5); f.step(2.6);
+  EXPECT_EQ("TRACKING", f.step(2.9).state);
+  EXPECT_FALSE(f.step(3.0).override_command);
+}
+
+TEST(RangeDetour, OnlyFreshDetectionsIncludingZeroBodyClearanceBlockMovement) {
+  Fixture f;
+  f.detour.ranges[0].distance = .2;
+  f.detour.ranges[0].valid = false;
+  EXPECT_FALSE(f.step(0).override_command);
+  f.detour.ranges[0].valid = true;
+  EXPECT_FALSE(f.detour.step(f.pose, f.goal, f.nominal, 0, 0, 1.0).override_command);
+  f.refresh(); f.start();
+  f.detour.ranges[1].distance = 0.0;  // Valid inset reading normalized to the body edge.
+  EXPECT_EQ("SIDE_BLOCKED", f.step(.6).state);
+  f.detour.ranges[1].valid = false;
+  EXPECT_GT(f.step(.7).command.y, 0.0);
 }
 
 TEST(RangeDetour, BoundsAndHeadingDriftLatchRatherThanCuttingAcrossObstacle) {

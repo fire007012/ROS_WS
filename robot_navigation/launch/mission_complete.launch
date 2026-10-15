@@ -28,6 +28,7 @@
   ==============================================================================
 -->
 <launch>
+  <rosparam file="$(find robot_navigation)/config/chassis_geometry.yaml"/>
   <arg name="enable_arm_upper_alignment" default="false"/>
   <arg name="can_device" default="can0"/>
   <arg name="tx_can_id" default="256"/>
@@ -57,11 +58,11 @@
   <arg name="vl53l1x_can_config" default="$(find robot_navigation)/config/vl53l1x_can.yaml"/>
   <!-- 整机投影校验参数：按实测车体/机械臂外接半径和传感器安装调整。 -->
   <arg name="enable_vl53_circle_check" default="true"/>
-  <arg name="require_all_vl53_ranges" default="true"/>
+  <arg name="require_all_vl53_ranges" default="false"/> <!-- P4/P6 只要求前向校准束有效 -->
   <!-- 单位均为 m；半径应取水平投影外接圆半径，不能只填底盘中心尺寸。 -->
   <arg name="vl53_circle_timeout_sec" default="0.5"/> <!-- 传感器数据最大允许年龄 -->
   <arg name="vl53_min_clearance_m" default="0.05"/> <!-- 底盘四路 Range 的最小有效距离 -->
-  <arg name="base_projection_radius_m" default="0.20"/> <!-- 车体（不含机械臂）外接半径 -->
+  <arg name="base_projection_radius_m" default="0.25"/> <!-- 车体（不含机械臂）外接半径 -->
   <arg name="full_projection_radius_m" default="0.25"/> <!-- 车体+机械臂外接半径 -->
   <arg name="circle_boundary_margin_m" default="0.02"/> <!-- 圆/白框边界额外安全余量 -->
   <arg name="front_range_topic" default="/front/range"/>
@@ -334,17 +335,16 @@
     <param name="left_range_topic" value="$(arg left_range_topic)"/>
     <param name="right_range_topic" value="$(arg right_range_topic)"/>
     <param name="rear_range_topic" value="$(arg rear_range_topic)"/>
-    <param name="safety_distance_mm" value="300.0"/>
+    <param name="safety_distance_mm" value="150.0"/>
     <param name="critical_distance_mm" value="100.0"/>
     <param name="braking_deceleration_mps2" value="1.0"/>
     <param name="reaction_time_sec" value="0.2"/>
-    <param name="stop_margin_mm" value="300.0"/>
+    <param name="stop_margin_mm" value="100.0"/>
     <param name="distance_timeout_sec" value="0.5"/>
     <param name="control_rate_hz" value="20.0"/>
     <param name="command_timeout_sec" value="0.5"/>
     <param name="release_hysteresis_mm" value="30.0"/>
-    <param name="rotation_clearance_mm" value="300.0"/>
-    <param name="projection_radius_m" value="0.25"/>
+    <param name="rotation_clearance_mm" value="100.0"/> <!-- 圆形车体外缘的转向净空 -->
   </node>
 
   <!-- 8.3 急停按钮（GPIO 直连） -->

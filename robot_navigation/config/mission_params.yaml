@@ -6,7 +6,7 @@
 # ── 任务状态机参数 ──────────────────────────────────────────────
 mission:
   stage_timeout_sec: 30.0          # 单阶段超时（秒）
-  navigation_stage_timeout_sec: 75.0  # 导航阶段单独超时，横向通道约 6 m
+  navigation_stage_timeout_sec: 120.0  # 含横向通道受阻后退回并经 P1 改道；总任务仍限制 180 秒
   mission_timeout_sec: 180.0       # 全局任务超时（秒，3分钟）
   medicine_placed_event_timeout_sec: 1.0  # 放药服务成功后等待释放事件；期间底盘保持锁定
   state_machine_rate_hz: 10.0      # 状态机循环频率

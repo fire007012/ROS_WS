@@ -70,10 +70,13 @@ class PathTracker {
   ros::Publisher  path_finished_pub_;
   ros::Publisher  current_target_pub_;
   ros::ServiceClient next_point_client_;
+  ros::ServiceClient fallback_client_;
+  bool fallback_checked_ = false;
   ros::SteadyTimer control_timer_;
   std::array<ros::Subscriber, 4> range_subs_;
   ros::Publisher avoidance_state_pub_;
   RangeDetour detour_;
+  std::array<double, 4> sensor_insets_m_{{0.0, 0.05, 0.05, 0.05}};
   bool enable_range_avoidance_ = false;
   std::string avoidance_state_;
   double measured_speed_ = 0.0, measured_rotation_ = 0.0;

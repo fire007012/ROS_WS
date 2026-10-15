@@ -20,7 +20,7 @@ class SafetyAndFineTuning(unittest.TestCase):
         self.output = Twist()
         self.state = ''
         self.ranges = dict(front=.8, left=.8, right=.8)
-        self.distance = 400.0
+        self.distance = 250.0
         self.pose_x = 0.0
         self.send_command = self.send_data = True
         self.done, self.failed, self.status, self.velocities = {}, {}, {}, {}
@@ -48,10 +48,10 @@ class SafetyAndFineTuning(unittest.TestCase):
         try:
             self.command.linear.x = .2
             self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x > .19)
-            self.ranges['front'] = .2
+            self.ranges['front'] = .15
             self.wait(lambda: self.state == 'STOP' and self.output.linear.x == 0)
             self.hold(lambda: self.output.linear.x == 0, .8)
-            self.ranges['front'] = .45
+            self.ranges['front'] = .22
             self.wait(lambda: self.state == 'WARNING' and abs(self.output.linear.x-.06) < .001)
             self.hold(lambda: abs(self.output.linear.x-.06) < .001, .8)
             self.ranges['front'] = .8
@@ -59,20 +59,29 @@ class SafetyAndFineTuning(unittest.TestCase):
             for direction, sign in [('left', 1), ('right', -1)]:
                 self.command.linear.x = 0
                 self.command.linear.y = sign*.2
+                # Same raw distance is 50 mm closer at a recessed side sensor.
+                self.ranges[direction] = .23
+                self.wait(lambda: self.state == 'WARNING' and abs(self.output.linear.y) > .01)
                 self.ranges[direction] = .2
                 self.wait(lambda: self.state == 'STOP' and self.output.linear.y == 0)
+                self.ranges[direction] = .05  # Valid raw return, zero body-edge clearance.
+                self.hold(lambda: self.state == 'STOP' and self.output.linear.y == 0, .1)
                 self.ranges[direction] = .8
                 self.wait(lambda: abs(self.output.linear.y-sign*.2) < .001)
                 del self.ranges[direction]
-                self.wait(lambda: self.state == 'RANGE_TIMEOUT' and self.output.linear.y == 0)
+                self.hold(lambda: abs(self.output.linear.y-sign*.2) < .001, .7)
                 self.ranges[direction] = .8
             self.command.linear.y = 0
             self.command.linear.x = -.2
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.linear.x == 0)
-            self.hold(lambda: self.output.linear.x == 0, .6)
-            # Only a real simulated rear sample can permit reverse in this test.
+            self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
+            self.hold(lambda: self.output.linear.x < -.19, .6)
+            # A detected rear obstacle still brakes reverse travel.
+            self.ranges['rear'] = .2
+            self.wait(lambda: self.state == 'STOP' and self.output.linear.x == 0)
             self.ranges['rear'] = .8
             self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
+            self.ranges['rear'] = float('nan')
+            self.hold(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19, .3)
             self.command.linear.x = float('nan')
             self.wait(lambda: self.output.linear.x == 0)
             self.command.linear.x = .2
@@ -80,13 +89,46 @@ class SafetyAndFineTuning(unittest.TestCase):
             self.send_command = False
             self.wait(lambda: self.output.linear.x == 0)
 
+            # The ordinary geometry-aware brake permits 250 mm front calibration.
+            self.send_command = True
+            self.command.linear.x = .05
+            self.ranges['front'] = .25
+            self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x > .04)
+            # Dynamic braking distance still applies: at .25 m/s it exceeds 180 mm.
+            self.command.linear.x = .25
+            self.ranges['front'] = .18
+            self.wait(lambda: self.state == 'STOP' and self.output.linear.x == 0)
+            self.command.linear.x = 0.
+            self.command.angular.z = .8
+            self.ranges['front'] = .25
+            self.wait(lambda: self.state == 'CLEAR' and self.output.angular.z > .7)
+            for direction in ['front', 'left', 'right', 'rear']:
+                self.ranges[direction] = .09 if direction == 'front' else .14
+                self.wait(lambda: self.state == 'STOP' and self.output.angular.z == 0)
+                self.ranges[direction] = .8
+                self.wait(lambda: self.state == 'CLEAR' and self.output.angular.z > .7)
+            self.command.angular.z = 0.
+            self.send_command = False
+            self.wait(lambda: abs(self.output.angular.z) < .001)
+
             response = starts['conflict_fine']()
             self.assertFalse(response.success)
             self.assertIn('braking', response.message)
             self.assertTrue(starts['normal_fine']().success)
             self.wait(lambda: self.done.get('normal_fine') is True)
 
-            self.distance = 300.0
+            # At P4/P6 only calibration waits for a valid front reading; it
+            # must never declare success from a previous or invalid distance.
+            self.distance = float('nan')
+            time.sleep(.1)
+            self.assertTrue(starts['normal_fine']().success)
+            self.wait(lambda: self.status.get('normal_fine') == 'waiting for calibration distance')
+            self.hold(lambda: not self.done.get('normal_fine') and
+                      not self.failed.get('normal_fine'), .3)
+            self.distance = 250.0
+            self.wait(lambda: self.done.get('normal_fine') is True)
+
+            self.distance = 150.0
             time.sleep(.1)
             self.assertTrue(starts['normal_fine']().success)
             self.wait(lambda: self.failed.get('normal_fine') is True)
@@ -122,7 +164,7 @@ class SafetyAndFineTuning(unittest.TestCase):
             self.assertIn('stale', self.status['normal_fine'])
             self.assertFalse(self.done['normal_fine'])
             self.send_data = True
-            self.distance = 400.0
+            self.distance = 250.0
             time.sleep(.1)
             cancel.publish(Empty())
             time.sleep(.1)

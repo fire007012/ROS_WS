@@ -1,0 +1,8 @@
+# Circular chassis; inset is measured inward from the body edge along each beam.
+# Both the braking node and waypoint detour convert raw ranges to body-edge clearance.
+chassis_geometry:
+  radius_m: 0.25
+  front_inset_m: 0.0
+  left_inset_m: 0.05
+  right_inset_m: 0.05
+  rear_inset_m: 0.05

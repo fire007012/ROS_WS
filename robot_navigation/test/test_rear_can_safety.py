@@ -37,7 +37,7 @@ class RearCanSafety(unittest.TestCase):
         thread.start()
         try:
             self.command.linear.x = -.2
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.linear.x == 0)
+            self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
             self.rear = (800, 1)
             self.wait_reverse()
             self.wait(lambda: self.distance == 800)
@@ -47,52 +47,52 @@ class RearCanSafety(unittest.TestCase):
             self.assertEqual(self.distance, 800)
             self.rear = (200, 1)
             self.wait(lambda: self.state == 'STOP' and self.output.linear.x == 0)
-            # At 0.2 m/s the threshold is 360 mm, release requires >390 mm.
-            self.rear = (380, 1)
+            # At 0.2 m/s: body threshold 160 mm, raw rear 210 mm; release >240 mm.
+            self.rear = (230, 1)
             time.sleep(.12)
             self.assertEqual(self.state, 'STOP')
-            self.rear = (450, 1)
+            self.rear = (270, 1)
             self.wait(lambda: self.state == 'WARNING' and abs(self.output.linear.x + .06) < .001)
             self.rear = (800, 1)
             self.wait_reverse()
             for distance, status in [(65535, 4), (800, 8), (49, 1), (3001, 1)]:
                 self.rear = (distance, status)
-                self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.linear.x == 0)
+                self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
                 self.wait(lambda: math.isnan(self.last_range.range) and math.isnan(self.distance))
                 self.rear = (800, 1)
                 self.wait_reverse()
-            # Repeated sequences cannot keep old clearance alive with frozen ROS time.
+            # Repeated sequences invalidate old readings even with frozen ROS time; no return does not brake.
             self.repeat = True
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.linear.x == 0)
+            self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
             self.wait(lambda: self.diagnostic == 2)
             self.repeat = False
             self.wait_reverse()
             self.rear = None
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.linear.x == 0)
+            self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x < -.19)
             self.rear = (800, 1)
             self.wait_reverse()
             # Diagnostic failure and malformed rear frames invalidate the last good sample.
             with self.lock:
                 self.rear = None
                 self.frames.publish(UInt8MultiArray(data=[0x11, 1, 1, 5, 3, 4, 0x20, 3, 4, 1]))
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and math.isnan(self.last_range.range))
+            self.wait(lambda: self.state == 'CLEAR' and math.isnan(self.last_range.range))
             self.rear = (800, 1)
             self.wait_reverse()
             with self.lock:
                 self.rear = None
                 self.frames.publish(UInt8MultiArray(data=[0x10, 1, 1, 5, 0x20, 3]))
-            self.wait(lambda: self.state == 'REAR_UNOBSERVED' and math.isnan(self.last_range.range))
+            self.wait(lambda: self.state == 'CLEAR' and math.isnan(self.last_range.range))
             # Both turn directions check the rear, including turn while moving forward.
             for forward, rotation in [(0, .2), (0, -.2), (.2, .2)]:
                 with self.lock:
                     self.command.linear.x = forward
                     self.command.angular.z = rotation
-                    self.rear = (200, 1)
+                    self.rear = (140, 1)
                 self.wait(lambda: self.state == 'STOP' and self.output.angular.z == 0)
                 self.rear = (800, 1)
                 self.wait(lambda: self.state == 'CLEAR' and abs(self.output.angular.z) > .19)
                 self.rear = None
-                self.wait(lambda: self.state == 'REAR_UNOBSERVED' and self.output.angular.z == 0)
+                self.wait(lambda: self.state == 'CLEAR' and abs(self.output.angular.z) > .19)
             # A rear failure does not prevent straight forward escape.
             with self.lock:
                 self.command.linear.x = .2

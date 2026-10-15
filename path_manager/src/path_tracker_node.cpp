@@ -65,6 +65,8 @@ bool PathTracker::init() {
     pnh_.param("range_avoidance/min_offset_m", p.min_offset_m, p.min_offset_m);
     pnh_.param("range_avoidance/edge_margin_m", p.edge_margin_m, p.edge_margin_m);
     pnh_.param("range_avoidance/pass_margin_m", p.pass_margin_m, p.pass_margin_m);
+    pnh_.param("range_avoidance/obstacle_length_m", p.obstacle_length_m, p.obstacle_length_m);
+    nh_.param("/chassis_geometry/radius_m", p.body_radius_m, p.body_radius_m);
     pnh_.param("range_avoidance/wall_detect_m", p.wall_detect_m, p.wall_detect_m);
     pnh_.param("range_avoidance/max_offset_m", p.max_offset_m, p.max_offset_m);
     pnh_.param("range_avoidance/max_forward_m", p.max_forward_m, p.max_forward_m);
@@ -84,6 +86,9 @@ bool PathTracker::init() {
     p.speed_mps = std::min(p.speed_mps, max_linear_vel_);
     const std::array<std::string, 4> names{{"front", "left", "right", "rear"}};
     for (size_t i = 0; i < names.size(); ++i) {
+      nh_.param("/chassis_geometry/" + names[i] + "_inset_m", sensor_insets_m_[i], i == 0 ? 0.0 : 0.05);
+      if (!std::isfinite(sensor_insets_m_[i]) || sensor_insets_m_[i] < 0.0 ||
+          sensor_insets_m_[i] > p.body_radius_m) return false;
       std::string topic;
       pnh_.param("range_avoidance/" + names[i] + "_range_topic", topic, "/" + names[i] + "/range");
       range_subs_[i] = nh_.subscribe<sensor_msgs::Range>(topic, 1,
@@ -112,6 +117,7 @@ bool PathTracker::init() {
   avoidance_state_pub_ = nh_.advertise<std_msgs::String>("/path_tracker/avoidance_state", 1, true);
   publishAvoidanceState(enable_range_avoidance_ ? "WAIT_PATH" : "DISABLED");
   next_point_client_ = nh_.serviceClient<std_srvs::Trigger>("/next_point");
+  fallback_client_ = nh_.serviceClient<std_srvs::Trigger>("/path_manager/reroute_blocked_path");
 
   // ── 控制定时器 ──
   const double period = 1.0 / std::max(1.0, control_rate_hz_);
@@ -248,7 +254,7 @@ void PathTracker::rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr
   sample.valid = std::isfinite(msg->range) && std::isfinite(msg->min_range) &&
       std::isfinite(msg->max_range) && msg->range > 0.0 && msg->range >= msg->min_range &&
       msg->range <= msg->max_range && age >= -0.05 && age <= detour_.params.range_timeout_sec;
-  sample.distance = msg->range;
+  sample.distance = sample.valid ? std::max(0.0, double(msg->range) - sensor_insets_m_[index]) : 0.0;
   sample.received = ros::SteadyTime::now().toSec() - std::max(0.0, age);
 }
 
@@ -332,8 +338,25 @@ void PathTracker::controlTimerCallback(const ros::SteadyTimerEvent& /*event*/) {
     RangeDetour::Pose pose, goal;
     pose.x = current_x_; pose.y = current_y_; pose.yaw = current_yaw_;
     goal.x = target.x; goal.y = target.y;
+    if (!detour_.active()) fallback_checked_ = false;
     const auto out = detour_.step(pose, goal, nominal, measured_speed_, measured_rotation_,
                                   ros::SteadyTime::now().toSec());
+    // The first SIDESTEP/NO_SIDE_SPACE result follows the brake/settle phase
+    // and still carries zero velocity. Ask the route manager before moving
+    // sideways into a corridor that has a configured alternative.
+    if (!fallback_checked_ && (out.state == "SIDESTEP" || out.state == "NO_SIDE_SPACE")) {
+      fallback_checked_ = true;
+      publishStop();
+      std_srvs::Trigger fallback;
+      if (fallback_client_.exists() && fallback_client_.call(fallback) && fallback.response.success) {
+        detour_.reset();
+        has_target_ = false;
+        require_new_path_ = true;  // Ignore queued old targets until the new revision arrives.
+        state_ = State::WAITING_FOR_PATH;
+        publishAvoidanceState("REROUTING");
+        return;
+      }
+    }
     publishAvoidanceState(out.state);
     if (out.override_command) {
       geometry_msgs::Twist twist;

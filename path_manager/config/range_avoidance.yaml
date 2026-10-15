@@ -1,5 +1,6 @@
 # Four chassis VL53 beams + odometry, for an omnidirectional chassis.
-# Range values are metres; no-return/NaN is invalid, never free space.
+# All distance thresholds use body-edge clearance, not raw sensor range.
+# Only fresh, valid detections trigger avoidance. Missing returns do not stop travel.
 range_avoidance:
   enabled: true
   front_range_topic: /front/range
@@ -11,9 +12,10 @@ range_avoidance:
   # Must exceed the independent brake threshold + release hysteresis at speed_mps.
   motion_clearance_m: 0.40
   side_space_m: 0.80
-  min_offset_m: 0.60
+  min_offset_m: 0.70  # 0.25 m body + 0.25 m cone radius + 0.20 m nominal reserve.
   edge_margin_m: 0.35
   pass_margin_m: 0.45
+  obstacle_length_m: 0.50  # Confirmed cone base diameter; remembered extent along travel.
   wall_detect_m: 1.30
   max_offset_m: 1.25
   max_forward_m: 3.0

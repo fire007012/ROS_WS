@@ -44,7 +44,7 @@ class FineTuningController {
   ros::SteadyTime distance_time_, odom_time_, start_time_, phase_time_;
   bool moving_ = false;
   double step_vx_ = 0.0, step_vy_ = 0.0;
-  double target_mm_ = 400.0, tolerance_mm_ = 10.0, axis_ = 1.0;
+  double target_mm_ = 250.0, tolerance_mm_ = 10.0, axis_ = 1.0;
   int direction_ = 1, max_steps_ = 50, steps_ = 0;
   double max_speed_ = 0.05, step_duration_ = 0.2, settle_time_ = 0.3;
   double max_time_ = 25.0, kp_ = 0.0005, sensor_timeout_ = 0.5, odom_timeout_ = 0.5;

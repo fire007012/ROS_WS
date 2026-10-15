@@ -103,7 +103,7 @@ switches:
 # ── 任务状态机参数 ──────────────────────────────────────────────
 mission_controller:
   stage_timeout_sec: 30.0
-  navigation_stage_timeout_sec: 75.0
+  navigation_stage_timeout_sec: 120.0
   mission_timeout_sec: 180.0
   state_machine_rate_hz: 10.0
   home_hold_sec: 5.0
@@ -122,23 +122,23 @@ mission_controller:
 
 # ── 距离安全参数 ───────────────────────────────────────────────
 distance_safety:
-  safety_distance_mm: 300.0
+  safety_distance_mm: 150.0
   critical_distance_mm: 100.0
+  # Distances are body-edge clearance; recessed side/rear raw ranges include another 50 mm.
   # Stop threshold is max(safety_distance_mm, braking distance + latency + margin).
   # Measure these values on the real chassis before a match.
   braking_deceleration_mps2: 1.0
   reaction_time_sec: 0.2
-  stop_margin_mm: 300.0
+  stop_margin_mm: 100.0
   distance_timeout_sec: 0.25
   control_rate_hz: 20.0
   command_timeout_sec: 0.5
   release_hysteresis_mm: 30.0
-  rotation_clearance_mm: 300.0
-  projection_radius_m: 0.25
+  rotation_clearance_mm: 100.0
   front_range_topic: /front/range
   left_range_topic: /left/range
   right_range_topic: /right/range
-  rear_range_topic: /rear/range  # 后方 VL53，CAN sensor_id=5；失效时禁止倒车/转弯
+  rear_range_topic: /rear/range  # 后方 VL53，CAN sensor_id=5；仅有效近障碍参与制动
 
 # ── 视频推流参数 ──────────────────────────────────────────────
 video_stream:
@@ -184,7 +184,8 @@ move_base:
   # 通用
   obstacle_range: 3.0
   raytrace_range: 3.5
-  footprint: [[-0.25, -0.20], [-0.25, 0.20], [0.25, 0.20], [0.25, -0.20]]
+  robot_radius: 0.25
+  footprint_padding: 0.10
   inflation_radius: 0.30
   cost_scaling_factor: 3.0
 

@@ -10,9 +10,11 @@
 #include <std_srvs/Trigger.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/UInt32.h>
+#include <std_msgs/String.h>
 
 #include <sstream>
 #include <cstdlib>
+#include <cmath>
 
 // ── 内部数据结构 ────────────────────────────────────────────
 struct PointDef {
@@ -26,6 +28,8 @@ struct PointDef {
 struct PathDef {
   std::string name;
   std::vector<PointDef> points;
+  std::string fallback_path;
+  int blocked_point_index = -1;  // Destination index of the protected segment.
 };
 
 // ── PathManager 类 ─────────────────────────────────────────
@@ -52,9 +56,11 @@ class PathManager {
   ros::Publisher  path_pub_;
   ros::Publisher  has_next_pub_;
   ros::Publisher  path_revision_pub_;
+  ros::Publisher  active_path_pub_;
   ros::ServiceServer load_srv_;
   ros::ServiceServer select_srv_;
   ros::ServiceServer next_srv_;
+  ros::ServiceServer fallback_srv_;
   ros::Timer        pub_timer_;
 
   dynamic_reconfigure::Server<path_manager::PathManagerConfig> cfg_server_;
@@ -88,6 +94,8 @@ class PathManager {
                         path_manager::SelectPath::Response& res);
   bool handleNextPoint(std_srvs::Trigger::Request&  req,
                        std_srvs::Trigger::Response& res);
+  bool handleBlockedPath(std_srvs::Trigger::Request& req,
+                         std_srvs::Trigger::Response& res);
   void reconfigureCallback(path_manager::PathManagerConfig& config,
                            uint32_t level);
   void publishPathState();
@@ -106,11 +114,14 @@ bool PathManager::init() {
   path_pub_ = nh_.advertise<path_manager::PathPoint>("/path_points", 10);
   has_next_pub_ = nh_.advertise<std_msgs::Bool>("/path_manager/has_next_point", 1, true);
   path_revision_pub_ = nh_.advertise<std_msgs::UInt32>("/path_manager/path_revision", 1, true);
+  active_path_pub_ = nh_.advertise<std_msgs::String>("/path_manager/active_path", 1, true);
 
   // 服务
   load_srv_   = nh_.advertiseService("/load_path",   &PathManager::handleLoadPath,   this);
   select_srv_ = nh_.advertiseService("/select_path", &PathManager::handleSelectPath, this);
   next_srv_   = nh_.advertiseService("/next_point",  &PathManager::handleNextPoint,  this);
+  fallback_srv_ = nh_.advertiseService("/path_manager/reroute_blocked_path",
+                                       &PathManager::handleBlockedPath, this);
 
   // 动态参数
   cfg_cb_ = boost::bind(&PathManager::reconfigureCallback, this, _1, _2);
@@ -148,6 +159,10 @@ void PathManager::publishPathState() {
   std_msgs::UInt32 revision;
   revision.data = path_revision_;
   path_revision_pub_.publish(revision);
+  std_msgs::String active;
+  if (active_path_idx_ >= 0 && active_path_idx_ < static_cast<int>(paths_.size()))
+    active.data = paths_[active_path_idx_].name;
+  active_path_pub_.publish(active);
 }
 
 // ── 从参数服务器读取路径 ──────────────────────────────────
@@ -176,6 +191,14 @@ bool PathManager::loadPathsFromParam() {
 
     PathDef pd;
     pd.name = static_cast<std::string>(entry["name"]);
+    if (entry.hasMember("fallback_path")) {
+      pd.fallback_path = static_cast<std::string>(entry["fallback_path"]);
+      if (!entry.hasMember("blocked_point_index")) {
+        ROS_ERROR("[path_manager] 路径 '%s' 缺少 blocked_point_index", pd.name.c_str());
+        return false;
+      }
+      pd.blocked_point_index = static_cast<int>(entry["blocked_point_index"]);
+    }
 
     const XmlRpc::XmlRpcValue& pts = entry["points"];
     if (pts.getType() != XmlRpc::XmlRpcValue::TypeArray) {
@@ -206,6 +229,34 @@ bool PathManager::loadPathsFromParam() {
   if (paths_.empty()) {
     ROS_ERROR("[path_manager] 未加载到任何有效路径");
     return false;
+  }
+
+  for (const auto& path : paths_) {
+    if (path.fallback_path.empty()) continue;
+    const PathDef* fallback = nullptr;
+    for (const auto& candidate : paths_)
+      if (candidate.name == path.fallback_path) fallback = &candidate;
+    const int index = path.blocked_point_index;
+    // Retreat to the entry of this segment, then follow the alternate corridor
+    // to the same mission endpoint. Reject missing or recursive alternatives.
+    if (!fallback || fallback == &path || !fallback->fallback_path.empty() ||
+        index < 1 || index >= static_cast<int>(path.points.size()) ||
+        fallback->points.size() < 2) {
+      ROS_ERROR("[path_manager] 路径 '%s' 的备用路线配置无效", path.name.c_str());
+      return false;
+    }
+    const auto& entry = path.points[index - 1];
+    const auto& first = fallback->points.front();
+    const auto& end = path.points.back();
+    const auto& last = fallback->points.back();
+    if (std::hypot(entry.x - first.x, entry.y - first.y) > 1e-6 ||
+        std::hypot(end.x - last.x, end.y - last.y) > 1e-6 ||
+        std::abs(end.tolerance - last.tolerance) > 1e-6 ||
+        end.has_yaw != last.has_yaw || (end.has_yaw && std::abs(end.yaw - last.yaw) > 1e-6)) {
+      ROS_ERROR("[path_manager] 备用路线 '%s' 必须从原通道入口返回并到达相同终点",
+                fallback->name.c_str());
+      return false;
+    }
   }
 
   ROS_INFO("[path_manager] 从参数服务器加载了 %zu 条路径", paths_.size());
@@ -316,6 +367,28 @@ bool PathManager::handleSelectPath(
 }
 
 // ── /next_point 服务 ───────────────────────────────────────
+bool PathManager::handleBlockedPath(std_srvs::Trigger::Request&,
+                                    std_srvs::Trigger::Response& res) {
+  if (active_path_idx_ >= 0 && !override_enabled_) {
+    const auto& path = paths_[active_path_idx_];
+    if (!path.fallback_path.empty() && active_point_idx_ == path.blocked_point_index) {
+      // Copy before selecting, as selection changes the active path.
+      path_manager::SelectPath::Request select;
+      path_manager::SelectPath::Response selected;
+      select.path_name = path.fallback_path;
+      handleSelectPath(select, selected);
+      res.success = selected.success;
+      res.message = selected.message;
+      if (res.success) ROS_WARN("[path_manager] 横向通道遇障，切换备用路线: %s",
+                                select.path_name.c_str());
+      return true;
+    }
+  }
+  res.success = false;
+  res.message = "当前路段未配置备用路线，继续局部绕行";
+  return true;
+}
+
 bool PathManager::handleNextPoint(
     std_srvs::Trigger::Request&  /*req*/,
     std_srvs::Trigger::Response& res) {

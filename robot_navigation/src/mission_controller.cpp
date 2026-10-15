@@ -58,10 +58,10 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , chassis_locked_(false)
     , bed_verified_(false)
     , enable_vl53_circle_check_(true)
-    , require_all_vl53_ranges_(true)
+    , require_all_vl53_ranges_(false)
     , vl53_circle_timeout_sec_(0.5)
     , vl53_min_clearance_m_(0.05)
-    , base_projection_radius_m_(0.20)
+    , base_projection_radius_m_(0.25)
     , full_projection_radius_m_(0.25)
     , circle_boundary_margin_m_(0.02)
     , front_range_topic_("/front/range")
@@ -76,7 +76,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       ? ros::NodeHandle(pnh_, "mission") : pnh_;
   mission_nh.param<double>("stage_timeout_sec", stage_timeout_sec_, 30.0);
   stage_timeout_default_sec_ = stage_timeout_sec_;
-  mission_nh.param<double>("navigation_stage_timeout_sec", navigation_stage_timeout_sec_, 75.0);
+  mission_nh.param<double>("navigation_stage_timeout_sec", navigation_stage_timeout_sec_, 120.0);
   mission_nh.param<double>("mission_timeout_sec", mission_timeout_sec_, 180.0);
   mission_nh.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
   mission_nh.param("odom_timeout_sec", odom_timeout_sec_, 0.5);
@@ -85,10 +85,10 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param<bool>("audio_video_enabled", audio_video_enabled_, false);
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
   pnh_.param<bool>("enable_vl53_circle_check", enable_vl53_circle_check_, true);
-  pnh_.param<bool>("require_all_vl53_ranges", require_all_vl53_ranges_, true);
+  pnh_.param<bool>("require_all_vl53_ranges", require_all_vl53_ranges_, false);
   pnh_.param<double>("vl53_circle_timeout_sec", vl53_circle_timeout_sec_, 0.5);
   pnh_.param<double>("vl53_min_clearance_m", vl53_min_clearance_m_, 0.05);
-  pnh_.param<double>("base_projection_radius_m", base_projection_radius_m_, 0.20);
+  pnh_.param<double>("base_projection_radius_m", base_projection_radius_m_, 0.25);
   pnh_.param<double>("full_projection_radius_m", full_projection_radius_m_, 0.25);
   pnh_.param<double>("circle_boundary_margin_m", circle_boundary_margin_m_, 0.02);
   pnh_.param<std::string>("front_range_topic", front_range_topic_, "/front/range");
@@ -883,7 +883,7 @@ bool MissionController::checkHomeCheckComplete() {
 
   ros::Time now = ros::Time::now();
 
-  if (!isRobotInHomeZone() || !areVl53RangesValid()) {
+  if (!isRobotInHomeZone()) {
     home_arrived_ = false;
     return false;
   }
@@ -1103,7 +1103,8 @@ bool MissionController::areVl53RangesValid() const {
   const sensor_msgs::Range* samples[] = {&front_range_, &left_range_, &right_range_, &rear_range_};
   const ros::Time* stamps[] = {&front_range_time_, &left_range_time_, &right_range_time_, &rear_range_time_};
   int valid_count = 0;
-  for (size_t i = 0; i < 4; ++i) {
+  const size_t required_count = require_all_vl53_ranges_ ? 4 : 1;  // Front beam calibrates P4/P6.
+  for (size_t i = 0; i < required_count; ++i) {
     const double age = (now - *stamps[i]).toSec();
     const double header_age = samples[i]->header.stamp.isZero() ? 0.0 :
         (now - samples[i]->header.stamp).toSec();
@@ -1118,7 +1119,7 @@ bool MissionController::areVl53RangesValid() const {
     if (valid) ++valid_count;
   }
 
-  const bool ok = require_all_vl53_ranges_ ? valid_count == 4 : valid_count > 0;
+  const bool ok = valid_count == static_cast<int>(required_count);
   if (!ok) {
     ROS_WARN_THROTTLE(1.0,
                       "[mission_controller] VL53投影校验等待数据: valid=%d/4, require_all=%s",

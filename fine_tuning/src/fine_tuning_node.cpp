@@ -7,7 +7,7 @@ FineTuningController::FineTuningController(ros::NodeHandle& nh, ros::NodeHandle&
     : nh_(nh), pnh_(pnh) {}
 
 bool FineTuningController::init() {
-  pnh_.param("target_distance_mm", target_mm_, 400.0);
+  pnh_.param("target_distance_mm", target_mm_, 250.0);
   pnh_.param("tolerance_mm", tolerance_mm_, 10.0);
   pnh_.param("move_axis", axis_, 1.0);
   pnh_.param("move_direction", direction_, 1);
@@ -26,8 +26,8 @@ bool FineTuningController::init() {
   pnh_.param("allow_reverse", allow_reverse_, false);
   pnh_.param("auto_start_on_path_finished", auto_start_, false);
   double safety_floor, margin, reaction, deceleration, hysteresis;
-  nh_.param("/distance_safety_node/safety_distance_mm", safety_floor, 300.0);
-  nh_.param("/distance_safety_node/stop_margin_mm", margin, 300.0);
+  nh_.param("/distance_safety_node/safety_distance_mm", safety_floor, 150.0);
+  nh_.param("/distance_safety_node/stop_margin_mm", margin, 100.0);
   nh_.param("/distance_safety_node/reaction_time_sec", reaction, 0.2);
   nh_.param("/distance_safety_node/braking_deceleration_mps2", deceleration, 1.0);
   nh_.param("/distance_safety_node/release_hysteresis_mm", hysteresis, 30.0);
@@ -134,7 +134,8 @@ bool FineTuningController::fineTuningStartCallback(std_srvs::Trigger::Request&,
   if (estop_latched_) res.message = "ESTOP latched";
   else if (!actions_enabled_) res.message = "cancelled: a new accepted mission is required";
   else if (state_ == State::FINE_TUNING) res.message = "fine tuning already running";
-  else if (!fresh()) res.message = "fresh distance and odometry required";
+  else if (!has_odom_ || (ros::SteadyTime::now()-odom_time_).toSec() > odom_timeout_)
+    res.message = "fresh odometry required";
   else if (target_mm_ < minimum_target_mm_) res.message = "target conflicts with braking clearance";
   else {
     state_ = State::FINE_TUNING;
@@ -173,8 +174,19 @@ void FineTuningController::controlTimerCallback(const ros::TimerEvent&) {
   if (state_ != State::FINE_TUNING) return;
   const auto now = ros::SteadyTime::now();
   if (estop_latched_) { finish(false, "ESTOP"); return; }
-  if (!fresh()) { finish(false, "stale/invalid sensor or odometry"); return; }
+  if (!has_odom_ || (now-odom_time_).toSec() > odom_timeout_) {
+    finish(false, "stale/invalid odometry"); return;
+  }
   if ((now-start_time_).toSec() >= max_time_) { finish(false, "timeout"); return; }
+  if (!fresh()) {
+    publishVelocity(0.0, 0.0);
+    moving_ = false;
+    phase_time_ = now;
+    std_msgs::String status;
+    status.data = "waiting for calibration distance";
+    status_pub_.publish(status);
+    return;
+  }
   if (std::hypot(x_-origin_x_, y_-origin_y_) >= max_translation_) {
     finish(false, "translation limit reached"); return;
   }

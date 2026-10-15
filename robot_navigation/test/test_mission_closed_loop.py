@@ -28,6 +28,14 @@ class ClosedLoop(unittest.TestCase):
         self.advance = False
         self.result = QrResult(1, 1, 3, 3)
         self.finished = self.failed = False
+        self.cross_passage_blocked = rospy.get_param('~cross_passage_blocked', False)
+        self.intermittent_ranges = rospy.get_param('~intermittent_ranges', False)
+        self.mission_state = ''
+        self.calibration_origin_x = 0.
+        self.calibrated_beds = set()
+        self.calibration_errors = []
+        self.active_path = ''
+        self.path_history = []
         self.boxes, self.placed, self.displays = [], [], []
         self.minimum_vx = 0.
         self.clock = rospy.Publisher('/clock', Clock, queue_size=1)
@@ -41,6 +49,8 @@ class ClosedLoop(unittest.TestCase):
         self.start = rospy.Publisher('/start_signal/physical', UInt32, queue_size=1)
         self.placed_event = rospy.Publisher('/medicine/placed', Int8, queue_size=1)
         subs = [rospy.Subscriber('/cmd_vel_muxed', Twist, self.on_velocity),
+                rospy.Subscriber('/path_manager/active_path', String, self.on_path),
+                rospy.Subscriber('/mission/state', String, self.on_state),
                 rospy.Subscriber('/mission_finished', Bool, self.on_finished),
                 rospy.Subscriber('/emergency_stop', Bool, self.on_estop),
                 rospy.Subscriber('/robot_display', String, self.on_display)]
@@ -62,18 +72,41 @@ class ClosedLoop(unittest.TestCase):
                 with self.guard:
                     self.pose = [0., 0., 0.]
                     self.result = QrResult(bed, 1, 4-bed, 3)
-                    self.finished = False
+                    self.finished = self.failed = False
                     self.boxes, self.placed, self.displays = [], [], []
+                    self.path_history = []
+                    self.calibrated_beds.clear()
+                    self.calibration_errors.clear()
                     started = self.sim_time
                 self.start.publish(UInt32(0x5A17))
-                self.wait(lambda: self.finished or self.failed, 30)
-                self.assertFalse(self.failed, str(self.displays))
+                self.wait(lambda: self.finished or self.failed, 45 if self.cross_passage_blocked else 30)
                 self.assertEqual(self.boxes, [1, 3])
                 self.assertEqual(self.placed, [(bed, 1), (4-bed, 3)])
                 self.assertGreaterEqual(self.minimum_vx, -.000001)
-                self.assertLess(self.sim_time-started, 180.)
-                rospy.loginfo('forward-only branch %d completed in %.2f simulated seconds', bed,
-                              self.sim_time-started)
+                if self.intermittent_ranges:
+                    self.assertEqual(self.calibrated_beds, {1, 3})
+                    self.assertTrue(all(error <= 10.1 for error in self.calibration_errors), self.calibration_errors)
+                if self.cross_passage_blocked:
+                    route = 'bed1_to_bed3' if bed == 1 else 'bed3_to_bed1'
+                    self.assertIn(route+'_via_p1', self.path_history)
+                if self.failed:
+                    # The longer alternate route may exhaust the competition
+                    # budget on the return home. Both deliveries must already
+                    # be correct, and only the actual global timeout is allowed.
+                    self.assertTrue(self.cross_passage_blocked, str(self.displays))
+                    self.assertIn('任务超时!', self.displays)
+                    self.assertGreaterEqual(self.sim_time-started, 179.9)
+                    self.assertFalse(self.finished)
+                    self.wait(lambda: max(abs(self.velocity.linear.x), abs(self.velocity.linear.y),
+                                          abs(self.velocity.angular.z)) < .001, 2)
+                    rospy.logwarn('blocked branch %d delivered both beds; global timeout stopped return home', bed)
+                    reset = rospy.ServiceProxy('/system_health/reset', Trigger)
+                    self.assertTrue(reset().success)
+                    time.sleep(.2)
+                else:
+                    self.assertLess(self.sim_time-started, 180.)
+                    rospy.loginfo('forward-only branch %d completed in %.2f simulated seconds', bed,
+                                  self.sim_time-started)
         finally:
             self.running = False
             thread.join(timeout=2)
@@ -106,13 +139,24 @@ class ClosedLoop(unittest.TestCase):
                 msg.twist.twist = self.velocity
                 self.odom.publish(msg)
                 self.measured.publish(self.velocity)
-                for pub in self.ranges:
+                blocked = (self.cross_passage_blocked and
+                           self.active_path in ('bed1_to_bed3', 'bed3_to_bed1') and
+                           abs(self.pose[0]-3.) < .10 and abs(self.pose[1]) < 1.0 and
+                           abs(math.sin(self.pose[2])) > .98)
+                calibrating = self.mission_state in ('POSITION_IN_CIRCLE_A', 'POSITION_IN_CIRCLE_B')
+                calibration_distance = 270. - 1000.*(self.pose[0]-self.calibration_origin_x)
+                for index, pub in enumerate(self.ranges):
                     msg = Range()
                     msg.header.stamp = stamp
                     msg.min_range, msg.max_range, msg.range = .04, 4., .8
+                    if self.intermittent_ranges:
+                        msg.range = calibration_distance/1000. if calibrating and index == 0 else float('nan')
+                    if blocked and index == 0:
+                        msg.range = .65
                     pub.publish(msg)
                 # Fine-tuning alignment is ideal; obstacle geometry is not modeled.
-                self.distance.publish(Float32(400.))
+                self.distance.publish(Float32(calibration_distance if calibrating else float('nan'))
+                                      if self.intermittent_ranges else Float32(250.))
                 self.motor.publish(Float32MultiArray(data=[0., 0., 0., 0.]))
                 self.qr.publish(self.result)
             time.sleep(.005)
@@ -121,6 +165,23 @@ class ClosedLoop(unittest.TestCase):
         with self.guard:
             self.velocity = msg
             self.minimum_vx = min(self.minimum_vx, msg.linear.x)
+
+    def on_path(self, msg):
+        with self.guard:
+            self.active_path = msg.data
+            if not self.path_history or self.path_history[-1] != msg.data:
+                self.path_history.append(msg.data)
+
+    def on_state(self, msg):
+        with self.guard:
+            if msg.data != self.mission_state and msg.data in ('POSITION_IN_CIRCLE_A', 'POSITION_IN_CIRCLE_B'):
+                self.calibration_origin_x = self.pose[0]
+            if self.intermittent_ranges and self.mission_state in ('POSITION_IN_CIRCLE_A', 'POSITION_IN_CIRCLE_B') and \
+                    msg.data in ('SCAN_BARCODE_A', 'SCAN_BARCODE_B'):
+                self.calibration_errors.append(abs(270.-1000.*(self.pose[0]-self.calibration_origin_x)-250.))
+                bed = self.result.first_bed if msg.data == 'SCAN_BARCODE_A' else self.result.second_bed
+                self.calibrated_beds.add(bed)
+            self.mission_state = msg.data
 
     def on_finished(self, msg):
         with self.guard:
