@@ -48,8 +48,6 @@ def parse_stm32_stop(can_id, payload):
         return ''
     if can_id == 0x101 and payload[0] == 0x06:
         return 'STM32 emergency event: motor=%d reason=0x%02X' % (payload[1], payload[2])
-    if can_id == 0x112 and payload[:3] == bytes([0x02, 0x01, 0x01]):
-        return 'STM32 physical emergency-stop button'
     return ''
 
 
@@ -365,8 +363,8 @@ class DirectNode:
                 self.armed = False
                 self.target = [0.0] * 4
                 self.stop_all()
-                # Bounded best-effort shutdown. A disconnected CAN cannot be
-                # stopped by software; use the hardware emergency stop.
+                # Bounded best-effort shutdown; a disconnected CAN cannot
+                # deliver software stop commands.
                 deadline = time.monotonic() + 0.6
                 while self.tx_schedule.pending_stops and time.monotonic() < deadline:
                     self.transmit_one(time.monotonic())

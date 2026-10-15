@@ -19,7 +19,7 @@
   </include>
   <include file="$(find robot_navigation)/test/fine_tuning_fixture.launch">
     <arg name="node_type" value="$(arg fine_node_type)"/><arg name="name" value="conflict_fine"/>
-    <arg name="target" value="200.0"/>
+    <arg name="target" value="150.0"/>
   </include>
   <test pkg="robot_navigation" type="test_safety_and_fine_tuning.py" test-name="safety_and_fine_tuning" time-limit="40"/>
 </launch>

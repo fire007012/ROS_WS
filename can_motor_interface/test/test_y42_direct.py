@@ -195,11 +195,11 @@ class TestTxSchedule(unittest.TestCase):
         self.assertEqual(len(n.tx_schedule.pending_stops),8)  # not replenished
 class TestSTM32BridgeEvents(unittest.TestCase):
     def test_standard_stop_events(self):
-        p=bytes([6,255,0x81,0,0,0,0,0])
-        self.assertIn('reason=0x81',m.parse_stm32_stop(0x101,p))
+        p=bytes([6,255,0x89,0,0,0,0,0])
+        self.assertIn('reason=0x89',m.parse_stm32_stop(0x101,p))
         self.assertTrue(m.parse_stm32_stop(0x101,bytes([6,255,0x80,0,0,0,0,0])))
         self.assertTrue(m.parse_stm32_stop(0x101,bytes([6,0,0x89,0,0,0,0,0])))
-        self.assertTrue(m.parse_stm32_stop(0x112,bytes([2,1,1,0,0,0,0,0])))
+        self.assertFalse(m.parse_stm32_stop(0x112,bytes([2,1,1,0,0,0,0,0])))
         self.assertFalse(m.parse_stm32_stop(0x112,bytes([1,1,1,0,0,0,0,0])))
         self.assertFalse(m.parse_stm32_stop(0x101,bytes([1,0,0,0,0,0,0,0])))
         for flag in (m.CAN_EFF_FLAG,m.CAN_RTR_FLAG,m.CAN_ERR_FLAG):
@@ -214,7 +214,7 @@ class TestSTM32BridgeEvents(unittest.TestCase):
         messages=[]
         n.Bool=lambda **kw:SimpleNamespace(**kw)
         n.emergency_pub=SimpleNamespace(publish=messages.append)
-        n.receive_frame(0x101,bytes([6,255,0x81,0,0,0,0,0]),m.time.monotonic())
+        n.receive_frame(0x101,bytes([6,255,0x89,0,0,0,0,0]),m.time.monotonic())
         self.assertFalse(n.armed);self.assertTrue(n.external_stop)
         self.assertEqual(n.target,[0]*4)
         self.assertTrue(messages[0].data)
@@ -223,7 +223,7 @@ class TestSTM32BridgeEvents(unittest.TestCase):
 
     def test_direct_mode_ignores_stm32_standard_events(self):
         n=TestArmGuard().node();n.armed=True;n.monitor_stm32_events=False
-        n.receive_frame(0x101,bytes([6,255,0x81,0,0,0,0,0]),m.time.monotonic())
+        n.receive_frame(0x101,bytes([6,255,0x89,0,0,0,0,0]),m.time.monotonic())
         self.assertTrue(n.armed);self.assertFalse(n.external_stop)
 
     def test_native_feedback_still_works_in_bridge_mode(self):

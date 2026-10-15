@@ -6,13 +6,13 @@
   <arg name="publish_tf" default="false"/>
 
   <!-- Coordinates are installation parameters; override these for the actual chassis. -->
-  <arg name="front_x" default="0.0"/><arg name="front_y" default="0.0"/><arg name="front_z" default="0.0"/>
+  <arg name="front_x" default="0.25"/><arg name="front_y" default="0.0"/><arg name="front_z" default="0.0"/>
   <arg name="front_yaw" default="0.0"/><arg name="front_pitch" default="0.0"/><arg name="front_roll" default="0.0"/>
-  <arg name="left_x" default="0.0"/><arg name="left_y" default="0.0"/><arg name="left_z" default="0.0"/>
-  <arg name="left_yaw" default="0.0"/><arg name="left_pitch" default="0.0"/><arg name="left_roll" default="0.0"/>
-  <arg name="right_x" default="0.0"/><arg name="right_y" default="0.0"/><arg name="right_z" default="0.0"/>
-  <arg name="right_yaw" default="0.0"/><arg name="right_pitch" default="0.0"/><arg name="right_roll" default="0.0"/>
-  <arg name="rear_x" default="0.0"/><arg name="rear_y" default="0.0"/><arg name="rear_z" default="0.0"/>
+  <arg name="left_x" default="0.0"/><arg name="left_y" default="0.20"/><arg name="left_z" default="0.0"/>
+  <arg name="left_yaw" default="1.5707963267948966"/><arg name="left_pitch" default="0.0"/><arg name="left_roll" default="0.0"/>
+  <arg name="right_x" default="0.0"/><arg name="right_y" default="-0.20"/><arg name="right_z" default="0.0"/>
+  <arg name="right_yaw" default="-1.5707963267948966"/><arg name="right_pitch" default="0.0"/><arg name="right_roll" default="0.0"/>
+  <arg name="rear_x" default="-0.20"/><arg name="rear_y" default="0.0"/><arg name="rear_z" default="0.0"/>
   <arg name="rear_yaw" default="3.141592653589793"/><arg name="rear_pitch" default="0.0"/><arg name="rear_roll" default="0.0"/>
 
   <node pkg="robot_navigation" type="vl53l1x_can_bridge_node"

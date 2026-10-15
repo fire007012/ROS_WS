@@ -30,6 +30,19 @@ def ray_box(x, y, dx, dy, box):
     return near if far >= near and far >= 0 else float('inf')
 
 
+def ray_cone(x, y, dx, dy, box):
+    # Circular horizontal section of the cone; no room wall returns.
+    cx, cy = (box[0]+box[1])/2, (box[2]+box[3])/2
+    radius = (box[1]-box[0])/2
+    ox, oy = x-cx, y-cy
+    projection = ox*dx+oy*dy
+    discriminant = projection*projection-(ox*ox+oy*oy-radius*radius)
+    if discriminant < 0:
+        return float('inf')
+    distance = -projection-math.sqrt(discriminant)
+    return distance if distance >= 0 else float('inf')
+
+
 class RangeDetourRos(unittest.TestCase):
     def test_closed_loop(self):
         self.lock = threading.RLock()
@@ -42,11 +55,13 @@ class RangeDetourRos(unittest.TestCase):
         self.point = None
         self.angle = 0.0
         self.obstacles = []
+        self.cone = False
         self.fault = None
         self.state = ''
         self.states = set()
         self.finished = False
         self.collided = False
+        self.minimum_clearance = float('inf')
         self.next_calls = 0
         self.cross_track = []
         self.send_odom = True
@@ -73,6 +88,7 @@ class RangeDetourRos(unittest.TestCase):
                 self.new_route(angle=angle, right=right)
                 self.wait(lambda: self.finished, timeout=28)
                 self.assertFalse(self.collided, 'chassis intersected an obstacle')
+                self.assertGreaterEqual(self.minimum_clearance, .10, 'body reserve below 10 cm')
                 self.assertEqual(self.next_calls, 0, 'detour must not advance/skip the waypoint')
                 self.assertTrue({'SIDESTEP', 'BYPASS', 'EDGE_CLEAR', 'RETURN'} <= self.states, self.states)
                 self.assertGreater(max(abs(y) for y in self.cross_track), .6)
@@ -84,13 +100,21 @@ class RangeDetourRos(unittest.TestCase):
                 self.assertAlmostEqual(x, 2.7, delta=.05)
                 self.assertAlmostEqual(y, 0., delta=.05)
 
-            # NaN and missing rear samples stop lateral detours with frozen ROS time.
+            # Only the cone produces returns. After it leaves the beam, use
+            # remembered geometry/odometry to finish the bypass and return.
+            self.new_route(cone=True)
+            self.wait(lambda: self.finished, timeout=25)
+            self.assertFalse(self.collided)
+            self.assertGreaterEqual(self.minimum_clearance, .10, 'cone reserve below 10 cm')
+            self.assertTrue({'SIDESTEP', 'BYPASS', 'EDGE_CLEAR', 'RETURN'} <= self.states, self.states)
+
+            # NaN and absent rear returns do not stop a known-obstacle detour.
             self.new_route()
             self.wait(lambda: self.state == 'SIDESTEP' and abs(self.velocity.linear.y) > .05)
             with self.lock:
                 self.fault = 'nan_rear'
                 self.advance = False
-            self.wait(lambda: self.state == 'WAIT_RANGES' and self.stopped())
+            self.hold(lambda: self.state == 'SIDESTEP' and abs(self.velocity.linear.y) > .05, .3)
             self.assertFalse(self.finished)
             with self.lock:
                 self.fault = None
@@ -99,7 +123,7 @@ class RangeDetourRos(unittest.TestCase):
             with self.lock:
                 self.fault = 'missing_rear'
                 self.advance = False
-            self.wait(lambda: self.state == 'WAIT_RANGES' and self.stopped())
+            self.hold(lambda: self.state == 'SIDESTEP' and abs(self.velocity.linear.y) > .05, .4)
             self.assertFalse(self.finished)
             with self.lock:
                 self.fault = None
@@ -139,7 +163,7 @@ class RangeDetourRos(unittest.TestCase):
                 sub.unregister()
             service.shutdown()
 
-    def new_route(self, angle=0., right=False, blocked=False, goal=2.7):
+    def new_route(self, angle=0., right=False, blocked=False, goal=2.7, cone=False):
         self.cancel.publish(Empty())
         self.wait(lambda: self.state == 'CANCELLED' and self.stopped())
         self.reset.publish(Bool(True))
@@ -148,15 +172,17 @@ class RangeDetourRos(unittest.TestCase):
             self.pose = [0., 0., angle]
             self.velocity = Twist()
             self.angle = angle
-            self.obstacles = [(1.2, 1.7, -.25, .25)]
+            self.cone = cone
+            self.obstacles = [(1.2, 1.7, -.25, .25)]  # Confirmed 0.50 m cone base diameter.
             if right or blocked:
-                self.obstacles.append((-.48, 3.3, .65, 1.8))
+                self.obstacles.append((-.48, 3.3, .75, 1.8))
             if blocked:
-                self.obstacles.append((-.48, 3.3, -1.8, -.65))
+                self.obstacles.append((-.48, 3.3, -1.8, -.75))
             self.fault = None
             self.advance = self.send_odom = True
             self.states.clear()
             self.finished = self.collided = False
+            self.minimum_clearance = float('inf')
             self.cross_track.clear()
             self.point = None
         self.enabled.publish(Bool(True))
@@ -182,9 +208,14 @@ class RangeDetourRos(unittest.TestCase):
                 self.pose[2] += omega*dt
                 x, y = self.local_pose()
                 self.cross_track.append(y)
-                radius = .20 * (abs(math.cos(yaw-self.angle)) + abs(math.sin(yaw-self.angle)))
+                radius = .25  # Circular chassis: turn does not enlarge the envelope.
                 for box in self.obstacles:
-                    if box[0]-radius < x < box[1]+radius and box[2]-radius < y < box[3]+radius:
+                    if self.cone:
+                        gap = math.hypot(x-(box[0]+box[1])/2, y-(box[2]+box[3])/2) - (box[1]-box[0])/2 - radius
+                    else:
+                        gap = math.hypot(max(box[0]-x, 0., x-box[1]), max(box[2]-y, 0., y-box[3])) - radius
+                    self.minimum_clearance = min(self.minimum_clearance, gap)
+                    if gap < 0:
                         self.collided = True
                 stamp = rospy.Time.from_sec(self.clock_time)
                 self.clock.publish(Clock(stamp))
@@ -203,12 +234,16 @@ class RangeDetourRos(unittest.TestCase):
                     local_angle = yaw-self.angle
                     dx = math.cos(local_angle)*bx-math.sin(local_angle)*by
                     dy = math.sin(local_angle)*bx+math.cos(local_angle)*by
-                    ox, oy = x+.20*dx, y+.20*dy
+                    sensor_radius = .25 if name == 'front' else .20
+                    ox, oy = x+sensor_radius*dx, y+sensor_radius*dy
                     distances = []
                     for spread in [-.235, -.1175, 0., .1175, .235]:
                         rx = math.cos(spread)*dx-math.sin(spread)*dy
                         ry = math.sin(spread)*dx+math.cos(spread)*dy
-                        distances.extend(ray_box(ox, oy, rx, ry, b) for b in walls+self.obstacles)
+                        if self.cone:
+                            distances.extend(ray_cone(ox, oy, rx, ry, b) for b in self.obstacles)
+                        else:
+                            distances.extend(ray_box(ox, oy, rx, ry, b) for b in walls+self.obstacles)
                     distance = min(distances)
                     msg = Range()
                     msg.header.stamp = stamp

@@ -7,20 +7,19 @@ DistanceSafetyNode::DistanceSafetyNode(ros::NodeHandle& nh, ros::NodeHandle& pnh
     : nh_(nh), pnh_(pnh) {}
 
 bool DistanceSafetyNode::init() {
-  pnh_.param("safety_distance_mm", safety_distance_mm_, 300.0);
+  pnh_.param("safety_distance_mm", safety_distance_mm_, 150.0);
   pnh_.param("critical_distance_mm", critical_distance_mm_, 100.0);
   pnh_.param("braking_deceleration_mps2", braking_deceleration_mps2_, 1.0);
   pnh_.param("reaction_time_sec", reaction_time_sec_, 0.2);
-  pnh_.param("stop_margin_mm", stop_margin_mm_, 300.0);
+  pnh_.param("stop_margin_mm", stop_margin_mm_, 100.0);
   pnh_.param("distance_timeout_sec", distance_timeout_sec_, 0.5);
   pnh_.param("command_timeout_sec", command_timeout_sec_, 0.5);
   pnh_.param("release_hysteresis_mm", release_hysteresis_mm_, 30.0);
-  pnh_.param("projection_radius_m", projection_radius_m_, 0.25);
-  pnh_.param("rotation_clearance_mm", rotation_clearance_mm_, 300.0);
+  pnh_.param("rotation_clearance_mm", rotation_clearance_mm_, 100.0);
   double rate;
   pnh_.param("control_rate_hz", rate, 20.0);
   for (double value : {safety_distance_mm_, critical_distance_mm_, braking_deceleration_mps2_,
-                       distance_timeout_sec_, command_timeout_sec_, projection_radius_m_, rate}) {
+                       distance_timeout_sec_, command_timeout_sec_, rate}) {
     if (!std::isfinite(value) || value <= 0.0) return false;
   }
   for (double value : {reaction_time_sec_, stop_margin_mm_, release_hysteresis_mm_, rotation_clearance_mm_}) {
@@ -28,6 +27,8 @@ bool DistanceSafetyNode::init() {
   }
   const std::array<std::string, 4> names{{"front", "left", "right", "rear"}};
   for (size_t i = 0; i < names.size(); ++i) {
+    nh_.param("/chassis_geometry/" + names[i] + "_inset_m", sensor_insets_m_[i], i == 0 ? 0.0 : 0.05);
+    if (!std::isfinite(sensor_insets_m_[i]) || sensor_insets_m_[i] < 0.0) return false;
     std::string topic;
     pnh_.param(names[i] + "_range_topic", topic, "/" + names[i] + "/range");
     range_subs_[i] = nh_.subscribe<sensor_msgs::Range>(topic, 10,
@@ -39,7 +40,7 @@ bool DistanceSafetyNode::init() {
   state_pub_ = nh_.advertise<std_msgs::String>("/distance_safety/state", 1, true);
   timer_ = nh_.createSteadyTimer(ros::WallDuration(1.0 / rate), &DistanceSafetyNode::safetyTimerCallback, this);
   publishState("CLEAR");
-  ROS_INFO("[distance_safety] four-direction Range braking; reverse and turning require rear data");
+  ROS_INFO("[distance_safety] four-direction braking on valid obstacle detections; missing returns ignored");
   return true;
 }
 
@@ -51,7 +52,9 @@ void DistanceSafetyNode::rangeCallback(size_t index, const sensor_msgs::Range::C
       msg->range <= msg->max_range && msg->range > 0.0 &&
       age >= -0.05 && age <= distance_timeout_sec_;
   if (!sample.valid) return;
-  sample.distance_mm = msg->range * 1000.0;
+  // Convert sensor-origin range into clearance outside the circular body.
+  // An inset sensor can report a valid obstacle at/below the body edge.
+  sample.distance_mm = std::max(0.0, msg->range - sensor_insets_m_[index]) * 1000.0;
   sample.received = ros::SteadyTime::now();
 }
 void DistanceSafetyNode::requestedCallback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -99,8 +102,7 @@ void DistanceSafetyNode::safetyTimerCallback(const ros::SteadyTimerEvent&) {
     std::max({0.0, -r.linear.x, -measured.linear.x})}};
   double factor = 1.0;
   for (size_t i = 0; i < toward.size(); ++i) {
-    // Turning sweeps the rear chassis too. Every chassis beam must be fresh;
-    // rearward translation also requires a real rear sample.
+    // Check every available beam during rotation; only detected obstacles brake.
     const bool turning_check = rotation > 0.001;
     if (toward[i] <= 0.001 && !turning_check) {
       stopped_[i] = false;
@@ -108,12 +110,15 @@ void DistanceSafetyNode::safetyTimerCallback(const ros::SteadyTimerEvent&) {
     }
     const auto& sample = samples_[i];
     if (!sample.valid || (now - sample.received).toSec() > distance_timeout_sec_) {
-      stop(i == 3 ? "REAR_UNOBSERVED" : "RANGE_TIMEOUT");
-      return;
+      stopped_[i] = false;
+      continue;
     }
-    const double speed = toward[i] + rotation * projection_radius_m_;
-    const double margin = turning_check && toward[i] <= 0.001 ? rotation_clearance_mm_ : stop_margin_mm_;
-    const double floor = turning_check && toward[i] <= 0.001 ? rotation_clearance_mm_ : safety_distance_mm_;
+    // A circular footprint sweeps the same area while turning in place.
+    // Only translation closes the gap; all beams still enforce turn clearance.
+    const double speed = toward[i];
+    const bool rotation_only = turning_check && toward[i] <= 0.001;
+    const double margin = rotation_only ? rotation_clearance_mm_ : stop_margin_mm_;
+    const double floor = rotation_only ? rotation_clearance_mm_ : safety_distance_mm_;
     const double threshold = std::max({critical_distance_mm_, floor,
         1000.0 * (speed * speed / (2.0 * braking_deceleration_mps2_) + speed * reaction_time_sec_) + margin});
     if (sample.distance_mm <= threshold ||

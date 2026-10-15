@@ -25,6 +25,7 @@ class DistanceSafetyNode {
   ros::NodeHandle nh_, pnh_;
   std::array<ros::Subscriber, 4> range_subs_;
   ros::Subscriber requested_sub_, measured_sub_;
+  std::array<double, 4> sensor_insets_m_{{0.0, 0.05, 0.05, 0.05}};
   ros::Publisher cmd_pub_, state_pub_;
   ros::SteadyTimer timer_;
   std::array<Sample, 4> samples_;
@@ -32,16 +33,15 @@ class DistanceSafetyNode {
   ros::SteadyTime requested_time_, measured_time_;
   bool has_request_ = false, has_measured_ = false;
   std::array<bool, 4> stopped_{{false, false, false, false}};
-  double safety_distance_mm_ = 300.0;
+  double safety_distance_mm_ = 150.0;
   double critical_distance_mm_ = 100.0;
   double braking_deceleration_mps2_ = 1.0;
   double reaction_time_sec_ = 0.2;
-  double stop_margin_mm_ = 300.0;
+  double stop_margin_mm_ = 100.0;
   double distance_timeout_sec_ = 0.5;
   double command_timeout_sec_ = 0.5;
   double release_hysteresis_mm_ = 30.0;
-  double projection_radius_m_ = 0.25;
-  double rotation_clearance_mm_ = 300.0;
+  double rotation_clearance_mm_ = 100.0;
   std::string state_;
 };
 }  // namespace robot_navigation

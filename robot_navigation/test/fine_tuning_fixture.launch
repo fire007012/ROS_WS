@@ -1,7 +1,7 @@
 <launch>
   <arg name="node_type" default="fine_tuning_node"/>
   <arg name="name"/>
-  <arg name="target" default="400.0"/>
+  <arg name="target" default="250.0"/>
   <arg name="reverse" default="false"/>
   <arg name="timeout" default="3.0"/>
   <node pkg="fine_tuning" type="$(arg node_type)" name="$(arg name)" required="true">

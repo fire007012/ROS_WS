@@ -24,7 +24,7 @@ HealthMonitor::HealthMonitor(ros::NodeHandle& nh, ros::NodeHandle& pnh)
 
   // 默认监控的关键话题
   critical_topics_ = {
-    "/odom", "/front/range", "/left/range", "/right/range", "/rear/range", "/motor_state"
+    "/odom", "/motor_state"
   };
 
   // 允许从参数覆盖

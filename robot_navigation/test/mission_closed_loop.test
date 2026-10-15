@@ -7,6 +7,8 @@
   <arg name="safety_node_type" default="distance_safety_node"/>
   <arg name="fine_node_type" default="fine_tuning_node"/>
   <arg name="health_node_type" default="health_monitor_node"/>
+  <arg name="cross_passage_blocked" default="false"/>
+  <arg name="intermittent_ranges" default="false"/>
   <param name="use_sim_time" value="true"/>
   <rosparam file="$(find robot_bringup)/config/robot_params.yaml"/>
   <node pkg="path_manager" type="$(arg manager_node_type)" name="path_manager_node" required="true"/>
@@ -25,5 +27,8 @@
     <param name="skip_bedside_scan" value="true"/>
     <param name="bedside_scan_skip_wait_s" value="0.0"/>
   </node>
-  <test pkg="robot_navigation" type="test_mission_closed_loop.py" test-name="mission_closed_loop" time-limit="70"/>
+  <test pkg="robot_navigation" type="test_mission_closed_loop.py" test-name="mission_closed_loop" time-limit="110">
+    <param name="cross_passage_blocked" value="$(arg cross_passage_blocked)"/>
+    <param name="intermittent_ranges" value="$(arg intermittent_ranges)"/>
+  </test>
 </launch>

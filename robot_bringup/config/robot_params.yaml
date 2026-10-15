@@ -1,6 +1,6 @@
 robot:
   wheel_radius: 0.075     # m, 轮径 150 mm，轮半径 75 mm
-  wheel_base: 0.18        # m, 轮心到底盘中心距离 L
+  wheel_base: 0.20        # m, 轮心到底盘中心距离 L，用户确认 200 mm
 
   max_linear_vel: 0.25    # m/s, 场地航点低速调试上限
   max_angular_vel: 0.5    # rad/s

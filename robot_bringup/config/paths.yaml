@@ -5,6 +5,7 @@
 waypoints:
   P0:  &P0  {x: 0.0, y: 0.0, tolerance: 0.02, yaw: 0.0}
   P1:  &P1  {x: 1.3, y: 0.0, tolerance: 0.02, yaw: 0.0}
+  P1_PASS: &P1_PASS {x: 1.3, y: 0.0, tolerance: 0.05}  # 仅经过 QR 通道，无需扫码朝向。
   P2L: &P2L {x: 2.0, y: 1.1, tolerance: 0.05}
   P2R: &P2R {x: 2.0, y: -1.1, tolerance: 0.05}
   P3L: &P3L {x: 3.0, y: 2.0, tolerance: 0.05}
@@ -39,6 +40,8 @@ paths:
 
   - name: "bed1_to_bed3"
     description: "P4 → P3L → P3R → P6，先退出停靠圈再走横向通道"
+    blocked_point_index: 2  # 从 0 起计，保护 P3L → P3R；遇障先停稳再走 P1。
+    fallback_path: "bed1_to_bed3_via_p1"
     points:
       - *P4
       - *P3L
@@ -47,9 +50,33 @@ paths:
 
   - name: "bed3_to_bed1"
     description: "P6 → P3R → P3L → P4，先退出停靠圈再走横向通道"
+    blocked_point_index: 2
+    fallback_path: "bed3_to_bed1_via_p1"
     points:
       - *P6
       - *P3R
+      - *P3L
+      - *P4
+
+  # 中间 cross passage 遇障时，从当前位置沿原通道返回入口，
+  # 再经护士台 P1（QR 扫码位置）的通道到另一侧；只经过，不重复扫码。
+  - name: "bed1_to_bed3_via_p1"
+    description: "退回 P3L → P2L → P1 → P2R → P3R → P6"
+    points:
+      - *P3L
+      - *P2L
+      - *P1_PASS
+      - *P2R
+      - *P3R
+      - *P6
+
+  - name: "bed3_to_bed1_via_p1"
+    description: "退回 P3R → P2R → P1 → P2L → P3L → P4"
+    points:
+      - *P3R
+      - *P2R
+      - *P1_PASS
+      - *P2L
       - *P3L
       - *P4
 

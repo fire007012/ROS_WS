@@ -84,7 +84,7 @@ inline bool decodeStm32Telemetry(uint8_t dlc, const uint8_t* data, Stm32Telemetr
   return true;
 }
 
-enum class CanEventType { NONE, PHYSICAL_START, PHYSICAL_ESTOP, HEARTBEAT_TIMEOUT, DRIVER_FAULT };
+enum class CanEventType { NONE, PHYSICAL_START, HEARTBEAT_TIMEOUT, DRIVER_FAULT };
 
 struct CanEvent {
   CanEventType type = CanEventType::NONE;
@@ -227,7 +227,7 @@ class MotionStartStateMachine {
     state_ = MotionStartState::ESTOP_LATCHED;
   }
 
-  // Called only after the operator has released/reset the physical estop and
+  // Called only after an explicit reset passes the safety policy and
   // the caller has cleared all cached motion commands.
   void resetForReprepare() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -260,14 +260,12 @@ inline bool decodeCanEvent(uint32_t can_id, bool is_extended, uint8_t dlc,
     event->result = data[3];
     event->sequence = static_cast<uint16_t>(data[4] << 8 | data[5]);
     if (data[0] == 0x01) event->type = CanEventType::PHYSICAL_START;
-    else if (data[0] == 0x02) event->type = CanEventType::PHYSICAL_ESTOP;
     else return false;
     return true;
   }
   if (can_id == 0x101U && dlc == 8 && data[0] == 0x06) {
     event->detail = data[2];
-    if (data[2] == 0x81) event->type = CanEventType::PHYSICAL_ESTOP;
-    else if (data[2] == 0x80) event->type = CanEventType::HEARTBEAT_TIMEOUT;
+    if (data[2] == 0x80) event->type = CanEventType::HEARTBEAT_TIMEOUT;
     else event->type = CanEventType::DRIVER_FAULT;
     return true;
   }
