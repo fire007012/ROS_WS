@@ -363,12 +363,20 @@
   <!--  第9层：任务编排层（最顶层）                                  -->
   <!-- ============================================================ -->
 
+  <!-- Local WAV paths override synthesized speech; keep empty until selected samples are deployed. -->
+  <arg name="speech_bed1_audio_file" default="$(find robot_navigation)/audio/bed1_kai.wav"/>
+  <arg name="speech_bed3_audio_file" default="$(find robot_navigation)/audio/bed3_kai.wav"/>
+  <arg name="speech_speaker_device" default="default"/>
+
   <!-- 9.1 语音播报服务 — 文字转语音输出 -->
   <node pkg="robot_navigation" type="speech_service_node.py"
         name="speak_node" output="screen">
     <param name="language" value="zh"/>
     <param name="speed" value="1.0"/>
     <param name="volume" value="1.0"/>
+    <param name="bed1_audio_file" value="$(arg speech_bed1_audio_file)"/>
+    <param name="bed3_audio_file" value="$(arg speech_bed3_audio_file)"/>
+    <param name="speaker_device" value="$(arg speech_speaker_device)"/>
   </node>
 
   <!-- 9.2 系统健康监控 — 关键话题检测 + 急停转发 -->

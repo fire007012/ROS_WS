@@ -1,7 +1,13 @@
 <launch>
   <!-- Only tests the Raspberry Pi speaker; no mission or motor nodes. -->
   <arg name="config_file" default="$(find robot_navigation)/config/speech_test.yaml"/>
+  <arg name="mode" default=""/>
+  <arg name="audio_file" default=""/>
+  <arg name="text" default=""/>
   <node pkg="robot_navigation" type="speech_test_node.py" name="speech_test_node" output="screen">
     <rosparam command="load" file="$(arg config_file)"/>
+    <param if="$(eval arg('mode') != '')" name="mode" value="$(arg mode)"/>
+    <param if="$(eval arg('audio_file') != '')" name="audio_file" value="$(arg audio_file)"/>
+    <param if="$(eval arg('text') != '')" name="text" value="$(arg text)"/>
   </node>
 </launch>

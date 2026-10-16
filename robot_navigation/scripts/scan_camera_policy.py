@@ -55,3 +55,13 @@ class ScanCameraPolicy:
         if self.mode == 'auto' and now-self.started >= self.timeout:
             self.high = True
         return 'high' if self.high else 'low'
+
+
+def capture_dimensions_acceptable(mode, requested, actual):
+    """Accept a lower negotiated low mode, but never mistake fallback for HD."""
+    width, height = actual
+    if width <= 0 or height <= 0:
+        return False
+    if mode == 'high':
+        return width >= requested[0] and height >= requested[1]
+    return True

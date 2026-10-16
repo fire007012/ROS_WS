@@ -11,7 +11,7 @@ import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Int8, Int32, String
-from scan_camera_policy import ScanCameraPolicy
+from scan_camera_policy import ScanCameraPolicy, capture_dimensions_acceptable
 
 class AdaptiveScanCamera:
     def __init__(self):
@@ -26,6 +26,7 @@ class AdaptiveScanCamera:
         self.lock = threading.Lock()
         self.capture = None
         self.current = None
+        self.actual_profile = None
         self.failed_modes = set()
         self.wait_for_ready = bool(rospy.get_param('~wait_for_ready', False))
         self.ready_topic = rospy.get_param('~ready_topic', '/Ready')
@@ -80,6 +81,7 @@ class AdaptiveScanCamera:
             self.capture.release()
         self.capture = None
         self.current = None
+        self.actual_profile = None
 
     def open(self, mode):
         self.close()
@@ -100,16 +102,23 @@ class AdaptiveScanCamera:
         fps = capture.get(cv2.CAP_PROP_FPS)
         fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
         actual_format = ''.join(chr((fourcc >> (8*i)) & 255) for i in range(4))
-        if (width,height) != (config['width'],config['height']):
-            rospy.logwarn('[scan_camera] %s requested %dx%d but driver returned %dx%d; profile rejected',
-                          mode,config['width'],config['height'],width,height)
+        if not capture_dimensions_acceptable(
+                mode, (config['width'], config['height']), (width, height)):
+            rospy.logwarn_throttle(5.0,
+                '[scan_camera] %s requested at least %dx%d but driver returned %dx%d; rejecting fallback',
+                mode,config['width'],config['height'],width,height)
             capture.release()
             return False
+        if (width,height) != (config['width'],config['height']):
+            rospy.logwarn_throttle(5.0,
+                '[scan_camera] %s requested %dx%d but driver negotiated %dx%d; using actual mode',
+                mode,config['width'],config['height'],width,height)
         self.capture = capture
         self.current = mode
+        self.actual_profile = (width,height,fps,actual_format)
         self.status.publish('%s:%dx%d@%.1f:%s' % (mode,width,height,fps,actual_format))
-        rospy.loginfo('[scan_camera] %s %dx%d requested %.1ffps; driver %.1ffps %s',
-                      mode,width,height,config['fps'],fps,actual_format)
+        rospy.loginfo('[scan_camera] %s requested %dx%d@%.1ffps; actual %dx%d@%.1f %s',
+                      mode,config['width'],config['height'],config['fps'],width,height,fps,actual_format)
         return True
 
     def run(self):

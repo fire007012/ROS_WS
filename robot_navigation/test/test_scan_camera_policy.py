@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from scan_camera_policy import ScanCameraPolicy
+from scan_camera_policy import ScanCameraPolicy, capture_dimensions_acceptable
 
 class ScanCameraPolicyTests(unittest.TestCase):
     def test_exact_five_seconds_each_scan(self):
@@ -31,6 +31,13 @@ class ScanCameraPolicyTests(unittest.TestCase):
         p.requested(0);self.assertEqual(p.requested(6),'high')
         p.decoded('barcode',7);self.assertEqual(p.requested(11.999),'low')
         self.assertEqual(p.requested(12),'high')
+
+    def test_driver_negotiated_low_mode_is_used_but_hd_fallback_is_rejected(self):
+        self.assertTrue(capture_dimensions_acceptable('low',(640,480),(640,360)))
+        self.assertTrue(capture_dimensions_acceptable('low',(640,480),(640,480)))
+        self.assertTrue(capture_dimensions_acceptable('high',(1280,720),(1920,1080)))
+        self.assertFalse(capture_dimensions_acceptable('high',(1280,720),(640,360)))
+        self.assertFalse(capture_dimensions_acceptable('low',(640,480),(0,0)))
 
     def test_timeout_validation(self):
         for value in [0,-1,float('nan'),float('inf')]:
