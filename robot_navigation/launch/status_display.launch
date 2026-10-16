@@ -1,5 +1,12 @@
 <launch>
   <arg name="config_file" default="$(find robot_navigation)/config/status_display.yaml"/>
+  <arg name="load_config" default="true"/>
+  <arg name="enable_gui" default="true"/>
+  <arg name="enable_vitals_bridge" default="true"/>
+  <arg name="audio_role" default="master"/>
+  <arg name="vitals_frame_topic" default="/vitals/frame"/>
+  <arg name="heart_rate_topic" default="/vitals/heart_rate"/>
+  <arg name="temperature_topic" default="/vitals/temperature"/>
   <!-- Empty arguments use YAML defaults; explicit arguments override them. -->
   <arg name="fullscreen" default=""/>
   <arg name="transport" default=""/>
@@ -8,16 +15,25 @@
   <arg name="vitals_timeout_s" default=""/>
   <arg name="tcp_port" default=""/>
 
-  <rosparam command="load" file="$(arg config_file)"/>
+  <rosparam command="load" file="$(arg config_file)" if="$(arg load_config)"/>
 
-  <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen">
+  <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen" if="$(arg enable_vitals_bridge)">
+    <remap from="/vitals/frame" to="$(arg vitals_frame_topic)"/>
+    <remap from="/vitals/heart_rate" to="$(arg heart_rate_topic)"/>
+    <remap from="/vitals/temperature" to="$(arg temperature_topic)"/>
     <param if="$(eval arg('transport') != '')" name="transport" value="$(arg transport)"/>
     <param if="$(eval arg('serial_device') != '')" name="serial_device" value="$(arg serial_device)"/>
     <param if="$(eval arg('baudrate') != '')" name="baudrate" value="$(arg baudrate)" type="int"/>
     <param if="$(eval arg('tcp_port') != '')" name="tcp_port" value="$(arg tcp_port)" type="int"/>
     <param if="$(eval arg('vitals_timeout_s') != '')" name="client_timeout_s" value="$(arg vitals_timeout_s)" type="double"/>
   </node>
-  <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node" output="screen">
+  <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node" output="screen" if="$(arg enable_gui)" required="true">
+    <param name="audio_role" value="$(arg audio_role)"/>
+    <param name="video_topic" value="$(eval '/camera/upper_display' if arg('audio_role') == 'master' else '/camera/lower_display')"/>
+    <param name="call_camera_status_topic" value="$(eval '/lower_cam/lower_usb_cam/capture_status' if arg('audio_role') == 'master' else '/upper_cam/upper_usb_cam/capture_status')"/>
+    <remap from="/vitals/frame" to="$(arg vitals_frame_topic)"/>
+    <remap from="/vitals/heart_rate" to="$(arg heart_rate_topic)"/>
+    <remap from="/vitals/temperature" to="$(arg temperature_topic)"/>
     <param if="$(eval arg('fullscreen') != '')" name="fullscreen" value="$(arg fullscreen)" type="bool"/>
     <param if="$(eval arg('vitals_timeout_s') != '')" name="vitals_timeout_s" value="$(arg vitals_timeout_s)" type="double"/>
   </node>

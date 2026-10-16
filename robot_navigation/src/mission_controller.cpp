@@ -37,7 +37,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , medicine_release_done_received_(false)
     , odom_received_(false)
     , home_arrived_(false)
-    , skipBedsideScan_(true)
+    , skipBedsideScan_(false)
     , bedsideScanSkipWaitSec_(1.0)
     , stage_timeout_sec_(30.0)
     , mission_timeout_sec_(180.0)
@@ -140,7 +140,7 @@ bool MissionController::init() {
     return false;
   }
 
-  pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, true);
+  pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, false);
   pnh_.param<double>("bedside_scan_skip_wait_s", bedsideScanSkipWaitSec_, 1.0);
   bedsideScanSkipWaitSec_ = std::max(0.0, bedsideScanSkipWaitSec_);
   // ── 订阅 ──

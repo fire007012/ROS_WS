@@ -27,6 +27,9 @@ def measurement_text(value, label, unit):
 
 class StatusWindow:
     def __init__(self):
+        self.audio_role = rospy.get_param('~audio_role', 'master')
+        if self.audio_role not in ('master', 'slave'):
+            raise ValueError('audio_role must be master or slave')
         self.lock = threading.Lock()
         self.pending = {}  # coalesce bursts; memory does not grow with message rate
         self.last_vitals = time.monotonic()
@@ -91,6 +94,8 @@ class StatusWindow:
         self.root.bind('<Configure>', self.resize_text)
         self.right_panel.bind('<Configure>', self.resize_text)
         rospy.Subscriber('/robot_display', String, lambda m: self.set('task', '当前任务：' + m.data.replace('\n', ' | ')))
+        rospy.Subscriber('/mission/state', String, self.mission_state)
+        rospy.Subscriber('/bedside/status', String, self.bedside_status)
         rospy.Subscriber('/qr_result', QrResult, self.qr)
         rospy.Subscriber('/barcode_bed1', String, lambda m: self.set('bed1', '1号床条码：' + (m.data or '---')))
         rospy.Subscriber('/barcode_bed3', String, lambda m: self.set('bed3', '3号床条码：' + (m.data or '---')))
@@ -106,6 +111,31 @@ class StatusWindow:
         rospy.Subscriber(self.scan_mode_topic, String, self.scan_camera_status, queue_size=1)
         rospy.Subscriber(self.call_camera_status_topic, String, self.call_camera_status, queue_size=1)
         self.root.after(33, self.pump)
+
+    def mission_state(self, msg):
+        stages = {
+            'IDLE': '等待本体启动按钮', 'GOTO_NURSE': '前往护士台',
+            'SCAN_QR': '识别护士台二维码', 'GOTO_BED_A': '前往第一张病床',
+            'GOTO_BED_B': '前往第二张病床',
+            'POSITION_IN_CIRCLE_A': '第一床入圈微调', 'POSITION_IN_CIRCLE_B': '第二床入圈微调',
+            'SCAN_BARCODE_A': '识别第一床条码', 'SCAN_BARCODE_B': '识别第二床条码',
+            'OPEN_BOX_A': '选择第一床药箱', 'OPEN_BOX_B': '选择第二床药箱',
+            'PLACE_MEDICINE_A': '第一床放药及播报', 'PLACE_MEDICINE_B': '第二床放药及播报',
+            'VOICE_A': '等待第一床播报完成', 'VOICE_B': '等待第二床播报完成',
+            'BEDSIDE_A': '第一床音视频交流及体征测量',
+            'BEDSIDE_B': '第二床音视频交流及体征测量',
+            'RETURN_HOME': '返回起始区', 'HOME_CHECK': '检查回归并保持静止',
+            'STOP': '任务停止', 'FAILED': '任务失败', 'TIMEOUT': '任务超时',
+        }
+        self.set('task', '当前任务：' + stages.get(msg.data, msg.data))
+
+    def bedside_status(self, msg):
+        # Keep the persistent bed1/bed3 barcode labels untouched.
+        text = {
+            'waiting for doctor video/audio and fresh bedside measurement': '等待音视频交流和本床有效体征',
+            'bedside call and measurement completed': '本床音视频交流及体征测量完成',
+        }.get(msg.data, msg.data)
+        self.set('task', '当前任务：' + text)
 
     def make(self, key, text, size, color):
         label = tk.Label(self.left_panel, text=text,
@@ -143,9 +173,10 @@ class StatusWindow:
         return '扫码 %s | %s' % (device, profile)
 
     def call_parameters(self):
-        camera = '/lower_cam/lower_usb_cam/'
-        stream = '/video_sender_master/'
-        audio = '/audio_chat_master/'
+        role = getattr(self, 'audio_role', 'master')
+        camera = '/lower_cam/lower_usb_cam/' if role == 'master' else '/upper_cam/upper_usb_cam/'
+        stream = '/video_sender_' + role + '/'
+        audio = '/audio_chat_' + role + '/'
         device = self.param(camera + 'video_device', '/dev/video2')
         capture = '%sx%s@%sfps %s' % (
             self.param(camera + 'low_width', 640), self.param(camera + 'low_height', 480),

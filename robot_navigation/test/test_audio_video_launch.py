@@ -92,15 +92,19 @@ class AVSettingsStructure(unittest.TestCase):
 
     def test_robot_status_display_uses_robot_master_camera_and_audio_nodes(self):
         mission = ET.parse(PACKAGE / 'launch/mission_complete.launch').getroot()
-        status = next(node for node in mission.findall('node')
-                      if node.get('name') == 'robot_status_display_node')
-        params = {param.get('name'): param.get('value') for param in status.findall('param')}
-        self.assertEqual(params['video_topic'], '/camera/upper_display')
-        self.assertEqual(params['call_camera_status_topic'],
-                         '/lower_cam/lower_usb_cam/capture_status')
+        status = ET.parse(PACKAGE / 'launch/status_display.launch').getroot()
+        include = next(i for i in mission.findall('include')
+                       if i.get('file', '').endswith('/launch/status_display.launch'))
+        forwarded = {a.get('name'): a.get('value') for a in include.findall('arg')}
+        self.assertEqual(forwarded['enable_vitals_bridge'], 'false')
+        self.assertEqual(forwarded['audio_role'], '$(arg audio_role)')
+        gui = status.find("node[@name='robot_status_display_node']")
+        params = {p.get('name'): p.get('value') for p in gui.findall('param')}
+        self.assertIn('/camera/upper_display', params['video_topic'])
+        self.assertIn('/lower_cam/lower_usb_cam/capture_status', params['call_camera_status_topic'])
         display = (PACKAGE / 'scripts/robot_status_display_node.py').read_text(encoding='utf-8')
-        self.assertIn("stream = '/video_sender_master/'", display)
-        self.assertIn("audio = '/audio_chat_master/'", display)
+        self.assertIn("stream = '/video_sender_' + role", display)
+        self.assertIn("audio = '/audio_chat_' + role", display)
 
     def test_mission_launch_defaults_to_pi_robot_role(self):
         mission = ET.parse(PACKAGE / 'launch/mission_complete.launch').getroot()
@@ -121,6 +125,8 @@ class AVSettingsStructure(unittest.TestCase):
 @unittest.skipUnless(HAS_ROSLAUNCH, 'ROS launch loader is not installed')
 class AVLaunchLoading(unittest.TestCase):
     def load_peer(self, role, argv=None, environment=None):
+        # These cases isolate the AV peers; the dedicated GUI cases enable it explicitly.
+        argv = ['enable_status_gui:=false'] + (argv or [])
         env = dict(NETWORK)
         env['ROS_IP'] = env['ROBOT_PI_IP'] if role == 'master' else env['ROBOT_VM_IP']
         if environment:
@@ -243,6 +249,95 @@ class AVLaunchLoading(unittest.TestCase):
         c = self.load_peer('master', ['local_ip:=10.1.1.1', 'remote_ip:=10.1.1.2'])
         self.assertEqual(self.value(c, 'audio_chat_master', 'local_ip'), '10.1.1.1')
         self.assertEqual(self.value(c, 'audio_chat_master', 'remote_ip'), '10.1.1.2')
+
+
+    def load_mission(self, argv=None):
+        def find_package(resolved, expression, args, context):
+            package = PACKAGE.parent / args[0]
+            if len(args) != 1 or not package.is_dir():
+                raise ValueError('Unexpected package lookup: ' + str(args))
+            return resolved.replace('$(' + expression + ')', package.as_posix())
+        config = roslaunch.config.ROSLaunchConfig()
+        with patch.dict(os.environ, NETWORK, clear=True), \
+                patch.object(roslaunch.substitution_args, '_find', find_package):
+            roslaunch.xmlloader.XmlLoader().load(
+                str(PACKAGE / 'launch/mission_complete.launch'), config,
+                argv=argv or [], verbose=False)
+        return config
+
+    def test_full_mission_has_each_business_node_once_and_scans_by_default(self):
+        config = self.load_mission()
+        names = [n.name for n in config.nodes]
+        for name in ['arm_and_gripper_node', 'open_medicine_box_node',
+                     'barcode_qr_detector_node', 'robot_status_display_node',
+                     'esp32_vitals_bridge_node', 'speak_node', 'bedside_session_node',
+                     'audio_chat_master', 'video_sender_master', 'video_stream_master']:
+            self.assertEqual(names.count(name), 1, name)
+        self.assertFalse(self.value(config, 'mission_controller_node', 'skip_bedside_scan'))
+        self.assertTrue(self.value(config, 'mission_controller_node', 'competition_mode'))
+        self.assertEqual(self.value(config, 'bedside_session_node', 'audio_role'), 'master')
+        self.assertTrue(self.value(config, 'open_medicine_box_node', 'selection_only'))
+        self.assertEqual(self.value(config, 'arm_and_gripper_node', 'can_device'), 'can0')
+        # No obsolete Y42 arm node or Pi pigpio servo controller.
+        self.assertNotIn('arm_interface_node', names)
+        self.assertNotIn('servo_controller_node', names)
+
+    def test_mission_explicit_scan_setting_wins_over_yaml(self):
+        # Deliberately supply the old skip=true config so ordering regressions fail.
+        text = (PACKAGE / 'config/mission_params.yaml').read_text(encoding='utf-8')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'mission.yaml'
+            path.write_text(text.replace('skip_bedside_scan: false',
+                                         'skip_bedside_scan: true'), encoding='utf-8')
+            for override, expected in [('false', False), ('true', True)]:
+                config = self.load_mission(['mission_config:=' + str(path),
+                                           'skip_bedside_scan:=' + override])
+                self.assertEqual(self.value(config, 'mission_controller_node', 'skip_bedside_scan'), expected)
+
+    def test_mission_routes_serial_topics_and_gui_overrides_to_actual_consumers(self):
+        config = self.load_mission(['vitals_serial_device:=/dev/test-esp32',
+            'vitals_baudrate:=57600', 'vitals_frame_topic:=/custom/frame',
+            'heart_rate_topic:=/custom/hr', 'temperature_topic:=/custom/temp',
+            'gui_fullscreen:=false', 'audio_ready_topic:=/custom/ready'])
+        self.assertEqual(self.value(config, 'esp32_vitals_bridge_node', 'serial_device'), '/dev/test-esp32')
+        self.assertEqual(self.value(config, 'esp32_vitals_bridge_node', 'baudrate'), 57600)
+        self.assertFalse(self.value(config, 'robot_status_display_node', 'fullscreen'))
+        self.assertEqual(self.value(config, 'bedside_session_node', 'vitals_frame_topic'), '/custom/frame')
+        for name in ['esp32_vitals_bridge_node', 'robot_status_display_node']:
+            node = next(n for n in config.nodes if n.name == name)
+            self.assertEqual(dict(node.remap_args)['/vitals/frame'], '/custom/frame')
+            self.assertEqual(dict(node.remap_args)['/vitals/heart_rate'], '/custom/hr')
+            self.assertEqual(dict(node.remap_args)['/vitals/temperature'], '/custom/temp')
+        node = next(n for n in config.nodes if n.name == 'mission_controller_node')
+        self.assertEqual(dict(node.remap_args)['/Ready'], '/custom/ready')
+        self.assertEqual(self.value(config, 'audio_chat_master', 'ready_topic'), '/custom/ready')
+
+    def test_mission_role_and_av_devices_forward_to_bedside_and_gui(self):
+        config = self.load_mission(['audio_role:=slave', 'call_camera_device:=/dev/test-camera',
+            'audio_mic_device:=test-mic', 'audio_speaker_device:=test-speaker'])
+        self.assertEqual(self.value(config, 'bedside_session_node', 'audio_role'), 'slave')
+        self.assertEqual(self.value(config, 'robot_status_display_node', 'video_topic'), '/camera/lower_display')
+        self.assertEqual(config.params['/upper_cam/upper_usb_cam/video_device'].value, '/dev/test-camera')
+        self.assertEqual(self.value(config, 'audio_chat_slave', 'mic_device'), 'test-mic')
+        self.assertEqual(self.value(config, 'audio_chat_slave', 'speaker_device'), 'test-speaker')
+        self.assertEqual(self.value(config, 'speak_node', 'speaker_device'), 'test-speaker')
+
+    def test_mission_can_disable_optional_devices_without_duplicates(self):
+        config = self.load_mission(['enable_gui:=false', 'enable_audio_video:=false',
+                                   'enable_patient_measurement:=false'])
+        names = [n.name for n in config.nodes]
+        for name in ['robot_status_display_node', 'esp32_vitals_bridge_node', 'audio_chat_master']:
+            self.assertNotIn(name, names)
+        self.assertFalse(self.value(config, 'bedside_session_node', 'audio_video_enabled'))
+        self.assertFalse(self.value(config, 'bedside_session_node', 'patient_measurement_enabled'))
+        self.assertIn('speak_node', names)
+        self.assertIn('barcode_qr_detector_node', names)
+
+    def test_mission_pre_recorded_speech_files_exist(self):
+        config = self.load_mission()
+        for name in ['bed1_audio_file', 'bed3_audio_file']:
+            path = Path(self.value(config, 'speak_node', name))
+            self.assertTrue(path.is_file(), str(path))
 
 
 if __name__ == '__main__':

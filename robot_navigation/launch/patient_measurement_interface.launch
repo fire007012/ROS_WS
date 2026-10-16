@@ -1,5 +1,22 @@
 <launch>
+  <!-- Shared bridge implementation; no second GUI in the mission. -->
   <arg name="config_file" default="$(find robot_navigation)/config/status_display.yaml"/>
-  <rosparam command="load" file="$(arg config_file)"/>
-  <node pkg="robot_navigation" type="esp32_vitals_bridge_node.py" name="esp32_vitals_bridge_node" output="screen"/>
+  <arg name="load_config" default="true"/>
+  <arg name="transport" default=""/>
+  <arg name="serial_device" default=""/>
+  <arg name="baudrate" default=""/>
+  <arg name="vitals_frame_topic" default="/vitals/frame"/>
+  <arg name="heart_rate_topic" default="/vitals/heart_rate"/>
+  <arg name="temperature_topic" default="/vitals/temperature"/>
+  <include file="$(find robot_navigation)/launch/status_display.launch">
+    <arg name="config_file" value="$(arg config_file)"/>
+    <arg name="load_config" value="$(arg load_config)"/>
+    <arg name="enable_gui" value="false"/>
+    <arg name="transport" value="$(arg transport)"/>
+    <arg name="serial_device" value="$(arg serial_device)"/>
+    <arg name="baudrate" value="$(arg baudrate)"/>
+    <arg name="vitals_frame_topic" value="$(arg vitals_frame_topic)"/>
+    <arg name="heart_rate_topic" value="$(arg heart_rate_topic)"/>
+    <arg name="temperature_topic" value="$(arg temperature_topic)"/>
+  </include>
 </launch>

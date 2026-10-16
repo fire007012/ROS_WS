@@ -4,14 +4,14 @@
    完整任务启动文件 — robot_navigation/launch/mission_complete.launch
   ==============================================================================
 
-   启动顺序（按依赖关系）：
+   启用组件（节点并行启动，通过话题和服务协调）：
      1. can_motor_interface        — 底盘 CAN 通信
      2. motion_planner             — 运动规划 + 里程计
-     3. arm_interface              — 机械臂 CAN 接口
+     3. STM32 PWM                 — DS3230MG 机械臂 + 两路位置型 SG90
      4. path_manager               — 路径管理
      5. path_tracker               — 路径跟踪
      6. fine_tuning                — 终点微调（VL53L1X）
-     7. servo_controller           — 舵机控制
+     7. ESP32 USB bridge           — 心率/体温整帧接入
      8. arm_and_gripper            — 药品摆放（机械臂+舵机）
      9. barcode_qr_detector        — 二维码/条形码识别
     10. open_medicine_box          — 药箱开启控制
@@ -42,6 +42,7 @@
   <arg name="enable_arm"          default="true"/>
   <!-- Legacy compatibility argument; Y42 joint control is no longer launched. -->
   <arg name="arm_joint_control" default="false"/>
+  <!-- Legacy argument: SG90 is part of enable_arm, not a separate pigpio node. -->
   <arg name="enable_servo"        default="false"/>
   <!-- 比赛默认必须扫描床头柜条形码；无摄像头联调时显式传 true。 -->
   <arg name="skip_bedside_scan"   default="false"/>
@@ -82,14 +83,24 @@
   <arg name="audio_local_ip" default="10.161.170.93"/>
   <arg name="audio_remote_ip" default="10.161.170.41"/>
   <arg name="audio_ready_topic" default="/Ready"/>
-  <!-- 外部测量装置接口：提供自己的 launch 后再启用，默认不伪造节点。 -->
+  <!-- ESP32 USB bridge is enabled by default; custom providers must publish vitals_frame_topic. -->
   <arg name="enable_patient_measurement" default="true"/>
   <arg name="patient_measurement_launch"
        default="$(find robot_navigation)/launch/patient_measurement_interface.launch"/>
+  <arg name="vitals_config" default="$(find robot_navigation)/config/status_display.yaml"/>
+  <arg name="vitals_transport" default=""/>
+  <arg name="vitals_serial_device" default=""/>
+  <arg name="vitals_baudrate" default=""/>
+  <arg name="vitals_frame_topic" default="/vitals/frame"/>
   <arg name="heart_rate_topic" default="/vitals/heart_rate"/>
   <arg name="temperature_topic" default="/vitals/temperature"/>
 
   <arg name="enable_gui" default="true"/>
+  <arg name="gui_fullscreen" default="true"/>
+  <arg name="call_camera_device" default=""/>
+  <arg name="audio_mic_device" default="default"/>
+  <arg name="audio_speaker_device" default="default"/>
+  <arg name="measurement_valid_hold_s" default="2.0"/>
   <arg name="scan_pixel_format" default="mjpeg"/>
   <arg name="scan_mode" default="auto"/>
   <arg name="scan_camera_config" default="$(find robot_navigation)/config/scan_camera.yaml"/>
@@ -106,6 +117,7 @@
   <arg name="mission_config"      default="$(find robot_navigation)/config/mission_params.yaml"/>
 
   <!-- ======================== 全局参数加载 ======================== -->
+  <rosparam file="$(arg vitals_config)" command="load"/>
   <rosparam file="$(arg robot_params)"   command="load"/>
   <rosparam file="$(arg arm_params)"     command="load"/>
   <rosparam file="$(arg mission_config)" command="load"/>
@@ -254,7 +266,7 @@
 
     <!-- 6.2 二维码/条形码识别 -->
     <node pkg="robot_navigation" type="barcode_qr_detector_node"
-          name="barcode_qr_detector_node" output="screen">
+          name="barcode_qr_detector_node" output="screen" required="true">
       <param name="qr_timeout_sec" value="30.0"/>
       <param name="barcode_timeout_sec" value="30.0"/>
       <param name="image_queue_size" value="1"/>
@@ -305,22 +317,34 @@
       <arg name="ready_topic" value="$(arg audio_ready_topic)"/>
       <arg name="enable_display" value="$(arg enable_gui)"/>
       <arg name="enable_image_view" value="false"/>
+      <arg name="enable_status_gui" value="false"/>
+      <arg name="lower_cam_device" value="$(arg call_camera_device)"/>
+      <arg name="upper_cam_device" value="$(arg call_camera_device)"/>
+      <arg name="mic_device" value="$(arg audio_mic_device)"/>
+      <arg name="speaker_device" value="$(arg audio_speaker_device)"/>
     </include>
   </group>
-  <node pkg="robot_navigation" type="bedside_session_node.py" name="bedside_session_node" output="screen">
+  <node pkg="robot_navigation" type="bedside_session_node.py" name="bedside_session_node" output="screen" required="true">
     <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>
     <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
     <param name="timeout_s" value="$(arg bedside_timeout_s)"/>
     <param name="call_duration_s" value="$(arg call_duration_s)"/>
+    <param name="audio_role" value="$(arg audio_role)"/>
+    <param name="vitals_frame_topic" value="$(arg vitals_frame_topic)"/>
+    <param name="measurement_valid_hold_s" value="$(arg measurement_valid_hold_s)"/>
   </node>
-  <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node"
-        output="screen" if="$(arg enable_gui)">
-    <param name="fullscreen" value="true"/>
-    <param name="video_topic" value="/camera/upper_display"/>
-    <param name="scan_mode_topic" value="/barcode_scan/camera_mode"/>
-    <param name="call_camera_status_topic" value="/lower_cam/lower_usb_cam/capture_status"/>
-    <param name="video_display_fps" value="15.0"/>
-  </node>
+  <!-- Same GUI as status_display.launch. The bridge is launched once below. -->
+  <include file="$(find robot_navigation)/launch/status_display.launch">
+    <arg name="config_file" value="$(arg vitals_config)"/>
+    <arg name="load_config" value="false"/>
+    <arg name="enable_vitals_bridge" value="false"/>
+    <arg name="enable_gui" value="$(arg enable_gui)"/>
+    <arg name="fullscreen" value="$(arg gui_fullscreen)"/>
+    <arg name="audio_role" value="$(arg audio_role)"/>
+    <arg name="vitals_frame_topic" value="$(arg vitals_frame_topic)"/>
+    <arg name="heart_rate_topic" value="$(arg heart_rate_topic)"/>
+    <arg name="temperature_topic" value="$(arg temperature_topic)"/>
+  </include>
 
   <!-- ============================================================ -->
   <!--  第8层：安全感知层                                            -->
@@ -354,9 +378,18 @@
     <param name="rotation_clearance_mm" value="100.0"/> <!-- 圆形车体外缘的转向净空 -->
   </node>
 
-  <!-- 外部心率/体温测量装置接入点。接口由外部 launch 提供，默认关闭。 -->
+  <!-- One measurement provider; GUI and bedside service consume its atomic frames. -->
   <group if="$(arg enable_patient_measurement)">
-    <include file="$(arg patient_measurement_launch)"/>
+    <include file="$(arg patient_measurement_launch)">
+      <arg name="config_file" value="$(arg vitals_config)"/>
+      <arg name="load_config" value="false"/>
+      <arg name="transport" value="$(arg vitals_transport)"/>
+      <arg name="serial_device" value="$(arg vitals_serial_device)"/>
+      <arg name="baudrate" value="$(arg vitals_baudrate)"/>
+      <arg name="vitals_frame_topic" value="$(arg vitals_frame_topic)"/>
+      <arg name="heart_rate_topic" value="$(arg heart_rate_topic)"/>
+      <arg name="temperature_topic" value="$(arg temperature_topic)"/>
+    </include>
   </group>
 
   <!-- ============================================================ -->
@@ -366,11 +399,11 @@
   <!-- Local WAV paths override synthesized speech; keep empty until selected samples are deployed. -->
   <arg name="speech_bed1_audio_file" default="$(find robot_navigation)/audio/bed1_kai.wav"/>
   <arg name="speech_bed3_audio_file" default="$(find robot_navigation)/audio/bed3_kai.wav"/>
-  <arg name="speech_speaker_device" default="default"/>
+  <arg name="speech_speaker_device" default="$(arg audio_speaker_device)"/>
 
   <!-- 9.1 语音播报服务 — 文字转语音输出 -->
   <node pkg="robot_navigation" type="speech_service_node.py"
-        name="speak_node" output="screen">
+        name="speak_node" output="screen" required="true">
     <param name="language" value="zh"/>
     <param name="speed" value="1.0"/>
     <param name="volume" value="1.0"/>
@@ -389,13 +422,13 @@
   <!-- 9.3 任务状态机 — 编排全部任务流程 -->
   <node pkg="robot_navigation" type="mission_controller_node"
         name="mission_controller_node" output="screen" required="true">
+    <rosparam file="$(arg mission_config)" command="load"/>
+    <remap from="/Ready" to="$(arg audio_ready_topic)"/>
       <param name="skip_bedside_scan" value="$(arg skip_bedside_scan)"/>
       <param name="competition_mode" value="$(arg competition_mode)"/>
       <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>
       <param name="bedside_scan_skip_wait_s" value="$(arg bedside_scan_skip_wait_s)"/>
       <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
-      <param name="heart_rate_topic" value="$(arg heart_rate_topic)"/>
-      <param name="temperature_topic" value="$(arg temperature_topic)"/>
       <param name="enable_arm_upper_alignment" value="$(arg enable_arm_upper_alignment)"/>
       <param name="enable_vl53_circle_check" value="$(arg enable_vl53_circle_check)"/>
       <param name="require_all_vl53_ranges" value="$(arg require_all_vl53_ranges)"/>
@@ -408,7 +441,6 @@
       <param name="left_range_topic" value="$(arg left_range_topic)"/>
       <param name="right_range_topic" value="$(arg right_range_topic)"/>
       <param name="rear_range_topic" value="$(arg rear_range_topic)"/>
-    <rosparam file="$(arg mission_config)" command="load"/>
   </node>
 
 </launch>
