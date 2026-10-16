@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <mutex>
+#include <string>
 #include <vector>
 #include "can_motor_interface/can_protocol.h"
 
@@ -136,26 +137,40 @@ class FirmwareStats {
       counts[2] = le16(frame.data + 5); size = 3;
     }
     bool failed = type == 1 && frame.data[7] != 0;
+    std::string detail = failed ? "firmware execution status=" + std::to_string(frame.data[7]) : "";
+    static const char* names[3][3] = {
+      {"queue_drop", "response_timeout", ""},
+      {"execution_failure", "", ""},
+      {"can1_tx_failure", "can2_tx_failure", "stop_failure"}
+    };
     if (seen_[type]) for (size_t i = 0; i < size; ++i) {
       if (counts[i] != previous_[type][i]) {
         // This aggregate includes background reads of the optional fifth axis.
         // It has no address/command tag. Selected-wheel feedback and F6 ACKs
         // independently detect chassis communication failures.
         if (type == 0 && i == 1) response_timeout_changed_ = true;
-        else failed = true;
+        else {
+          failed = true;
+          if (!detail.empty()) detail += "; ";
+          detail += std::string(names[type][i]) + ": " + std::to_string(previous_[type][i]) +
+                    " -> " + std::to_string(counts[i]);
+        }
       }
     }
     previous_[type] = counts;
     seen_[type] = true;
+    if (failed) last_failure_detail_ = detail;
     return failed;
   }
   bool ready() const { return seen_[0] && seen_[1] && seen_[2]; }
   bool responseTimeoutChanged() const { return response_timeout_changed_; }
+  const std::string& failureDetail() const { return last_failure_detail_; }
  private:
   static uint16_t le16(const uint8_t* p) { return p[0] | (static_cast<uint16_t>(p[1]) << 8); }
   std::array<bool, 3> seen_{};
   std::array<std::array<uint16_t, 3>, 3> previous_{};
   bool response_timeout_changed_ = false;
+  std::string last_failure_detail_;
 };
 
 // Real driver motion acknowledgements, not STM32's local enqueue ACK (0x102).

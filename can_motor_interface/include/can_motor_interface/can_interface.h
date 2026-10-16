@@ -58,6 +58,7 @@ class CanInterfaceNode {
   void publishStopSignals();
   void publishTelemetry();
   bool linkHealthy();
+  std::string linkHealthIssue();
   void parseDriverFrame(const can_frame& frame);
   void parseDiagnostics(const can_frame& frame);
   void publishMotionStartState();

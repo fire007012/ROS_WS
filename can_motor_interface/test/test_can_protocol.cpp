@@ -285,6 +285,18 @@ TEST(LinkHealth, MissingOptionalAxisDoesNotHideChassisMotionAckLoss) {
   EXPECT_FALSE(acks.healthy(11.1, 0.5)); // repeated TX never extends the ACK deadline
 }
 
+TEST(LinkHealth, FirmwareFailureDiagnosisRetainsExactCounterTransition) {
+  can_motor_interface::FirmwareStats stats;
+  can_frame frame{}; frame.can_id = 0x103; frame.can_dlc = 8;
+  frame.data[0] = 3; frame.data[1] = 2; frame.data[2] = 9;
+  EXPECT_FALSE(stats.observe(frame));
+  frame.data[1] = 3;
+  EXPECT_TRUE(stats.observe(frame));
+  EXPECT_EQ("can1_tx_failure: 2306 -> 2307", stats.failureDetail());
+  EXPECT_FALSE(stats.observe(frame));
+  EXPECT_EQ("can1_tx_failure: 2306 -> 2307", stats.failureDetail());
+}
+
 TEST(LinkHealth, WheelPermutationAndSignsAreSymmetric) {
   using namespace can_motor_interface;
   WheelMap map;

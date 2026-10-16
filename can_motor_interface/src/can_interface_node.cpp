@@ -353,7 +353,8 @@ void CanInterfaceNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& ms
     last_cached_batch_sec_ = 0;
     return true;
   })) {
-    ROS_WARN("ESTOP reset denied: require fresh driver replies, heartbeat ACK and stable firmware diagnostics");
+    const auto issue = linkHealthIssue();
+    ROS_WARN("ESTOP reset denied: %s", issue.empty() ? "require at least 1s without a new fault" : issue.c_str());
     return;
   }
   ROS_WARN("[can_interface] ESTOP reset accepted by upper safety policy");
@@ -670,30 +671,54 @@ void CanInterfaceNode::parseDiagnostics(const can_frame& frame) {
   }
   if (frame.can_id == 0x103 && frame.can_dlc == 8 && frame.data[0] >= 1 && frame.data[0] <= 3) {
     bool failure, response_timeout;
+    std::string failure_detail;
     {
       std::lock_guard<std::mutex> lock(telemetry_mutex_);
       failure = firmware_stats_.observe(frame);
+      if (failure) failure_detail = firmware_stats_.failureDetail();
       response_timeout = firmware_stats_.responseTimeoutChanged();
       stats_time_sec_[frame.data[0] - 1] = now;
     }
     if (response_timeout)
       ROS_WARN_THROTTLE(2.0, "STM32 aggregate response timeouts changed (includes optional motor 5 reads); "
                             "chassis protection uses per-wheel real feedback and motion ACK deadlines");
-    if (failure) triggerEmergencyStop("STM32 queue/execution/transport failure counter changed");
+    if (failure) {
+      ROS_ERROR("STM32 failure: %s", failure_detail.c_str());
+      triggerEmergencyStop("STM32 queue/execution/transport failure counter changed");
+    }
   }
 }
 
 bool CanInterfaceNode::linkHealthy() {
-  const double now = ros::SteadyTime::now().toSec();
-  if (!socketAvailable() || !backgroundTrafficAllowed(now)) return false;
-  if (!report_configured_.load() || heartbeat_ack_time_sec_.load() == 0 ||
-      now - heartbeat_ack_time_sec_.load() > heartbeat_timeout_sec_) return false;
-  std::lock_guard<std::mutex> lock(telemetry_mutex_);
-  if (!firmware_stats_.ready() || !driver_health_.healthy(now, heartbeat_timeout_sec_)) return false;
-  for (double time : stats_time_sec_)
-    if (time == 0 || now - time > heartbeat_timeout_sec_) return false;
+  if (!linkHealthIssue().empty()) return false;
   link_was_healthy_.store(true);
   return true;
+}
+
+std::string CanInterfaceNode::linkHealthIssue() {
+  const double now = ros::SteadyTime::now().toSec();
+  if (!socketAvailable()) return "CAN socket unavailable";
+  if (!backgroundTrafficAllowed(now)) return "STOP pending, controller fault or recent TX failure";
+  if (!report_configured_.load()) return "report configuration ACK missing (command 0x07)";
+  if (heartbeat_ack_time_sec_.load() == 0 ||
+      now - heartbeat_ack_time_sec_.load() > heartbeat_timeout_sec_)
+    return "heartbeat ACK missing or expired (command 0x09)";
+  std::lock_guard<std::mutex> lock(telemetry_mutex_);
+  if (!firmware_stats_.ready()) return "firmware statistics baseline incomplete";
+  for (size_t i = 0; i < stats_time_sec_.size(); ++i)
+    if (stats_time_sec_[i] == 0 || now - stats_time_sec_[i] > heartbeat_timeout_sec_)
+      return "firmware statistics expired: type=" + std::to_string(i + 1);
+  for (size_t i = 0; i < 4; ++i) {
+    const auto wheel = "logical wheel " + std::to_string(i) + " / CAN2 address " +
+                       std::to_string(wheel_map_.indices[i] + 1);
+    if (driver_health_.speed_time[i] == 0 || now - driver_health_.speed_time[i] > heartbeat_timeout_sec_)
+      return wheel + ": native speed missing or expired";
+    if (driver_health_.status_time[i] == 0 || now - driver_health_.status_time[i] > heartbeat_timeout_sec_)
+      return wheel + ": native status missing or expired";
+    if (!(driver_health_.flags[i] & 1)) return wheel + ": driver disabled";
+    if (driver_health_.flags[i] & 8) return wheel + ": stall protection active";
+  }
+  return {};
 }
 
 void CanInterfaceNode::publishTelemetry() {
@@ -812,6 +837,21 @@ void CanInterfaceNode::publishCanDiagnostics(double now) {
   add("last_error_class", std::to_string(last_can_error_class_.load()));
   add("last_controller_flags", std::to_string(last_controller_status_.load()));
   add("stop_pending_local_submission", stop_pending_.load() ? "true" : "false");
+  add("link_health_issue", linkHealthIssue());
+  add("report_configured", report_configured_.load() ? "true" : "false");
+  add("heartbeat_ack_age_sec", std::to_string(heartbeat_ack_time_sec_.load() > 0
+      ? now - heartbeat_ack_time_sec_.load() : -1.0));
+  {
+    std::lock_guard<std::mutex> lock(telemetry_mutex_);
+    add("last_firmware_failure", firmware_stats_.failureDetail());
+    for (size_t i = 0; i < 4; ++i) {
+      const auto prefix = "wheel_" + std::to_string(i) + "_";
+      add(prefix + "speed_age_sec", std::to_string(driver_health_.speed_time[i] > 0
+          ? now - driver_health_.speed_time[i] : -1.0));
+      add(prefix + "status_age_sec", std::to_string(driver_health_.status_time[i] > 0
+          ? now - driver_health_.status_time[i] : -1.0));
+    }
+  }
   {
     std::lock_guard<std::mutex> lock(socket_mutex_);
     add("next_reconnect_in_sec", std::to_string(available ? 0.0 : std::max(0.0, next_open_attempt_sec_ - now)));
@@ -888,13 +928,29 @@ void CanInterfaceNode::probeTimerCallback(const ros::WallTimerEvent&) {
   // (0.8 s per round at 10 Hz), but reduce traffic while the stop is latched.
   if (motion_.latched() && now - last_probe_attempt_sec_ < 0.095) return;
   last_probe_attempt_sec_ = now;
-  // Interleave speed/status: each of four motors is checked every 400 ms.
-  const size_t wheel = (probe_slot_ / 2) % 4;
-  const auto frame = driverRead(static_cast<uint8_t>(wheel_map_.indices[wheel] + 1),
-                               probe_slot_ % 2 ? 0x3A : 0x35);
-  probe_slot_ = (probe_slot_ + 1) % 8;
-  if (!sendCanFrame(frame.can_id, frame.data, frame.can_dlc))
-    triggerEmergencyStop("CAN2 feedback probe transmit failure");
+  // STM32 already forwards native CAN2 replies. Requests and forwarded replies
+  // share the same extended CAN1 ID, so redundant periodic requests can contend
+  // with a different payload after arbitration. Use genuine unsolicited samples
+  // first and probe only a missing/aging speed or status. Cached 0x101 reports
+  // never update these timestamps. Keep round-robin fairness and one write per
+  // callback, including when every driver disappears.
+  const double refresh_sec = heartbeat_timeout_sec_ / 2.0;
+  for (size_t checked = 0; checked < 8; ++checked) {
+    const size_t slot = probe_slot_;
+    probe_slot_ = (probe_slot_ + 1) % 8;
+    const size_t wheel = slot / 2;
+    {
+      std::lock_guard<std::mutex> lock(telemetry_mutex_);
+      const double sampled = slot % 2 ? driver_health_.status_time[wheel]
+                                      : driver_health_.speed_time[wheel];
+      if (sampled > 0 && now - sampled < refresh_sec) continue;
+    }
+    const auto frame = driverRead(static_cast<uint8_t>(wheel_map_.indices[wheel] + 1),
+                                 slot % 2 ? 0x3A : 0x35);
+    if (!sendCanFrame(frame.can_id, frame.data, frame.can_dlc))
+      triggerEmergencyStop("CAN2 feedback probe transmit failure");
+    return;
+  }
 }
 
 void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
@@ -927,8 +983,10 @@ void CanInterfaceNode::timerCallback(const ros::WallTimerEvent&) {
       triggerEmergencyStop("CAN receive timeout");
     }
   }
-  if ((link_was_healthy_.load() || now - link_open_time_sec_.load() > 2.0) && !linkHealthy() && !motion_.latched())
-    triggerEmergencyStop("CAN2 motor feedback, heartbeat ACK or firmware statistics expired");
+  if ((link_was_healthy_.load() || now - link_open_time_sec_.load() > 2.0) && !linkHealthy() && !motion_.latched()) {
+    const auto issue = linkHealthIssue();
+    triggerEmergencyStop(issue.c_str());
+  }
   bool motion_ack_expired;
   {
     std::lock_guard<std::mutex> lock(telemetry_mutex_);

@@ -199,6 +199,12 @@ class CanInterfaceNodeTestPeer {
     std_msgs::Bool::Ptr msg(new std_msgs::Bool); msg->data = true; node.emergencyResetCallback(msg);
   }
   static bool haveCommand(CanInterfaceNode& node) { return node.have_command_; }
+  static std::string healthIssue(CanInterfaceNode& node) { return node.linkHealthIssue(); }
+  static void ageSample(CanInterfaceNode& node, size_t wheel, uint8_t function, double age = 0.6) {
+    auto& stamp = function == 0x35 ? node.driver_health_.speed_time[wheel]
+                                  : node.driver_health_.status_time[wheel];
+    stamp = ros::SteadyTime::now().toSec() - age;
+  }
 };
 }  // namespace can_motor_interface
 
@@ -225,6 +231,7 @@ class CanTransport : public ::testing::Test {
 
 TEST_F(CanTransport, BackpressurePreservesSocketAndReceivesRealHeartbeat) {
   Peer::freshHealth(*node);
+  Peer::ageSample(*node, 0, 0x35);
   const int fd = Peer::fd(*node);
   bus.default_error = ENOBUFS;
   Peer::probe(*node);
@@ -344,6 +351,56 @@ TEST_F(CanTransport, LatchedQueriesAreReducedAndRecoveryRequiresResetAndNewComma
   EXPECT_TRUE(bus.writes.empty()); EXPECT_TRUE(Peer::latched(*node));
   Peer::reset(*node); EXPECT_FALSE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
   Peer::commandTick(*node); EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, FreshNativeRepliesSuppressRedundantCan1Requests) {
+  Peer::freshHealth(*node);
+  clearWrites();
+  for (int i = 0; i < 16; ++i) Peer::probe(*node);
+  EXPECT_TRUE(bus.writes.empty());
+  // One aging status must be queried directly, without resending seven fresh reads.
+  Peer::ageSample(*node, 2, 0x3A);
+  Peer::probe(*node);
+  ASSERT_EQ(1u, bus.writes.size());
+  EXPECT_EQ(CAN_EFF_FLAG | 0x400u, bus.writes[0].frame.can_id);
+  EXPECT_EQ(0x3A, bus.writes[0].frame.data[0]);
+  can_frame reply{}; reply.can_id = CAN_EFF_FLAG | 0x400u; reply.can_dlc = 3;
+  reply.data[0] = 0x3A; reply.data[1] = 0x83; reply.data[2] = 0x6B;
+  Peer::receive(*node, {reply});
+  clearWrites(); Peer::probe(*node);
+  EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, CachedReportsCannotSuppressMissingNativeProbes) {
+  std::vector<can_frame> reports;
+  for (uint8_t wheel = 0; wheel < 4; ++wheel) {
+    for (uint8_t type : {uint8_t(1), uint8_t(3)}) {
+      can_frame report{}; report.can_id = 0x101; report.can_dlc = 8;
+      report.data[0] = type; report.data[1] = wheel;
+      report.data[2] = type == 1 ? 0x83 : 0;
+      reports.push_back(report);
+    }
+  }
+  Peer::receive(*node, reports);
+  clearWrites();
+  const std::array<uint32_t, 4> addresses{{2, 1, 4, 3}};
+  for (size_t i = 0; i < 8; ++i) {
+    Peer::probe(*node);
+    ASSERT_EQ(i + 1, bus.writes.size());
+    EXPECT_EQ(CAN_EFF_FLAG | (addresses[i / 2] << 8), bus.writes[i].frame.can_id);
+    EXPECT_EQ(i % 2 ? 0x3A : 0x35, bus.writes[i].frame.data[0]);
+  }
+}
+
+TEST_F(CanTransport, HealthDiagnosisIdentifiesMissingNativeSampleAndConfigurationAck) {
+  EXPECT_NE(std::string::npos, Peer::healthIssue(*node).find("configuration ACK"));
+  Peer::freshHealth(*node);
+  EXPECT_TRUE(Peer::healthIssue(*node).empty());
+  // Still fresh enough to be safe, but old enough to request a new sample.
+  Peer::ageSample(*node, 3, 0x35);
+  EXPECT_TRUE(Peer::healthIssue(*node).empty());
+  Peer::ageSample(*node, 3, 0x35, 1.1);
+  EXPECT_EQ("logical wheel 3 / CAN2 address 3: native speed missing or expired", Peer::healthIssue(*node));
 }
 
 TEST_F(CanTransport, RunningTargetsAreStaggeredAndRepeatedWireValuesAreCoalesced) {

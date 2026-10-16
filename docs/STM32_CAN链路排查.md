@@ -105,7 +105,7 @@ ERROR-PASSIVE/BUS-OFF 会锁存急停；错误帧不刷新心跳或电机反馈�
 
 ```bash
 catkin_make --pkg can_motor_interface
-catkin_make --pkg can_motor_interface tests
+catkin_make -j2 test_can_protocol test_can_transport
 rostest can_motor_interface can_transport.test
 ```
 
@@ -170,14 +170,22 @@ roslaunch robot_navigation mission_complete.launch
 ## 电机健康、故障和急停
 
 `0x101/type=3` 是 STM32 周期重发的缓存，不能证明电机刚刚回复。
-ROS 每 50 ms 交错查询一个电机的 0x35 实际速度或 0x3A 状态，每轮查询周期 400 ms。
-这些是只读原生扩展帧，利用现有固件的双向透传；运动命令仍由标准 0x100 解析执行。
+ROS 每 50 ms 检查真实原生反馈，优先使用 STM32 已转发的 0x35 实际速度和 0x3A 状态。
+仅对超过反馈过期时间一半仍无新样本的项补发只读查询；默认在 0.5 s 时补查，
+1 s 的真实反馈过期停车条件不变。查询按轮序公平调度，每次最多一帧。
+这些查询和 STM32 转发的原生回包使用相同扩展帧 ID，减少重复请求可降低两端
+同时发送不同负载的冲突风险；运动命令仍由标准 0x100 解析执行。
 `/motor_state` 仅取真实 CAN2 原生回包，不再从缓存刷新速度或接收时间。
 
 运动前必须满足：四轮速度/状态均未过期、均使能且没有堵转保护、收到心跳 cmd=9 的 ACK、
 report_mask 配置已确认、三类统计均在线。默认过期时间 1 s；启动最多等待 2 s。
 `/motor_link_ready` 发布当前可运动状态。缓存/统计回包不会替代真实电机在线证据。
 里程计反馈过期后停止发布 odom/TF，恢复时不跨断链时段积分。
+
+`/diagnostics` 中的 `link_health_issue` 给出未就绪的具体原因，
+`wheel_N_speed_age_sec` / `wheel_N_status_age_sec` 分别给出各逻辑轮真实样本的年龄，
+`-1` 表示尚未收到。`last_firmware_failure` 保留故障统计的具体字段及前后数值，
+例如 `can1_tx_failure: 2306 -> 2307`。不会将配置 ACK、心跳或缓存转速当成原生电机反馈。
 
 标准 0x102 负 ACK、CAN2 原生错误回复，以及 0x103 中队列丢弃、执行失败、
 CAN1/CAN2 发送失败或停车失败计数变化，都会锁定急停。首次统计作为历史基线；后续比较支持 16 位回绕。
