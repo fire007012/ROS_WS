@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+\<?xml version="1.0"?>
 <!--
   ==============================================================================
    完整任务启动文件 — robot_navigation/launch/mission_complete.launch
@@ -78,9 +78,9 @@
   <arg name="enable_physical_start" default="false"/>
   <arg name="enable_can_start_signal" default="true"/>
   <arg name="enable_audio_video" default="true"/>
-  <arg name="audio_role" default="master"/>
-  <arg name="audio_local_ip" default="10.161.170.93"/>
-  <arg name="audio_remote_ip" default="10.161.170.41"/>
+  <arg name="audio_role" default="slave"/>
+  <arg name="audio_local_ip" default="$(optenv ROS_IP 0.0.0.0)"/>
+  <arg name="audio_remote_ip" default="$(optenv ROBOT_VM_IP)"/>
   <arg name="audio_ready_topic" default="/Ready"/>
   <!-- 外部测量装置接口：提供自己的 launch 后再启用，默认不伪造节点。 -->
   <arg name="enable_patient_measurement" default="true"/>
@@ -299,7 +299,7 @@
        Shared defaults capture the Pi call camera at 640x480@25 from /dev/video2. -->
   <group if="$(arg enable_audio_video)">
     <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
-      <arg name="role" value="$(arg audio_role)"/>
+      <arg name="role" value="slave"/>
       <arg name="local_ip" value="$(arg audio_local_ip)"/>
       <arg name="remote_ip" value="$(arg audio_remote_ip)"/>
       <arg name="ready_topic" value="$(arg audio_ready_topic)"/>
