@@ -26,18 +26,21 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   nh_.param("/robot/max_angular_accel", max_angular_accel_, max_angular_accel_);
   pnh_.param("publish_rate_hz", publish_rate_hz_, publish_rate_hz_);
   pnh_.param("cmd_timeout_sec", cmd_timeout_sec_, cmd_timeout_sec_);
+  if (!std::isfinite(cmd_timeout_sec_) || cmd_timeout_sec_ <= 0 ||
+      !std::isfinite(publish_rate_hz_) || publish_rate_hz_ < 1)
+    throw std::invalid_argument("cmd_timeout_sec and publish_rate_hz must be finite and positive");
   pnh_.param("alignment_cmd_timeout_sec", alignment_cmd_timeout_sec_, 0.2);
   if (!std::isfinite(alignment_cmd_timeout_sec_) || alignment_cmd_timeout_sec_ <= 0 ||
       alignment_cmd_timeout_sec_ > 0.2) throw std::invalid_argument("alignment_cmd_timeout_sec must be in (0, 0.2]");
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
 
-  fixed_route_sub_ = nh_.subscribe("/cmd_vel_fixed_route", 10, &CmdVelMuxNode::fixedRouteCallback, this);
-  teleop_sub_ = nh_.subscribe("/cmd_vel_teleop", 10, &CmdVelMuxNode::teleopCallback, this);
+  fixed_route_sub_ = nh_.subscribe("/cmd_vel_fixed_route", 1, &CmdVelMuxNode::fixedRouteCallback, this);
+  teleop_sub_ = nh_.subscribe("/cmd_vel_teleop", 1, &CmdVelMuxNode::teleopCallback, this);
   // Keep /cmd_vel as an input alias for rosrun teleop_twist_keyboard and manual tests.
   // The mux output is published on /cmd_vel_muxed, so this cannot form a feedback loop.
-  direct_cmd_sub_ = nh_.subscribe("/cmd_vel", 10, &CmdVelMuxNode::teleopCallback, this);
-  external_sub_ = nh_.subscribe("/cmd_vel_external", 10, &CmdVelMuxNode::externalCallback, this);
-  safety_sub_ = nh_.subscribe("/cmd_vel_safety", 10, &CmdVelMuxNode::safetyCallback, this);
+  direct_cmd_sub_ = nh_.subscribe("/cmd_vel", 1, &CmdVelMuxNode::teleopCallback, this);
+  external_sub_ = nh_.subscribe("/cmd_vel_external", 1, &CmdVelMuxNode::externalCallback, this);
+  safety_sub_ = nh_.subscribe("/cmd_vel_safety", 1, &CmdVelMuxNode::safetyCallback, this);
   alignment_sub_ = nh_.subscribe("/cmd_vel_arm_alignment", 1, &CmdVelMuxNode::alignmentCallback, this);
   alignment_mode_sub_ = nh_.subscribe("/arm_upper_alignment/active", 1, &CmdVelMuxNode::alignmentModeCallback, this);
   mission_cancel_sub_ = nh_.subscribe("/mission/cancel", 1, &CmdVelMuxNode::missionCancelCallback, this);
@@ -47,7 +50,7 @@ CmdVelMuxNode::CmdVelMuxNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   chassis_lock_sub_ = nh_.subscribe("/chassis_lock", 10, &CmdVelMuxNode::chassisLockCallback, this);
   physical_start_sub_ = nh_.subscribe("/start_signal/physical", 1, &CmdVelMuxNode::physicalStartCallback, this);
 
-  cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_muxed", 10);
+  cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_muxed", 1);
   requested_vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel_requested", 1);
   selected_source_pub_ = nh_.advertise<std_msgs::String>("/cmd_vel_mux/selected_source", 10, true);
   estop_state_pub_ = nh_.advertise<std_msgs::Bool>("/cmd_vel_mux/estop_active", 10, true);
@@ -130,6 +133,8 @@ void CmdVelMuxNode::physicalStartCallback(const std_msgs::UInt32::ConstPtr& msg)
 }
 
 void CmdVelMuxNode::chassisLockCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (chassis_locked_ != msg->data)
+    for (auto& source : sources_) source.second.has_msg = false;
   chassis_locked_ = msg->data;
   if (chassis_locked_) {
     publishStop("chassis_lock");
@@ -191,6 +196,13 @@ void CmdVelMuxNode::timerCallback(const ros::SteadyTimerEvent& event) {
     return;
   }
 
+  // Safety is a restriction of a live upstream request, never a motion source
+  // that can renew an expired planner/teleop command on its own.
+  if (!sourceActive("external", now) && !sourceActive("teleop", now) &&
+      !sourceActive("fixed_route", now)) {
+    publishStop("timeout_stop");
+    return;
+  }
   const char* priority_order[] = {"safety", "external", "teleop", "fixed_route"};
   for (const char* source_name : priority_order) {
     if (!sourceActive(source_name, now)) {
@@ -206,8 +218,16 @@ void CmdVelMuxNode::timerCallback(const ros::SteadyTimerEvent& event) {
         sources_[source_name].twist.angular.x == 0.0 &&
         sources_[source_name].twist.angular.y == 0.0 &&
         sources_[source_name].twist.angular.z == 0.0;
-    const geometry_msgs::Twist clamped = clampTwist(
-        sources_[source_name].twist, dt, is_safety_source || is_teleop_stop);
+    geometry_msgs::Twist input = sources_[source_name].twist;
+    if (is_safety_source) {
+      auto restrict = [](double safe, double wanted) {
+        return safe * wanted > 0 ? std::copysign(std::min(std::abs(safe), std::abs(wanted)), wanted) : 0.0;
+      };
+      input.linear.x = restrict(input.linear.x, requested.linear.x);
+      input.linear.y = restrict(input.linear.y, requested.linear.y);
+      input.angular.z = restrict(input.angular.z, requested.angular.z);
+    }
+    const geometry_msgs::Twist clamped = clampTwist(input, dt, is_safety_source || is_teleop_stop);
     if (timeout_reported_) {
       ROS_INFO("[cmd_vel_mux] command source recovered: %s", source_name);
       timeout_reported_ = false;

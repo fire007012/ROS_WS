@@ -145,21 +145,25 @@ class UpperAlignmentRos(unittest.TestCase):
             self.set_pair(200, 1000)
             self.hold(lambda: self.output.linear.y > 0, .12)
             with self.lock:
-                self.original[1] = 310
+                self.original[1] = 190
             self.wait(lambda: self.source == 'safety' and self.output.linear.y == 0)
             with self.lock:
                 self.original[1] = 800
             self.wait(lambda: self.output.linear.y > .049)
-            # Firmware's original <=300 mm scope covers all three lower beams,
-            # including front and right while the commanded direction is left.
-            for original_id in [0, 1, 2]:
+            # Only motion toward a valid chassis beam brakes. Front/right
+            # 250 mm must not recreate the removed firmware-wide 300 mm stop.
+            for original_id in [0, 2]:
                 with self.lock:
                     self.original[original_id] = 250
-                self.wait(lambda: self.output.linear.y == 0)
-                self.hold(lambda: self.output.linear.y == 0, .12)
+                self.hold(lambda: self.output.linear.y > .049, .15)
                 with self.lock:
                     self.original[original_id] = 800
-                self.wait(lambda: self.output.linear.y > .049)
+            with self.lock:
+                self.original[1] = 190
+            self.wait(lambda: self.output.linear.y == 0)
+            with self.lock:
+                self.original[1] = 800
+            self.wait(lambda: self.output.linear.y > .049)
             self.nav_enabled = False
             self.stage.publish(String('POSITION_IN_CIRCLE_A'))
             self.wait(lambda: not self.active and self.output.linear.y == 0)

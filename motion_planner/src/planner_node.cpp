@@ -23,8 +23,8 @@ PlannerNode::PlannerNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param("max_rpm", max_rpm_, max_rpm_);
   pnh_.param("print_debug_log", print_debug_log_, print_debug_log_);
 
-  cmd_vel_sub_ = nh_.subscribe("/cmd_vel_muxed", 20, &PlannerNode::cmdVelCallback, this);
-  motor_cmd_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("/motor_velocity_cmd", 20);
+  cmd_vel_sub_ = nh_.subscribe("/cmd_vel_muxed", 1, &PlannerNode::cmdVelCallback, this);
+  motor_cmd_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("/motor_velocity_cmd", 1);
 }
 
 double PlannerNode::clamp(double val, double min_val, double max_val) const {

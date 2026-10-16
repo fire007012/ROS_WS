@@ -142,6 +142,13 @@ int main(){
   mux.teleopCallback(motion);assert(tick().linear.x>0);
   ros::clock()+=1;
   assert(tick().linear.x==0); // no active input -> timeout stop, not /cmd_vel
+  // A safety publisher continuing an old nonzero reduction must not renew teleop.
+  auto reduced=std::make_shared<geometry_msgs::Twist>();reduced->linear.x=0.03;
+  mux.teleopCallback(motion);mux.safetyCallback(reduced);assert(tick().linear.x>0);
+  ros::clock()+=0.6;
+  mux.safetyCallback(reduced);assert(tick().linear.x==0);
+  mux.teleopCallback(zero);assert(tick().linear.x==0);
+  ros::clock()+=0.6;
   mux.teleopCallback(motion);assert(tick().linear.x>0);
   auto yes=std::make_shared<std_msgs::Bool>();yes->data=true;
   auto no=std::make_shared<std_msgs::Bool>();no->data=false;

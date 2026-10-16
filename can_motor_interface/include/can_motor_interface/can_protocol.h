@@ -117,8 +117,8 @@ inline const char* motionStartStateName(MotionStartState state) {
 }
 
 // Correlates the priority-ordered 0x102 ACK with the local sequence in 0x112.
-// A result=0 ACK means that the cached trigger was accepted, not that motion
-// has started; the owner must call motionStarted() after observing telemetry.
+// A result=0 ACK is terminal native confirmation (default FF 02 6B).
+// It permits streaming updates; it does not mean the target has been reached.
 class MotionStartStateMachine {
  public:
   explicit MotionStartStateMachine(double ack_timeout_sec = 0.4)
@@ -163,21 +163,33 @@ class MotionStartStateMachine {
   // must be paused immediately. Rejection leaves cached commands intact.
   bool physicalStart(uint8_t result, uint16_t sequence, double now) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ == MotionStartState::ESTOP_LATCHED ||
+        state_ == MotionStartState::HEARTBEAT_LOST || state_ == MotionStartState::START_FAILED)
+      return false;
     if (result == 0) {
+      if (sequence == pending_sequence_ &&
+          (state_ == MotionStartState::START_PENDING || state_ == MotionStartState::RUNNING))
+        return false;  // Duplicate must not restart the deadline or erase success.
+      if (state_ != MotionStartState::CACHE_READY) return false;
       pending_sequence_ = sequence;
       pending_since_sec_ = now;
       ack_accepted_ = false;
       state_ = MotionStartState::START_PENDING;
       const auto it = early_acks_.find(sequence);
-      if (it != early_acks_.end() && it->second == 0) ack_accepted_ = true;
+      if (it != early_acks_.end() && it->second == 0) {
+        ack_accepted_ = true;
+        state_ = MotionStartState::RUNNING;
+      }
       if (it != early_acks_.end() && it->second != 0) state_ = MotionStartState::START_FAILED;
       return true;
     }
-    if (result == 2) state_ = MotionStartState::START_FAILED;
+    if (result == 2 && sequence == pending_sequence_ &&
+        (state_ == MotionStartState::START_PENDING || state_ == MotionStartState::RUNNING))
+      state_ = MotionStartState::START_FAILED;
     // result=1 is a safety/communication rejection. Cancel any old pending
     // request and preserve the prepared cache for the next human press, with
     // no automatic retry.
-    if (result == 1) {
+    if (result == 1 && state_ == MotionStartState::CACHE_READY) {
       pending_sequence_ = 0;
       pending_since_sec_ = 0;
       ack_accepted_ = false;
@@ -191,11 +203,17 @@ class MotionStartStateMachine {
   bool acknowledge(uint16_t sequence, uint8_t command, uint8_t result) {
     if (command != 0x05) return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    early_acks_[sequence] = result;
-    if (state_ != MotionStartState::START_PENDING || sequence != pending_sequence_)
+    if (state_ == MotionStartState::CACHE_READY) {
+      // Only starts can arrive before their 0x112 event. Bound retained history.
+      if (early_acks_.size() >= 16) early_acks_.clear();
+      early_acks_[sequence] = result;
+    }
+    if ((state_ != MotionStartState::START_PENDING && state_ != MotionStartState::RUNNING) ||
+        sequence != pending_sequence_)
       return false;
     if (result == 0) {
       ack_accepted_ = true;
+      state_ = MotionStartState::RUNNING;
     } else {
       state_ = MotionStartState::START_FAILED;
     }

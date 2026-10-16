@@ -176,6 +176,7 @@ class CanInterfaceNodeTestPeer {
   }
   static void commandTick(CanInterfaceNode& node) { node.commandTimerCallback(ros::WallTimerEvent{}); }
   static void running(CanInterfaceNode& node) {
+    node.start_state_.cacheReady();
     node.start_state_.physicalStart(0, 123, ros::SteadyTime::now().toSec());
     node.start_state_.acknowledge(123, 0x05, 0);
     node.start_state_.motionStarted();
@@ -194,7 +195,38 @@ class CanInterfaceNodeTestPeer {
     node.motion_ack_health_ = MotionAckHealth{};
     node.motion_ack_health_.sent(0, ros::SteadyTime::now().toSec() - 0.6);
   }
-  static void cacheDue(CanInterfaceNode& node) { node.last_cached_batch_sec_ = 0; }
+  static void ack(CanInterfaceNode& node, uint8_t command, uint8_t result = 0, uint16_t sequence = 17) {
+    can_frame frame{}; frame.can_id = 0x102; frame.can_dlc = 8;
+    frame.data[0] = sequence >> 8; frame.data[1] = sequence;
+    frame.data[2] = command; frame.data[3] = result; node.parseDiagnostics(frame);
+  }
+  static void button(CanInterfaceNode& node, uint8_t result, uint16_t sequence) {
+    CanEvent event; event.type = CanEventType::PHYSICAL_START;
+    event.result = result; event.sequence = sequence; node.handleCanEvent(event);
+  }
+  static MotionStartState state(CanInterfaceNode& node) { return node.start_state_.state(); }
+  static void safety(CanInterfaceNode& node, const std::string& value) {
+    std_msgs::String::Ptr msg(new std_msgs::String); msg->data = value;
+    node.distanceSafetyCallback(msg);
+  }
+  static void lockChassis(CanInterfaceNode& node, bool value) {
+    std_msgs::Bool::Ptr msg(new std_msgs::Bool); msg->data = value;
+    node.chassisLockCallback(msg);
+  }
+  static void expireCacheAck(CanInterfaceNode& node) {
+    node.cached_ack_sent_sec_ = ros::SteadyTime::now().toSec() - 0.6;
+  }
+  static void expireStart(CanInterfaceNode& node) {
+    node.start_state_.resetForReprepare(); node.start_state_.cacheReady();
+    node.start_state_.physicalStart(0, 88, ros::SteadyTime::now().toSec() - 0.6);
+  }
+  static void prepare(CanInterfaceNode& node) {
+    for (int wheel = 0; wheel < 4; ++wheel) {
+      commandTick(node);
+      ack(node, 1, 0, 100 + wheel * 3); // firmware seqs interleave other ACKs
+    }
+  }
+
   static void reset(CanInterfaceNode& node) {
     std_msgs::Bool::Ptr msg(new std_msgs::Bool); msg->data = true; node.emergencyResetCallback(msg);
   }
@@ -429,7 +461,7 @@ TEST_F(CanTransport, SlotsUseNewestCommandAndExpiredCommandBecomesZero) {
   ASSERT_EQ(2u, bus.writes.size());
   EXPECT_EQ(15, bus.writes.back().frame.data[2]);
   Peer::expireCommand(*node);
-  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  Peer::commandTick(*node);
   ASSERT_EQ(6u, bus.writes.size());
   for (size_t i = 2; i < 6; ++i) {
     EXPECT_EQ(0, bus.writes[i].frame.data[2]);
@@ -446,18 +478,124 @@ TEST_F(CanTransport, CoalescingPreservesMissingMotionAckStop) {
   EXPECT_TRUE(Peer::latched(*node));
 }
 
-TEST_F(CanTransport, PrestartCacheDoesNotRepeatOnNewIdenticalMessagesOrFasterTicks) {
+TEST_F(CanTransport, CacheWaitsForEachConfirmationAndCanWaitSecondsForButton) {
+  using can_motor_interface::MotionStartState;
   Peer::freshHealth(*node); Peer::target(*node, 10); clearWrites();
-  Peer::commandTick(*node); ASSERT_EQ(4u, bus.writes.size());
+  Peer::commandTick(*node); ASSERT_EQ(1u, bus.writes.size());
+  Peer::commandTick(*node); EXPECT_EQ(1u, bus.writes.size());
+  Peer::ack(*node, 9); Peer::commandTick(*node); EXPECT_EQ(1u, bus.writes.size());
+  Peer::ack(*node, 1); // terminal success for the only outstanding cached wheel
+  for (int wheel = 1; wheel < 4; ++wheel) {
+    Peer::commandTick(*node);
+    EXPECT_EQ(MotionStartState::IDLE, Peer::state(*node));
+    Peer::ack(*node, 1, 0, 100 + wheel * 3);
+  }
+  ASSERT_EQ(4u, bus.writes.size());
   for (const auto& attempt : bus.writes) EXPECT_EQ(1, attempt.frame.data[7]);
-  Peer::target(*node, 10.4f); Peer::commandTick(*node);
-  EXPECT_EQ(4u, bus.writes.size());
-  Peer::target(*node, 15); Peer::commandTick(*node);
-  EXPECT_EQ(4u, bus.writes.size());
-  Peer::cacheDue(*node); Peer::commandTick(*node);
-  ASSERT_EQ(8u, bus.writes.size());
-  EXPECT_EQ(15, bus.writes.back().frame.data[2]);
+  EXPECT_EQ(MotionStartState::CACHE_READY, Peer::state(*node));
+  Peer::expireCommand(*node); // a prepared cache is intentionally allowed to wait
+  Peer::commandTick(*node); EXPECT_EQ(4u, bus.writes.size());
+  Peer::ack(*node, 5, 0, 777); // ACK can precede the event; no speed required
+  EXPECT_EQ(MotionStartState::CACHE_READY, Peer::state(*node));
+  Peer::button(*node, 0, 777);
+  EXPECT_EQ(MotionStartState::RUNNING, Peer::state(*node));
+  EXPECT_FALSE(Peer::latched(*node));
 }
+
+TEST_F(CanTransport, AcceptedButtonImmediatelyFollowedByFailureIsNotDeduplicated) {
+  Peer::freshHealth(*node); Peer::target(*node, 10); Peer::prepare(*node);
+  Peer::button(*node, 0, 321);
+  EXPECT_EQ(can_motor_interface::MotionStartState::START_PENDING, Peer::state(*node));
+  Peer::button(*node, 2, 320); // unrelated old event must not claim this start failed
+  EXPECT_FALSE(Peer::latched(*node));
+  Peer::button(*node, 2, 321);
+  EXPECT_TRUE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
+  EXPECT_EQ(3, bus.writes.back().frame.data[0]);
+  clearWrites(); Peer::commandTick(*node); EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, StartTimeoutAndZeroRequestCancelPendingMotion) {
+  Peer::freshHealth(*node); Peer::target(*node, 10); Peer::prepare(*node);
+  Peer::button(*node, 0, 88); Peer::expireStart(*node); clearWrites();
+  Peer::commandTick(*node);
+  EXPECT_TRUE(Peer::latched(*node)); ASSERT_EQ(1u, bus.writes.size());
+  EXPECT_EQ(3, bus.writes.back().frame.data[0]);
+  Peer::freshHealth(*node); Peer::reset(*node);
+  Peer::target(*node, 10); Peer::prepare(*node);
+  Peer::target(*node, 0);
+  EXPECT_TRUE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
+}
+
+TEST_F(CanTransport, UnconfirmedCachedWheelTimesOutAndCannotBeReplayed) {
+  Peer::freshHealth(*node); Peer::target(*node, 10); Peer::commandTick(*node);
+  Peer::expireCacheAck(*node); clearWrites(); Peer::commandTick(*node);
+  EXPECT_TRUE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
+  ASSERT_EQ(1u, bus.writes.size()); EXPECT_EQ(3, bus.writes[0].frame.data[0]);
+  Peer::ack(*node, 1); clearWrites(); Peer::commandTick(*node);
+  EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, NegativeStartAckStopsBeforeAnyFailureStatisticsArrive) {
+  Peer::freshHealth(*node); Peer::target(*node, 10); Peer::prepare(*node);
+  Peer::button(*node, 0, 5380); clearWrites();
+  Peer::ack(*node, 5, 1, 5380);
+  EXPECT_TRUE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
+  ASSERT_EQ(1u, bus.writes.size()); EXPECT_EQ(3, bus.writes[0].frame.data[0]);
+  Peer::button(*node, 2, 5380); // following event must not reopen the gate
+  EXPECT_TRUE(Peer::latched(*node));
+}
+
+TEST_F(CanTransport, HeartbeatContinuesButSourceLossSendsAllFourZerosWithoutReplay) {
+  Peer::freshHealth(*node); Peer::running(*node); Peer::target(*node, 10);
+  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  Peer::expireCommand(*node); clearWrites();
+  Peer::tick(*node); // heartbeat remains healthy, does not renew source stamp
+  ASSERT_EQ(9, bus.writes.back().frame.data[0]); clearWrites();
+  Peer::commandTick(*node); ASSERT_EQ(4u, bus.writes.size());
+  for (const auto& attempt : bus.writes) {
+    EXPECT_EQ(1, attempt.frame.data[0]); EXPECT_EQ(0, attempt.frame.data[7]);
+    for (int byte = 2; byte < 6; ++byte) EXPECT_EQ(0, attempt.frame.data[byte]);
+  }
+  clearWrites(); Peer::refreshDue(*node);
+  for (int i = 0; i < 8; ++i) Peer::commandTick(*node);
+  for (const auto& attempt : bus.writes) EXPECT_EQ(0, attempt.frame.data[2]);
+}
+
+TEST_F(CanTransport, DistanceStopAndTaskLockCoverDirectMotorCommandsWithoutReplay) {
+  Peer::freshHealth(*node); Peer::running(*node); Peer::target(*node, 10);
+  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  for (int stop = 0; stop < 2; ++stop) {
+    if (stop == 0) Peer::safety(*node, "STOP");
+    else Peer::lockChassis(*node, true);
+    clearWrites(); Peer::target(*node, 20); Peer::commandTick(*node);
+    ASSERT_EQ(4u, bus.writes.size());
+    for (const auto& attempt : bus.writes) EXPECT_EQ(0, attempt.frame.data[2]);
+    if (stop == 0) Peer::safety(*node, "CLEAR");
+    else Peer::lockChassis(*node, false);
+    EXPECT_FALSE(Peer::haveCommand(*node));
+    clearWrites(); Peer::refreshDue(*node);
+    for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+    for (const auto& attempt : bus.writes) EXPECT_EQ(0, attempt.frame.data[2]);
+    Peer::target(*node, 10); Peer::commandTick(*node);
+  }
+}
+
+TEST_F(CanTransport, NegativeAckRealFaultAndMissingFeedbackStillLatchStop) {
+  Peer::freshHealth(*node); Peer::running(*node);
+  Peer::ack(*node, 1, 1, 1234); // no wheel attribution is inferred from this ACK
+  EXPECT_TRUE(Peer::latched(*node));
+  Peer::freshHealth(*node); Peer::reset(*node); EXPECT_FALSE(Peer::latched(*node));
+  can_frame status{}; status.can_id = CAN_EFF_FLAG | 0x200; status.can_dlc = 3;
+  status.data[0] = 0x3A; status.data[1] = 0x83; status.data[2] = 0x6B;
+  Peer::receive(*node, {status}); EXPECT_FALSE(Peer::latched(*node));
+  Peer::stopDue(*node); // next injected stop is outside the retry throttle
+  status.data[1] = 0x8B;
+  Peer::receive(*node, {status}); EXPECT_TRUE(Peer::latched(*node));
+  Peer::freshHealth(*node); Peer::reset(*node); EXPECT_FALSE(Peer::latched(*node));
+  Peer::ageSample(*node, 2, 0x35, 1.1); Peer::tick(*node);
+  EXPECT_TRUE(Peer::latched(*node));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {

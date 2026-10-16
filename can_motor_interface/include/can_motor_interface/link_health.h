@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -173,26 +174,23 @@ class FirmwareStats {
   std::string last_failure_detail_;
 };
 
-// Real driver motion acknowledgements, not STM32's local enqueue ACK (0x102).
+// Track only outstanding native F6 confirmations. Idle time after success
+// must not manufacture a timeout, and repeated sends cannot extend a deadline.
 class MotionAckHealth {
  public:
   void sent(size_t wheel, double now) {
-    if (wheel < 4 && first_send_[wheel] == 0) first_send_[wheel] = now;
+    if (wheel < 4) pending_[wheel].push_back(now);
   }
-  void acknowledge(size_t wheel, double now) {
-    if (wheel < 4) last_ack_[wheel] = now;
+  void acknowledge(size_t wheel, double /*now*/) {
+    if (wheel < 4 && !pending_[wheel].empty()) pending_[wheel].pop_front();
   }
   bool healthy(double now, double timeout) const {
-    for (size_t i = 0; i < 4; ++i) {
-      if (first_send_[i] == 0) continue;
-      const double stamp = last_ack_[i] >= first_send_[i] ? last_ack_[i] : first_send_[i];
-      if (now - stamp > timeout) return false;
-    }
+    for (const auto& pending : pending_)
+      if (!pending.empty() && now - pending.front() > timeout) return false;
     return true;
   }
  private:
-  std::array<double, 4> first_send_{};
-  std::array<double, 4> last_ack_{};
+  std::array<std::deque<double>, 4> pending_;
 };
 
 }  // namespace can_motor_interface

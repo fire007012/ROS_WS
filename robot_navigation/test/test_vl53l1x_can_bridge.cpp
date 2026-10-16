@@ -47,7 +47,7 @@ TEST(Vl53l1xCanProtocol, ValidityUsesStatusAndDistanceTogether) {
   EXPECT_TRUE(robot_navigation::stm32RangeSampleValid(sample));
   sample.status = robot_navigation::kStm32RangeValid | robot_navigation::kStm32RangeOutOfRange;
   EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
-  EXPECT_TRUE(robot_navigation::stm32RangeStatusHasFailure(sample.status));
+  EXPECT_FALSE(robot_navigation::stm32RangeStatusHasFailure(sample.status));
   sample.status = robot_navigation::kStm32RangeTimeout;
   EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
   sample.status = robot_navigation::kStm32RangeEmergency;
@@ -55,6 +55,21 @@ TEST(Vl53l1xCanProtocol, ValidityUsesStatusAndDistanceTogether) {
   sample.status = robot_navigation::kStm32RangeValid;
   sample.distance_mm = 0xFFFF;
   EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
+}
+
+TEST(Vl53l1xCanProtocol, NoReturnIsNormalButAcquisitionFailuresRemainFailures) {
+  robot_navigation::Vl53l1xSample sample;
+  for (uint8_t status : {0, 2}) {
+    sample.status = status;
+    EXPECT_TRUE(robot_navigation::stm32RangeNoReturn(sample));
+    EXPECT_FALSE(robot_navigation::stm32RangeSampleValid(sample));
+  }
+  for (uint8_t status : {4, 8, 1}) {
+    sample.status = status;
+    EXPECT_FALSE(robot_navigation::stm32RangeNoReturn(sample));
+  }
+  EXPECT_TRUE(robot_navigation::stm32RangeStatusHasFailure(4));
+  EXPECT_TRUE(robot_navigation::stm32RangeStatusHasFailure(8));
 }
 
 TEST(Vl53l1xCanProtocol, AllSixSensorsAreInfrared) {
