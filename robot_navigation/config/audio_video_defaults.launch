@@ -47,6 +47,9 @@
   <arg name="mic_device" default="default" />
   <arg name="speaker_device" default="default" />
   <arg name="video_display_fps" default="15.0" />
+  <!-- Standalone robot master wrapper enables the final status GUI explicitly. -->
+  <arg name="enable_status_gui" default="false" />
+  <arg name="status_gui_fullscreen" default="true" />
   <!-- Old CLI network options remain available, but must match the shell environment used by roslaunch. -->
   <include file="$(find robot_navigation)/launch/audio_video_peer.launch" pass_all_args="true" />
 </launch>

@@ -42,6 +42,13 @@ class AVSettingsStructure(unittest.TestCase):
         self.assertIn('<arg name="capture_wait_for_ready" value="true"/>', camera)
         self.assertIn('<arg name="capture_ready_topic" value="$(arg ready_topic)"/>', camera)
 
+    def test_status_gui_defaults_are_explicit_and_not_part_of_peer_nodes(self):
+        settings = ET.parse(SETTINGS).getroot()
+        self.assertEqual(settings.find("arg[@name='enable_status_gui']").get('default'), 'false')
+        master = ET.parse(PACKAGE / 'launch/audio_video_master.launch').getroot()
+        self.assertEqual(master.find("arg[@name='enable_status_gui']").get('default'), 'true')
+        self.assertIsNotNone(master.find("node[@name='robot_status_display_node']"))
+
     def test_call_stream_defaults_match_480p_25fps_pi_test(self):
         settings = ET.parse(SETTINGS).getroot()
         for name, expected in [('cam_width','640'),('cam_height','480'),
@@ -58,7 +65,10 @@ class AVSettingsStructure(unittest.TestCase):
                 self.assertEqual(root.find('include').get('pass_all_args'), 'true')
                 self.assertEqual(root.find("arg[@name='config_file']").get('default'),
                                  '$(find robot_navigation)/config/audio_video_defaults.launch')
-                self.assertFalse(root.findall('node'))
+                if role == 'slave':
+                    self.assertFalse(root.findall('node'))
+                else:
+                    self.assertIsNotNone(root.find("node[@name='robot_status_display_node']"))
 
     def test_role_ip_defaults_match_pi_master_and_vm_slave(self):
         settings = ET.parse(SETTINGS).getroot()

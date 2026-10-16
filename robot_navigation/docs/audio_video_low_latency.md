@@ -104,6 +104,23 @@ rostopic pub -1 /Ready std_msgs/Int32 'data: 1'
 rostopic pub -1 /Ready std_msgs/Int32 'data: 0'
 ```
 
+树莓派端的最终状态 UI 由 `audio_video_master.launch` 默认启动，显示医生端视频、任务状态、条码、体征和相机状态。无桌面或只做后台测试时使用 `enable_status_gui:=false`。不要同时启动它和 `mission_complete.launch` 的整车 UI；完整比赛流程应只启动 `mission_complete.launch`。
+
+视频回传分段检查：在任意已连接 ROS Master 的终端执行：
+
+```bash
+# VM 医生端本地采集和发送
+rostopic hz /upper_cam/upper_usb_cam/image_raw
+rostopic hz /upper_cam/network/compressed
+
+# Pi 机器人端接收和最终显示
+rostopic info /upper_cam/network/compressed
+rostopic hz /camera/upper_display
+rosnode info /video_stream_master
+```
+
+如果 VM 的两个 `rostopic hz` 都没有数据，检查 VM 的 `/dev/video0` 和 `rosparam get /upper_cam/upper_usb_cam/video_device`；如果 VM 发送话题正常但 Pi 的 `/camera/upper_display` 没数据，检查 `video_stream_master` 的订阅连接及两端是否已经同步更新并重启。
+
 这只简化音视频参数，不自动启动完整机器人任务，也不自动发布 `/Ready=1`。
 不要因此同时启动 `mission_complete.launch` 的音频和另一套音视频节点。
 没有桌面时，将配置中的 `enable_display` 默认值改成 `false`，如需网页接收再开启

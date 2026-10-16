@@ -38,6 +38,8 @@
   <arg name="mic_device" />
   <arg name="speaker_device" />
   <arg name="video_display_fps" />
+  <arg name="enable_status_gui" />
+  <arg name="status_gui_fullscreen" />
   <arg name="local_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
   <arg name="local_camera_node" value="$(eval 'lower_usb_cam' if arg('role') == 'master' else 'upper_usb_cam')" />
   <arg name="remote_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
