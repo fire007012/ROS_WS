@@ -9,5 +9,6 @@ __pycache__/
 devel.old
 devel
 y42_diagnosis_20261004
-# 479MB raw continuous capture; exceeds GitHub 100MB push limit.
-docs/can_ack_evidence_20261016/continuous_20261016_112446_228880.jsonl
+# Generated diagnostic captures and logs.
+docs/**/*.jsonl
+docs/**/*.log
