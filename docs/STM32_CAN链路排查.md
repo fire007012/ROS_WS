@@ -111,6 +111,28 @@ rostest can_motor_interface can_transport.test
 
 ## 联调当前固件
 
+架空底盘的一键限时旋转测试：
+
+```bash
+cd /home/fire/ros_ws/src
+./robot_bringup/scripts/chassis_rotation_test.sh
+```
+
+脚本自动加载 ROS 环境，检查已有控制节点；can0 未启用时配置 500 kbit/s，
+已正常启用时保留现有配置。只启动底盘 CAN 节点，默认四轮同号 8 RPM。
+四轮反馈就绪并准备目标后，终端提示按 STM32 实体按钮，实际启动后旋转 3 秒。
+超时、故障或 Ctrl+C 时发送零目标和急停，用停车后的新反馈确认四轮停转再退出。
+运行前关闭其他底盘控制程序；脚本不重置已启用但配置异常的接口。
+
+反向或调整测试时间：
+
+```bash
+./robot_bringup/scripts/chassis_rotation_test.sh --rpm -8 --duration 3
+```
+
+RPM 范围为 ±1..10，持续时间为 0.5..10 秒。默认等按钮最多 30 秒，
+不自动复位故障。日志保存在终端显示的 `/tmp/chassis_rotation_test_*` 目录。
+
 若接口未配置，电机停止后在运行主机配置 500 kbps：
 
 ```bash
