@@ -109,9 +109,12 @@ class CanInterfaceNode {
   std::atomic<uint64_t> can_crc_error_count_{0};
   std::atomic<uint64_t> can_format_error_count_{0};
   std::atomic<uint64_t> can_stuff_error_count_{0};
+  std::atomic<uint64_t> can_bit_error_count_{0};
   std::atomic<uint64_t> can_overflow_count_{0};
   std::atomic<uint32_t> last_can_error_class_{0};
   std::atomic<uint8_t> last_controller_status_{0};
+  std::atomic<uint8_t> last_protocol_error_{0};
+  std::atomic<uint8_t> last_protocol_location_{0};
   double last_stop_attempt_sec_ = 0;  // Protected by MotionInterlock's mutex.
   double last_probe_attempt_sec_ = 0;  // ROS callback thread only.
   double last_diagnostics_sec_ = 0;
@@ -150,6 +153,13 @@ class CanInterfaceNode {
   double heartbeat_timeout_sec_;
   double event_dedup_window_sec_;
   double command_publish_rate_hz_;
+  double command_refresh_sec_ = 0.2;
+  size_t command_wheel_slot_ = 0;
+  std::array<int32_t, 4> last_speed_rpm_{};
+  std::array<double, 4> last_speed_sent_sec_{};
+  std::array<int32_t, 4> last_cached_rpm_{};
+  bool cached_target_valid_ = false;
+  double last_cached_batch_sec_ = 0;
   double command_timeout_sec_;
   double start_ack_timeout_sec_;
   std::atomic<double> last_rx_time_sec_;

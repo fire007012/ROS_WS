@@ -128,10 +128,12 @@ class CanInterfaceNodeTestPeer {
   static bool statsReady(CanInterfaceNode& node) { return node.firmware_stats_.ready(); }
   static double lastRx(CanInterfaceNode& node) { return node.last_rx_time_sec_.load(); }
   static bool controllerFault(CanInterfaceNode& node) { return node.controller_fault_.load(); }
-  static std::array<uint64_t, 4> errorCounts(CanInterfaceNode& node) {
+  static std::array<uint64_t, 5> errorCounts(CanInterfaceNode& node) {
     return {{node.can_error_count_.load(), node.can_crc_error_count_.load(),
-             node.can_format_error_count_.load(), node.can_stuff_error_count_.load()}};
+             node.can_format_error_count_.load(), node.can_stuff_error_count_.load(),
+             node.can_bit_error_count_.load()}};
   }
+  static uint8_t protocolError(CanInterfaceNode& node) { return node.last_protocol_error_.load(); }
   static void receive(CanInterfaceNode& node, const std::vector<can_frame>& frames) {
     {
       std::lock_guard<std::mutex> lock(bus.mutex);
@@ -173,6 +175,26 @@ class CanInterfaceNodeTestPeer {
     node.commandTimerCallback(ros::WallTimerEvent{});
   }
   static void commandTick(CanInterfaceNode& node) { node.commandTimerCallback(ros::WallTimerEvent{}); }
+  static void running(CanInterfaceNode& node) {
+    node.start_state_.physicalStart(0, 123, ros::SteadyTime::now().toSec());
+    node.start_state_.acknowledge(123, 0x05, 0);
+    node.start_state_.motionStarted();
+  }
+  static void target(CanInterfaceNode& node, float rpm) {
+    std_msgs::Float32MultiArray::Ptr msg(new std_msgs::Float32MultiArray);
+    msg->data.assign(4, rpm); node.cmdCallback(msg);
+  }
+  static void expireCommand(CanInterfaceNode& node) {
+    node.last_command_time_ = ros::SteadyTime::now() - ros::WallDuration(1.0);
+  }
+  static void refreshDue(CanInterfaceNode& node) {
+    for (auto& stamp : node.last_speed_sent_sec_) stamp -= 0.3;
+  }
+  static void missingMotionAck(CanInterfaceNode& node) {
+    node.motion_ack_health_ = MotionAckHealth{};
+    node.motion_ack_health_.sent(0, ros::SteadyTime::now().toSec() - 0.6);
+  }
+  static void cacheDue(CanInterfaceNode& node) { node.last_cached_batch_sec_ = 0; }
   static void reset(CanInterfaceNode& node) {
     std_msgs::Bool::Ptr msg(new std_msgs::Bool); msg->data = true; node.emergencyResetCallback(msg);
   }
@@ -294,14 +316,16 @@ TEST_F(CanTransport, PassiveAndProtocolErrorsAreDiagnosedWithoutRefreshingHealth
   error.data[3] = CAN_ERR_PROT_LOC_CRC_SEQ;
   can_frame format = error; format.data[3] = 0; format.data[2] = CAN_ERR_PROT_FORM;
   can_frame stuff = format; stuff.data[2] = CAN_ERR_PROT_STUFF;
-  Peer::receive(*node, {error, format, stuff});
-  EXPECT_EQ((std::array<uint64_t, 4>{{3, 1, 1, 1}}), Peer::errorCounts(*node));
+  can_frame bit = format; bit.data[1] = 0; bit.data[2] = CAN_ERR_PROT_BIT1;
+  Peer::receive(*node, {error, format, stuff, bit});
+  EXPECT_EQ((std::array<uint64_t, 5>{{4, 1, 1, 1, 1}}), Peer::errorCounts(*node));
   EXPECT_DOUBLE_EQ(last_rx, Peer::lastRx(*node)); EXPECT_DOUBLE_EQ(0, Peer::heartbeat(*node));
   EXPECT_TRUE(Peer::controllerFault(*node)); EXPECT_TRUE(Peer::latched(*node));
   Peer::freshHealth(*node); Peer::reset(*node); EXPECT_TRUE(Peer::latched(*node));
   can_frame recovery{}; recovery.can_id = CAN_ERR_FLAG | CAN_ERR_RESTARTED; recovery.can_dlc = CAN_ERR_DLC;
   Peer::receive(*node, {recovery});
   EXPECT_FALSE(Peer::controllerFault(*node)); EXPECT_TRUE(Peer::latched(*node));
+  EXPECT_EQ(CAN_ERR_PROT_BIT1, Peer::protocolError(*node));
 }
 
 TEST_F(CanTransport, BusOffNeedsRecoveryAndDoesNotTriggerSocketChurn) {
@@ -320,6 +344,62 @@ TEST_F(CanTransport, LatchedQueriesAreReducedAndRecoveryRequiresResetAndNewComma
   EXPECT_TRUE(bus.writes.empty()); EXPECT_TRUE(Peer::latched(*node));
   Peer::reset(*node); EXPECT_FALSE(Peer::latched(*node)); EXPECT_FALSE(Peer::haveCommand(*node));
   Peer::commandTick(*node); EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, RunningTargetsAreStaggeredAndRepeatedWireValuesAreCoalesced) {
+  Peer::freshHealth(*node); Peer::running(*node); Peer::target(*node, 10.1f); clearWrites();
+  const uint8_t indices[] = {1, 0, 3, 2};
+  for (size_t i = 0; i < 4; ++i) {
+    Peer::commandTick(*node);
+    ASSERT_EQ(i + 1, bus.writes.size());
+    EXPECT_EQ(indices[i], bus.writes.back().frame.data[1]);
+    EXPECT_EQ(0, bus.writes.back().frame.data[7]);
+    EXPECT_EQ(10, bus.writes.back().frame.data[2]);
+  }
+  Peer::target(*node, 10.4f);  // Same integer RPM, new ROS message.
+  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  EXPECT_EQ(4u, bus.writes.size());
+  Peer::refreshDue(*node);
+  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  EXPECT_EQ(8u, bus.writes.size());
+}
+
+TEST_F(CanTransport, SlotsUseNewestCommandAndExpiredCommandBecomesZero) {
+  Peer::freshHealth(*node); Peer::running(*node); Peer::target(*node, 10); clearWrites();
+  Peer::commandTick(*node);
+  Peer::target(*node, 12); Peer::target(*node, 15);
+  Peer::commandTick(*node);
+  ASSERT_EQ(2u, bus.writes.size());
+  EXPECT_EQ(15, bus.writes.back().frame.data[2]);
+  Peer::expireCommand(*node);
+  for (int i = 0; i < 4; ++i) Peer::commandTick(*node);
+  ASSERT_EQ(6u, bus.writes.size());
+  for (size_t i = 2; i < 6; ++i) {
+    EXPECT_EQ(0, bus.writes[i].frame.data[2]);
+    EXPECT_EQ(0, bus.writes[i].frame.data[3]);
+  }
+  Peer::stop(*node); clearWrites(); Peer::commandTick(*node);
+  EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST_F(CanTransport, CoalescingPreservesMissingMotionAckStop) {
+  Peer::freshHealth(*node); Peer::running(*node); Peer::target(*node, 10);
+  Peer::commandTick(*node); Peer::missingMotionAck(*node);
+  Peer::tick(*node);
+  EXPECT_TRUE(Peer::latched(*node));
+}
+
+TEST_F(CanTransport, PrestartCacheDoesNotRepeatOnNewIdenticalMessagesOrFasterTicks) {
+  Peer::freshHealth(*node); Peer::target(*node, 10); clearWrites();
+  Peer::commandTick(*node); ASSERT_EQ(4u, bus.writes.size());
+  for (const auto& attempt : bus.writes) EXPECT_EQ(1, attempt.frame.data[7]);
+  Peer::target(*node, 10.4f); Peer::commandTick(*node);
+  EXPECT_EQ(4u, bus.writes.size());
+  Peer::target(*node, 15); Peer::commandTick(*node);
+  EXPECT_EQ(4u, bus.writes.size());
+  Peer::cacheDue(*node); Peer::commandTick(*node);
+  ASSERT_EQ(8u, bus.writes.size());
+  EXPECT_EQ(15, bus.writes.back().frame.data[2]);
 }
 }  // namespace
 

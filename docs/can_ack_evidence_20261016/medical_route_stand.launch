@@ -1,0 +1,27 @@
+<launch>
+  <!-- User explicitly confirmed wheels are lifted. No ground sensing/actuators. -->
+  <include file="$(find motion_planner)/launch/planner.launch"/>
+  <param name="/robot/max_rpm" value="20.0"/>
+  <param name="/robot/max_linear_vel" value="0.10"/>
+  <param name="/robot/max_angular_vel" value="0.35"/>
+  <param name="/robot/max_linear_accel" value="0.10"/>
+  <param name="/robot/max_angular_accel" value="0.20"/>
+  <param name="/planner_node/max_rpm" value="20.0"/>
+  <node pkg="can_motor_interface" type="can_interface_node" name="can_interface_node"
+        launch-prefix="/tmp/chassis_medical_route_test/run_test_can" output="screen" required="true">
+    <param name="test_immediate_motion" value="true"/>
+    <param name="can_device" value="can0"/>
+    <param name="max_rpm" value="20.0"/>
+    <param name="report_mask" value="5"/>
+    <!-- One wheel per slot in this isolated test build: 20 Hz per wheel. -->
+    <param name="command_publish_rate_hz" value="20.0"/>
+    <param name="command_timeout_sec" value="0.5"/>
+    <rosparam param="motor_indices">[1,0,3,2]</rosparam>
+    <rosparam param="direction_signs">[1,1,1,1]</rosparam>
+  </node>
+  <include file="$(find path_manager)/launch/path_manager.launch"/>
+  <rosparam file="$(find robot_bringup)/config/path_tracker_forward_only.yaml" ns="path_tracker_node"/>
+  <node pkg="path_manager" type="path_tracker_node" name="path_tracker_node" output="screen" required="true">
+    <param name="range_avoidance/enabled" value="false"/>
+  </node>
+</launch>

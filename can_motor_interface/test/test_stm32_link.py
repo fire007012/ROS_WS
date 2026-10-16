@@ -1,9 +1,11 @@
 """Real roslaunch expansion and read-only link diagnosis, without hardware."""
 import importlib.util
+import json
 from pathlib import Path
 import socket
+import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import roslaunch
 
@@ -41,6 +43,63 @@ class LinkDiagnosis(unittest.TestCase):
             link = self.link()
             link['linkinfo']['info_data']['ctrlmode'] = modes
             self.assertEqual(len(check.link_problems(link, 500000)), 2)
+
+    def test_degraded_controller_cannot_pass_on_intermittent_data(self):
+        for state in ('ERROR-WARNING', 'ERROR-PASSIVE', 'BUS-OFF', 'STOPPED', 'SLEEPING', None):
+            link = self.link()
+            link['linkinfo']['info_data']['state'] = state
+            with self.subTest(state=state):
+                self.assertTrue(check.link_problems(link, 500000))
+
+    def run_listen(self, frames, final_state='ERROR-ACTIVE'):
+        sock = MagicMock()
+        sock.__enter__.return_value = sock
+        sock.recvmsg.side_effect = [(check.FRAME.pack(cid, 8, data), [], 0, None)
+                                    for cid, data in frames]
+        final = self.link()
+        final['linkinfo']['info_data']['state'] = final_state
+        snapshots = [subprocess.CompletedProcess([], 0, json.dumps([link]), '')
+                     for link in (self.link(), final)]
+        readiness = [([sock], [], []) for _ in frames] + [([], [], [])]
+        with patch.object(check.subprocess, 'run', side_effect=snapshots), \
+                patch.object(check.socket, 'socket', return_value=sock), \
+                patch.object(check.select, 'select', side_effect=readiness), \
+                patch('sys.argv', ['check_stm32_can.py', '--listen-seconds', '1']), \
+                patch('builtins.print'):
+            result = check.main()
+        sock.setsockopt.assert_called_once_with(
+            socket.SOL_CAN_RAW, socket.CAN_RAW_ERR_FILTER, check.struct.pack('=I', 0x1FFFFFFF))
+        return result
+
+    def test_hardware_ack_error_fails_even_with_valid_stm32_reply(self):
+        self.assertEqual(self.run_listen([
+            (0x101, bytes(8)), (check.ERR | 0x20, bytes(8))]), 4)
+        self.assertIn('hardware ACK missing', check.describe_can_error(check.ERR | 0x20, bytes(8)))
+
+    def test_protocol_error_fails_even_with_valid_stm32_reply(self):
+        self.assertEqual(self.run_listen([
+            (check.ERR | 0x0C, bytes.fromhex('00 30 04 00 00 00 00 00')),
+            (0x101, bytes(8))]), 4)
+
+    def test_error_active_notifications_alone_do_not_fail_real_reception(self):
+        for controller_flags in (0, 0x40):
+            data = bytes([0, controller_flags]) + bytes(6)
+            with self.subTest(controller_flags=controller_flags):
+                self.assertEqual(self.run_listen([
+                    (check.ERR | 0x04, data), (0x101, bytes(8))]), 0)
+
+    def test_combined_ack_and_protocol_reports_are_not_hidden_by_active_flags(self):
+        for error_class in (0x24, 0x0C):
+            with self.subTest(error_class=error_class):
+                self.assertEqual(self.run_listen([
+                    (check.ERR | error_class, bytes(8)), (0x101, bytes(8))]), 4)
+
+    def test_state_degradation_at_end_of_capture_fails(self):
+        self.assertEqual(self.run_listen([(0x101, bytes(8))], 'ERROR-PASSIVE'), 4)
+
+    def test_clean_replies_pass_and_missing_replies_fail(self):
+        self.assertEqual(self.run_listen([(0x101, bytes(8))]), 0)
+        self.assertEqual(self.run_listen([(0x111, bytes(8))]), 3)
 
 
 class LaunchProtocol(unittest.TestCase):

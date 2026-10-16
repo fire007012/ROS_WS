@@ -1,0 +1,221 @@
+{
+  "started": "2026-10-16T13:22:04.779008+08:00",
+  "wheels_lifted": true,
+  "route_sequence": [
+    "nurse_station",
+    "bed1_circle",
+    "bed1_to_bed3",
+    "bed3_to_home"
+  ],
+  "results": [],
+  "fault": "CAN/software emergency stop latched",
+  "final_odom": [
+    0.6671152969263874,
+    -0.0019182297632378857,
+    0.04003347819790045
+  ],
+  "final_stop_rpm": [
+    0.0,
+    0.0,
+    0.10000000149011612,
+    0.0
+  ],
+  "elapsed": 13.62604181200004,
+  "motion_ack_counts": {
+    "2": 196,
+    "1": 196,
+    "4": 196,
+    "3": 196
+  },
+  "last_can_diagnostics": {
+    "socket_open_attempts": "1",
+    "last_io_errno": "0",
+    "tx_backpressure_count": "0",
+    "can_error_frames": "0",
+    "crc_errors": "0",
+    "format_errors": "0",
+    "bit_stuffing_errors": "0",
+    "controller_overflows": "0",
+    "last_error_class": "0",
+    "last_controller_flags": "0",
+    "stop_pending_local_submission": "false",
+    "next_reconnect_in_sec": "0.000000",
+    "reconnect_delay_sec": "0.500000"
+  },
+  "before": {
+    "ifindex": 15,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-ACTIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.833,
+          "tq": 166,
+          "prop_seg": 4,
+          "phase_seg1": 5,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 0,
+        "error_passive": 0,
+        "bus_off": 0
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 5074613,
+        "packets": 652177,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 18896,
+        "packets": 3806,
+        "errors": 0,
+        "dropped": 0,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "after": {
+    "ifindex": 15,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-ACTIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.833,
+          "tq": 166,
+          "prop_seg": 4,
+          "phase_seg1": 5,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 0,
+        "error_passive": 0,
+        "bus_off": 0
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 5144125,
+        "packets": 661729,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 26618,
+        "packets": 4931,
+        "errors": 0,
+        "dropped": 0,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "raw_samples": "medical_route_stand_20261016_132204.jsonl",
+  "passed": false
+}

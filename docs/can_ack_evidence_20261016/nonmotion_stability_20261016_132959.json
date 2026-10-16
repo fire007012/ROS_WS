@@ -1,0 +1,223 @@
+{
+  "started": "2026-10-16T13:29:59.119049+08:00",
+  "elapsed": 60.00127490199884,
+  "requested_seconds": 60.0,
+  "fault": "",
+  "counts": {
+    "heartbeat_submitted": 591,
+    "query_submitted": 1180,
+    "external": 35437,
+    "heartbeat_ack_ok": 591,
+    "speed_1": 523,
+    "status_3": 335,
+    "speed_2": 523,
+    "status_1": 335,
+    "speed_3": 522,
+    "status_4": 335,
+    "speed_4": 522,
+    "status_2": 335
+  },
+  "before": {
+    "ifindex": 15,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-ACTIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.833,
+          "tq": 166,
+          "prop_seg": 4,
+          "phase_seg1": 5,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 0,
+        "error_passive": 0,
+        "bus_off": 0
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 7107875,
+        "packets": 917808,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 51748,
+        "packets": 8577,
+        "errors": 0,
+        "dropped": 0,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "after": {
+    "ifindex": 15,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-ACTIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.833,
+          "tq": 166,
+          "prop_seg": 4,
+          "phase_seg1": 5,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 0,
+        "error_passive": 0,
+        "bus_off": 0
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 7377667,
+        "packets": 953247,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 58836,
+        "packets": 10348,
+        "errors": 0,
+        "dropped": 0,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "first_stats": {
+    "1": "0184210600010000",
+    "2": "02d814040014f400",
+    "3": "03c4060000000000"
+  },
+  "last_stats": {
+    "1": "016b280600010000",
+    "2": "0226170400174200",
+    "3": "03c4060000000000"
+  },
+  "readings": {
+    "1": {
+      "rpm": 0.0,
+      "flags": 129
+    },
+    "3": {
+      "flags": 129,
+      "rpm": 0.0
+    },
+    "2": {
+      "rpm": 0.0,
+      "flags": 129
+    },
+    "4": {
+      "flags": 129,
+      "rpm": 0.0
+    }
+  },
+  "motion_commands_sent": 0
+}
