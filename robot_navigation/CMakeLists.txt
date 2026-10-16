@@ -244,6 +244,7 @@ target_link_libraries(start_button_node
 )
 
 catkin_install_python(PROGRAMS
+  scripts/diagnose_mission.py
   scripts/audio_video_ready_node.py
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
@@ -387,4 +388,10 @@ endif()
 if(CATKIN_ENABLE_TESTING)
   add_test(NAME status_field_and_task
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_status_scene.py)
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_executable(test_video_geometry test/test_video_geometry.cpp)
+  target_include_directories(test_video_geometry PRIVATE include)
+  add_test(NAME landscape_video_geometry COMMAND test_video_geometry)
 endif()

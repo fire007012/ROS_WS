@@ -8,9 +8,10 @@ import tkinter as tk
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_scene import PoseTrack, task_text, draw_field
+from status_scene import PoseTrack, task_text, draw_field, RangeReadings, RANGE_CHANNELS, fit_landscape
 from nav_msgs.msg import Odometry
 from path_manager.msg import PathPoint
+from sensor_msgs.msg import Range
 
 try:
     import cv2
@@ -32,9 +33,32 @@ def measurement_text(value, label, unit):
 
 class StatusWindow:
     def __init__(self):
+        if cv2 is not None:
+            cv2.setNumThreads(1)
+        self.ranges = RangeReadings(float(rospy.get_param('~range_timeout_s', .5)))
+        self.rotate_portrait = bool(rospy.get_param('~rotate_portrait_video', False))
+        self.remote_video_received = 0.0
+        self.remote_video_real = 0.0
+        self.remote_video_no_signal = False
+        self.last_range_render = 0.0
+        self.navigation_hint = ''
+        self.media_error = ''
+        self.control_reason = ''
+        self.brake_reason = ''
+        self.last_info_text = None
         self.audio_role = rospy.get_param('~audio_role', 'master')
         if self.audio_role not in ('master', 'slave'):
             raise ValueError('audio_role must be master or slave')
+        # roslaunch uploads all node params before starting processes. Read the
+        # actual receiver dimensions rather than duplicating the media defaults.
+        stream = '/video_stream_' + self.audio_role + '/'
+        width = float(rospy.get_param(stream + 'stream_width', 640))
+        height = float(rospy.get_param(stream + 'stream_height', 480))
+        if not all(math.isfinite(v) and v > 0 for v in (width, height)):
+            raise ValueError('video output dimensions must be positive and finite')
+        self.aspect = float(rospy.get_param('~video_aspect', width/height))
+        if not math.isfinite(self.aspect) or self.aspect <= 1:
+            raise ValueError('video_aspect must be a finite landscape ratio')
         self.lock = threading.Lock()
         self.pending = {}  # coalesce bursts; memory does not grow with message rate
         self.mission_phase = ''
@@ -121,13 +145,26 @@ class StatusWindow:
                           ('measure', '测量状态：等待按键'), ('esp', 'ESP32：离线')]:
             self.make(key, text, 16, '#f5f5f5')
         # Independent scan preview: never replace the doctor's video.
-        self.scan_panel = tk.Frame(self.left_panel, height=140, bg='#18232b')
+        self.scan_panel = tk.Frame(self.left_panel, height=112, bg='#18232b')
         self.scan_panel.pack_propagate(False)
         tk.Label(self.scan_panel, text='二维码／条形码取景', fg='#4dd0e1',
                  bg='#18232b', font=('DejaVu Sans', 11)).pack(fill='x')
         self.scan_label = tk.Label(self.scan_panel, bg='#05080b', fg='#d8e0e5',
                                    text='等待扫码摄像头画面')
         self.scan_label.pack(fill='both', expand=True)
+        # Pack the distance panel first at the bottom, scan preview immediately above it.
+        self.range_panel = tk.Frame(self.left_panel, bg='#18232b', padx=5, pady=3)
+        self.range_panel.pack(side='bottom', fill='x', pady=(4, 0))
+        tk.Label(self.range_panel, text='VL53 距离（原始测距）', fg='#4dd0e1',
+                 bg='#18232b', font=('DejaVu Sans', 10)).grid(row=0, column=0, columnspan=2, sticky='w')
+        self.range_labels = {}
+        for i, (name, title, _) in enumerate(RANGE_CHANNELS):
+            label = tk.Label(self.range_panel, text=title+'：-- 未收到', anchor='w',
+                             fg='#d8e0e5', bg='#18232b', font=('DejaVu Sans', 10))
+            label.grid(row=1+i//2, column=i%2, sticky='ew', padx=3)
+            self.range_labels[name] = (label, title)
+        self.range_panel.grid_columnconfigure(0, weight=1)
+        self.range_panel.grid_columnconfigure(1, weight=1)
         self.video_title = tk.Label(self.right_panel, text='音视频通话', font=('DejaVu Sans', 17, 'bold'),
                  fg='#4dd0e1', bg='#05080b', anchor='w', padx=10, pady=6)
         self.video_title.grid(row=0, column=0, sticky='ew')
@@ -154,6 +191,15 @@ class StatusWindow:
             rospy.Subscriber('/path_points', PathPoint, self.path_target, queue_size=1)
         rospy.Subscriber('/bedside/status', String, self.bedside_status)
         rospy.Subscriber('/fine_tuning/status', String, self.fine_status)
+        rospy.Subscriber('/path_tracker/avoidance_state', String, self.avoidance_status)
+        rospy.Subscriber('/robot_state', String, self.drive_state)
+        rospy.Subscriber('/cmd_vel_mux/selected_source', String, self.control_status)
+        rospy.Subscriber('/distance_safety/state', String, self.brake_status)
+        rospy.Subscriber('/video_stream_' + self.audio_role + '/status', String,
+                         self.video_pipeline_status, queue_size=1)
+        for name, _, topic in RANGE_CHANNELS:
+            topic = rospy.get_param('~range_topics/' + name, topic)
+            rospy.Subscriber(topic, Range, lambda msg, key=name: self.range_sample(key, msg), queue_size=1)
         rospy.Subscriber('/audio_chat/' + self.audio_role + '/active', Bool, self.audio_active)
         rospy.Subscriber('/audio_chat/' + self.audio_role + '/peer_ready', Bool, self.audio_peer)
         rospy.Subscriber('/qr_result', QrResult, self.qr)
@@ -178,6 +224,8 @@ class StatusWindow:
         text = task_text(self.mission_phase, self.assignment, self.mission_finished)
         if self.mission_phase in ('BEDSIDE_A', 'BEDSIDE_B') and self.bedside_note:
             text += '／' + self.bedside_note
+        if self.mission_phase in ('GOTO_NURSE', 'GOTO_BED_A', 'GOTO_BED_B', 'RETURN_HOME') and self.navigation_hint:
+            text += '／' + self.navigation_hint
         self.pending['task'] = '当前任务：' + text
 
     def mission_state(self, msg):
@@ -211,6 +259,54 @@ class StatusWindow:
                 self.pending['task'] = '当前任务：' + msg.data.replace('\n', ' | ')
             elif self.mission_phase in ('POSITION_IN_CIRCLE_A', 'POSITION_IN_CIRCLE_B') and msg.data.startswith('等待'):
                 self.pending['task'] = '当前任务：' + task_text(self.mission_phase, self.assignment) + '／' + msg.data
+
+    def range_sample(self, name, msg):
+        age = 0.0 if msg.header.stamp.is_zero() else (rospy.Time.now()-msg.header.stamp).to_sec()
+        with self.lock:
+            self.ranges.update(name, msg.range, msg.min_range, msg.max_range, time.monotonic(), age)
+
+    def avoidance_status(self, msg):
+        states = {'TRACKING': '', 'BRAKING': '发现路径障碍，正在停车确认',
+                  'SIDESTEP': '正在横移绕障', 'BYPASS': '正在通过障碍',
+                  'EDGE_CLEAR': '正在确认障碍边缘', 'RETURN': '绕障后返回原路径',
+                  'NO_SIDE_SPACE': '两侧空间不足，等待安全通路',
+                  'WAIT_ODOMETRY': '等待新鲜定位数据', 'REROUTING': '通道受阻，正在切换备用路径',
+                  'WAIT_PATH': '等待路径目标', 'CANCELLED': '路径已取消'}
+        with self.lock:
+            self.navigation_hint = states.get(msg.data, '绕障停止：'+msg.data if msg.data.startswith('FAILED_') else msg.data)
+            self.update_task_locked()
+
+    def control_status(self, msg):
+        with self.lock:
+            self.control_reason = {
+                'timeout_stop': '运动指令过期停车', 'chassis_lock': '底盘锁定',
+                'emergency_stop': '锁存急停', 'mission_cancel': '任务已取消',
+                'fixed_route': '路径控制', 'external': '测距修正控制',
+                'safety': '距离安全限制',
+            }.get(msg.data, msg.data)
+
+    def brake_status(self, msg):
+        with self.lock:
+            self.brake_reason = msg.data
+
+    def drive_state(self, msg):
+        if msg.data in ('ESTOP_LATCHED', 'START_FAILED', 'HEARTBEAT_LOST'):
+            with self.lock:
+                self.pending['task'] = '当前任务：底盘停止（%s），需排查后显式复位' % msg.data
+
+    def video_pipeline_status(self, msg):
+        try:
+            obj = json.loads(msg.data)
+            age, signal_age = float(obj['input_age_s']), float(obj['signal_age_s'])
+            if not math.isfinite(age) or not math.isfinite(signal_age):
+                return
+            with self.video_lock:
+                now=time.monotonic()
+                self.remote_video_received = now-age if age >= 0 else 0.0
+                self.remote_video_real = now-signal_age if signal_age >= 0 else 0.0
+                self.remote_video_no_signal = obj.get('no_signal', False)
+        except (ValueError, TypeError, KeyError):
+            return
 
     def fine_status(self, msg):
         with self.lock:
@@ -342,13 +438,25 @@ class StatusWindow:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             panel_w = max(1, target.winfo_width())
             panel_h = max(1, target.winfo_height())
-            scale = min(1.25, panel_w / frame.shape[1], panel_h / frame.shape[0])
-            width = max(1, int(frame.shape[1] * scale))
-            height = max(1, int(frame.shape[0] * scale))
+            if label is None:
+                rotate, width, height, box_w, box_h = fit_landscape(
+                    frame.shape[1], frame.shape[0], panel_w, panel_h, self.aspect, self.rotate_portrait)
+                if rotate:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            else:
+                scale = min(1.25, panel_w/frame.shape[1], panel_h/frame.shape[0])
+                width, height = max(1, int(frame.shape[1]*scale)), max(1, int(frame.shape[0]*scale))
+                box_w, box_h = width, height
             if (width, height) != (frame.shape[1], frame.shape[0]):
                 frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+            if label is None and (width != box_w or height != box_h):
+                dx, dy = box_w-width, box_h-height
+                frame = cv2.copyMakeBorder(frame, dy//2, dy-dy//2, dx//2, dx-dx//2,
+                                           cv2.BORDER_CONSTANT, value=(0,0,0))
+                width, height = box_w, box_h
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             ppm = ('P6\n%d %d\n255\n' % (width, height)).encode('ascii') + rgb.tobytes()
+            self.media_error = ''
             photo = tk.PhotoImage(data=ppm, format='PPM')
             if label is None:
                 self.video_photo = photo
@@ -356,6 +464,7 @@ class StatusWindow:
                 self.scan_photo = photo
             target.configure(image=photo, text='')
         except (cv2.error, tk.TclError, ValueError) as exc:
+            self.media_error = str(exc)
             rospy.logwarn_throttle(5.0, '[status_display] video render failed: %s', exc)
 
     def set(self, key, value):
@@ -474,7 +583,13 @@ class StatusWindow:
             self.labels['hr'].config(text='心率：-- bpm')
             self.labels['temp'].config(text='体温：-- °C')
         now = time.monotonic()
-        if getattr(self, 'show_map', False) and now-self.last_map_render >= .1:
+        if hasattr(self, 'range_labels') and now-self.last_range_render >= .2:
+            with self.lock:
+                values = {key: self.ranges.text(key, now) for key in self.range_labels}
+            for key, (label, title) in self.range_labels.items():
+                label.configure(text=title+'：'+values[key])
+            self.last_range_render = now
+        if getattr(self, 'show_map', False) and now-self.last_map_render >= .25:
             self.render_map(now)
             self.last_map_render = now
         if scan_active:
@@ -490,12 +605,25 @@ class StatusWindow:
         if video_age > 1.5 or not video_has_signal:
             self.video_label.configure(text='等待医生端视频画面', image='')
             self.video_photo = None
-        self.video_info.configure(text='%s\n%s\n扫码状态：%s | 通话摄像头：%s | 画面：%s\n音频：%s' % (
+        with self.video_lock:
+            rx_age = now-getattr(self, 'remote_video_received', 0)
+            real_age = now-getattr(self, 'remote_video_real', 0)
+        video_reason = ('接收中' if video_age <= 1.5 and video_has_signal else
+                        '未收到医生压缩视频，检查VM相机/视频话题和ROS_IP' if rx_age > 3 else
+                        '医生端在发无信号帧，检查VM相机设备' if real_age > 3 else
+                        '有医生压缩视频，显示节点未输出／检查两端版本与解码')
+        if getattr(self, 'media_error', ''):
+            video_reason = '显示错误：' + self.media_error
+        info_text = '%s\n%s\n扫码状态：%s | 通话摄像头：%s | 画面：%s\n音频：%s\n底盘：%s | 安全：%s' % (
             self.scan_summary, self.call_summary, self.scan_camera_state,
             self.call_camera_state,
-            '接收中' if video_age <= 1.5 and video_has_signal else '等待画面',
+            video_reason,
             '本机运行／已接收医生音频' if audio_peer and audio_running else
-            '运行中，但未收到医生端有效UDP' if audio_running else '尚未启动／启动失败'))
+            '运行中，但未收到医生端有效UDP' if audio_running else '尚未启动／启动失败',
+            getattr(self, 'control_reason', ''), getattr(self, 'brake_reason', ''))
+        if info_text != getattr(self, 'last_info_text', None):
+            self.video_info.configure(text=info_text)
+            self.last_info_text = info_text
         self.root.after(33, self.pump)
 
     def close(self):

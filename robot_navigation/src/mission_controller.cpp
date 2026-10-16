@@ -357,6 +357,15 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
 
   if (mission_started_.load()) return;
 
+  if(odom_received_) {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    const auto& p=current_odom_.pose.pose.position;
+    const auto& q=current_odom_.pose.pose.orientation;
+    const double yaw=std::atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z));
+    ROS_INFO("[mission_controller] accepted start pose=(%.3f,%.3f,%.3f); configured P0=(0,0,0)",p.x,p.y,yaw);
+    if(std::hypot(p.x,p.y)>.10 || std::abs(yaw)>.20)
+      ROS_WARN("[mission_controller] odometry not at P0: moving vehicle by hand or restarting mission does not reset odometry; verify physical start pose");
+  }
   resetMissionState();
   ++mission_generation_;
   std_msgs::Bool enabled;

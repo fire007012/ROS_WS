@@ -14,6 +14,6 @@
     <param name="video_topic" value="/camera/upper_display"/>
     <param name="scan_mode_topic" value="/barcode_scan/camera_mode"/>
     <param name="call_camera_status_topic" value="/lower_cam/lower_usb_cam/capture_status"/>
-    <param name="video_display_fps" value="15.0"/>
+    <param name="video_display_fps" value="10.0"/>
   </node>
 </launch>

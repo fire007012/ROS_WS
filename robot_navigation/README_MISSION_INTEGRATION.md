@@ -19,15 +19,24 @@
 | Pi 通话摄像头 | /dev/video0 | /lower_cam/lower_usb_cam/image_raw → /lower_cam/network/compressed |
 | VM 医生摄像头 | /dev/video0（VM本机） | /upper_cam/upper_usb_cam/image_raw → /upper_cam/network/compressed |
 
-共享路由在config/camera_devices.launch。默认对调依据用户反馈：原/视频0实际是通话摄像头。Linux设备编号可能随插拔变化，必要时用启动参数指定实际设备，建议使用可用的稳定by-id路径；video1/3可能只是同一设备的另一接口，不能直接认定是另一只摄像头。
+摄像头默认值统一在 `config/camera_devices.launch` 编辑：
+
+```xml
+<!-- scan_camera_device 对应此项，二维码与条形码共用 -->
+<arg name="scan_device" default="/dev/video2"/>
+<!-- Pi 的 call_camera_device 对应此项 -->
+<arg name="robot_audio_device" default="/dev/video0"/>
+<!-- VM 医生相机 -->
+<arg name="doctor_audio_device" default="/dev/video0"/>
+```
+
+Linux设备编号可能随插拔变化，设备变化时改这个配置文件即可，不需要改启动命令。可填写可用的稳定by-id路径；video1/3可能只是同一设备的另一接口，不能直接认定是另一只摄像头。
 
 ```bash
 # Pi：先在工作空间编译并加载环境
 catkin_make
 source devel/setup.bash
-roslaunch robot_navigation mission_complete.launch \
-  scan_camera_device:=/dev/video2 \
-  call_camera_device:=/dev/video0
+roslaunch robot_navigation mission_complete.launch
 
 # VM：同步本次代码，编译并加载环境后运行
 roslaunch robot_navigation audio_video_slave.launch
@@ -94,7 +103,7 @@ ESP32当前VITALS_AUTO_START=true，启动后连续采集；USB桥接和GUI持�
 退出全流程后，可只测试扫码，不启动底盘/机械臂：
 
 ```bash
-roslaunch robot_navigation scan_and_display.launch video_device:=/dev/video2
+roslaunch robot_navigation scan_and_display.launch
 ```
 
 单独查看显示、避免重复占用已运行桥接：
@@ -128,3 +137,61 @@ rostopic echo -n 1 /robot_state
 catkin_make run_tests_robot_navigation
 catkin_test_results
 ```
+
+
+## 2026-10-17：横向视频、六路测距与寻路回归排查
+
+本次基线为当前1aa44a3；与1b9c8ea和95532a1比较，CAN/规划/路径/里程计/微调/避障算法和路径坐标没有改变。使用实际roslaunch解析旧版与当前mission_complete.launch，底盘相关101个生效参数完全相同。不能据此把实机“起步横移后停住”断言为某项路径参数被改，也没有证据宣称已修复该实机故障。
+
+新增的视频、GUI、体征工作会增加整机运行负载，本次限制OpenCV线程为1，采集保留640×480@25，但发送及接收处理降为10Hz、GUI显示10Hz、地图4Hz。该调整减少媒体处理争用，是缓解措施；尚无这次实机CPU/延迟日志证明资源争用就是根因。速度、避障距离、测距有效性和急停门槛均未放宽。
+
+### 横向画面
+
+画面输出默认横向640×480（4:3），保留原比例并用黑边填充，不拉伸人物。所有默认尺寸集中在 `config/audio_video_defaults.launch`：
+
+```xml
+<!-- 摄像头采集宽、高 -->
+<arg name="cam_width" default="640" />
+<arg name="cam_height" default="480" />
+<!-- 发送、接收输出宽、高：640×480是4:3；改成640×360就是16:9 -->
+<arg name="stream_width" default="640" />
+<arg name="stream_height" default="480" />
+<arg name="stream_framerate" default="10.0" />
+```
+
+Pi和VM同步这个配置文件后，分别用不带附加参数的原命令启动即可。全流程入口不再写死输出宽高来覆盖本文件；GUI会自动读取接收节点配置的宽高，避免画面已改16:9而GUI仍固定4:3。`status_display.yaml`不再重复维护比例。
+
+若摄像头确实是竖向源，默认保持人物直立、两侧留黑。GUI的 `rotate_portrait_video` 仍可在 `config/status_display.yaml` 中设置；不要为凑横屏盲目旋转已直立的人物。
+
+### 只有声音没有画面
+
+音频UDP通不能证明ROS/TCP视频通。Pi GUI增加接收链路判断：没收到医生压缩视频、医生端无信号帧、有压缩视频但显示节点无输出、Tk渲染错误。GUI不额外订阅远程视频来诊断，复用视频接收节点每秒发布的轻量JSON状态，避免重复网络流量。
+
+发送节点 /video_sender_master/status 和 /video_sender_slave/status、接收节点 /video_stream_master/status 和 /video_stream_slave/status 提供input_topic、input_age_s、signal_age_s、received_frames、decode_errors、no_signal、ready。负age表示从未收到。重点先看VM的video_sender_slave/status有无真实采集，再看Pi的video_stream_master/status有无收到。
+
+黑帧现在携带no_signal标记；不再把“等待摄像头”黑帧当成真实画面或床旁通话成功。
+
+### 起步横移/床前卡住
+
+横移可能是RangeDetour根据前向距离触发SIDESTEP；只有日志才能确认。path_tracker在绕障状态变化时记录pose、target、四向车体边缘净空、有效位和数据年龄；GUI同时显示路径状态、选中运动源、距离安全状态。接受PC1时记录当前里程计起点，如不在P0则提示。手动搬动车辆不会重置里程计，重试也不是断点续跑。
+
+**没有**禁用避障，也没有把无效距离当成通路。默认仍使用已跑通路径停靠，enable_bedside_distance_tuning=false，不再强制向250mm目标移动。车体投影或前向测距校验未通过时仍拒绝开箱。
+
+左下固定显示6路VL53：前、左、右、后、臂左、臂右，单位mm，失效显示“无效”，超过0.5秒显示“已过期”，无消息显示“未收到”。显示的是原始传感器距离；日志中的body_clearance是减去安装内缩后的车体净空，两者不同。
+
+若当前仍不能行至护士台，先停止本轮并保留终端中失败前后的日志；不要用反复按PC1清除急停。可在运行launch期间另开终端收集只读快照（不发运动、不复位）：
+
+```bash
+rosrun robot_navigation diagnose_mission.py --output ~/mission_diagnostics.txt
+```
+
+脚本仅并行读取话题、节点信息与ROS网络地址，每项最多等4秒；不是同一时间戳的同步录制。需要把任务从PC1启动直到自动急停的一段终端日志和这个快照一起检查，才能确认到底是绕障STALLED、传感器失效、命令过期、CAN故障还是阶段超时。Pi和VM都更新并编译本次代码后再比较视频状态。
+
+本次89项Python/launch离线回归通过，横向视频尺寸C++断言编译运行通过；Tk布局检查含六路距离和扫码窗口。完整ROS C++视频节点尚需Ubuntu catkin编译。没有实机视频或导航跑通结论。
+
+
+## 配置文件默认值回归验证
+
+2026-10-17新增回归：在临时工程中只编辑camera_devices.launch的三路设备默认值，以及audio_video_defaults.launch的输出高度，使用不带设备/尺寸参数的完整任务和VM launch进行真实roslaunch离线解析，验证两个摄像头、VM摄像头、发送和接收尺寸全部跟随配置。另验证GUI在master/slave角色下都自动采用接收节点的16:9比例。
+
+这次针对配置默认值调整的launch回归30项、GUI/体征回归27项通过；没有连接硬件或执行实际摄像头采集。

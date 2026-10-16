@@ -33,11 +33,14 @@ nav = types.ModuleType('nav_msgs.msg')
 nav.Odometry = type('Odometry', (), {})
 path = types.ModuleType('path_manager.msg')
 path.PathPoint = type('PathPoint', (), {})
+sensor = types.ModuleType('sensor_msgs.msg')
+sensor.Range = type('Range', (), {})
 sys.modules.update({'rospy': rospy, 'std_msgs': types.ModuleType('std_msgs'),
                     'std_msgs.msg': std, 'robot_navigation': types.ModuleType('robot_navigation'),
                     'robot_navigation.msg': robot,
                     'nav_msgs': types.ModuleType('nav_msgs'), 'nav_msgs.msg': nav,
-                    'path_manager': types.ModuleType('path_manager'), 'path_manager.msg': path})
+                    'path_manager': types.ModuleType('path_manager'), 'path_manager.msg': path,
+                    'sensor_msgs': types.ModuleType('sensor_msgs'), 'sensor_msgs.msg': sensor})
 
 
 def load(name, filename):
@@ -224,6 +227,10 @@ def make_window():
     obj = display.StatusWindow.__new__(display.StatusWindow)
     obj.lock = threading.Lock()
     obj.pending = {}
+    obj.navigation_hint = ''
+    obj.ranges = display.RangeReadings()
+    obj.aspect = 4.0/3.0
+    obj.rotate_portrait = False
     obj.mission_phase = ''
     obj.assignment = {}
     obj.mission_finished = None
@@ -371,17 +378,57 @@ class DisplayTests(unittest.TestCase):
 
     def test_render_video_passes_binary_ppm_to_tk_without_base64(self):
         obj = make_window()
-        obj.video_label.winfo_width = lambda: 2
-        obj.video_label.winfo_height = lambda: 1
-        pixels = bytes([255, 0, 0, 0, 255, 0])
-        frame = types.SimpleNamespace(shape=(1, 2, 3), tobytes=lambda: pixels)
+        obj.video_label.winfo_width = lambda: 4
+        obj.video_label.winfo_height = lambda: 3
+        pixels = bytes([255, 0, 0]*12)
+        frame = types.SimpleNamespace(shape=(3, 4, 3), tobytes=lambda: pixels)
         obj.bridge = types.SimpleNamespace(imgmsg_to_cv2=lambda *a, **kw: frame)
         cv = types.SimpleNamespace(COLOR_BGR2RGB=1, cvtColor=lambda *a: frame,
                                   error=ValueError)
         with patch.object(display, 'cv2', cv), patch.object(display.tk, 'PhotoImage') as photo:
             obj.render_video(object())
-        self.assertEqual(photo.call_args.kwargs['data'], b'P6\n2 1\n255\n' + pixels)
+        self.assertEqual(photo.call_args.kwargs['data'], b'P6\n4 3\n255\n' + pixels)
         self.assertEqual(photo.call_args.kwargs['format'], 'PPM')
+
+    def test_distance_callback_queues_state_and_expires(self):
+        obj = make_window()
+        msg = types.SimpleNamespace(range=.251, min_range=.05, max_range=3.,
+            header=types.SimpleNamespace(stamp=types.SimpleNamespace(is_zero=lambda: True)))
+        obj.range_sample('front', msg)
+        self.assertEqual(obj.ranges.text('front', time.monotonic()), '251 mm')
+        self.assertIsNone(obj.labels['task'].text)
+        msg.range = float('nan')
+        obj.range_sample('rear', msg)
+        self.assertIn('无效', obj.ranges.text('rear', time.monotonic()))
+
+    def test_navigation_and_video_missing_stage_are_reported(self):
+        obj = make_window()
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        obj.avoidance_status(types.SimpleNamespace(data='SIDESTEP'))
+        self.assertIn('横移绕障', obj.pending['task'])
+        obj.avoidance_status(types.SimpleNamespace(data='FAILED_STALLED'))
+        self.assertIn('FAILED_STALLED', obj.pending['task'])
+        obj.video_pipeline_status(types.SimpleNamespace(data=json.dumps(
+            dict(input_age_s=.1, signal_age_s=-1, no_signal=True))))
+        self.assertGreater(obj.remote_video_received, 0)
+        self.assertEqual(obj.remote_video_real, 0)
+        self.assertTrue(obj.remote_video_no_signal)
+
+    def test_gui_aspect_follows_configured_receiver_without_cli_parameters(self):
+        class InitializationComplete(Exception):
+            pass
+        for role in ('master', 'slave'):
+            params = {'~audio_role': role,
+                      '/video_stream_' + role + '/stream_width': 640,
+                      '/video_stream_' + role + '/stream_height': 360}
+            obj = display.StatusWindow.__new__(display.StatusWindow)
+            with patch.object(rospy, 'get_param',
+                    side_effect=lambda key, default=None: params.get(key, default), create=True), \
+                    patch.object(display, 'CvBridge', return_value=object()), \
+                    patch.object(display.tk, 'Tk', side_effect=InitializationComplete):
+                with self.assertRaises(InitializationComplete):
+                    obj.__init__()
+            self.assertAlmostEqual(obj.aspect, 16/9)
 
     def test_callback_bursts_are_coalesced(self):
         obj = make_window()

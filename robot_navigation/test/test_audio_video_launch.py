@@ -5,6 +5,7 @@ No ROS master, camera, audio device or running node is needed.
 from pathlib import Path
 import os
 import tempfile
+import shutil
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
@@ -35,8 +36,8 @@ class AVSettingsStructure(unittest.TestCase):
                     if arg.get('value') is None}
         self.assertEqual(set(names), required)
         self.assertEqual(settings.find("arg[@name='enable_http']").get('default'), 'false')
-        self.assertEqual(settings.find("arg[@name='stream_framerate']").get('default'), '25.0')
-        self.assertEqual(settings.find("arg[@name='video_display_fps']").get('default'), '15.0')
+        self.assertEqual(settings.find("arg[@name='stream_framerate']").get('default'), '10.0')
+        self.assertEqual(settings.find("arg[@name='video_display_fps']").get('default'), '10.0')
         self.assertEqual(settings.find('include').get('pass_all_args'), 'true')
         camera = PEER.read_text(encoding='utf-8')
         self.assertIn("<arg name=\"capture_wait_for_ready\" value=\"$(eval not arg('always_on'))\"/>", camera)
@@ -53,7 +54,7 @@ class AVSettingsStructure(unittest.TestCase):
         settings = ET.parse(SETTINGS).getroot()
         for name, expected in [('cam_width','640'),('cam_height','480'),
                                ('cam_framerate','25'),('stream_width','640'),
-                               ('stream_height','480'),('stream_framerate','25.0'),
+                               ('stream_height','480'),('stream_framerate','10.0'),
                                ('mic_device','default')]:
             self.assertEqual(settings.find("arg[@name='%s']" % name).get('default'), expected)
 
@@ -350,6 +351,60 @@ class AVLaunchLoading(unittest.TestCase):
         self.assertNotIn('audio_video_ready_master', [n.name for n in config.nodes])
         self.assertEqual(self.value(config, 'audio_chat_master', 'ready_topic'), '/Ready')
         self.assertTrue(config.params['/lower_cam/lower_usb_cam/wait_for_ready'].value)
+
+    def test_mission_landscape_video_override_and_bounded_default_rate(self):
+        config = self.load_mission()
+        self.assertEqual(self.value(config, 'video_sender_master', 'framerate'), 10.0)
+        self.assertEqual(self.value(config, 'video_stream_master', 'framerate'), 10.0)
+        config = self.load_mission(['call_stream_width:=640', 'call_stream_height:=360'])
+        self.assertEqual(self.value(config, 'video_sender_master', 'stream_width'), 640)
+        self.assertEqual(self.value(config, 'video_sender_master', 'stream_height'), 360)
+        # GUI derives aspect from these receiver dimensions at runtime.
+        self.assertEqual(self.value(config, 'video_stream_master', 'stream_height'), 360)
+        self.assertNotIn('/robot_status_display_node/video_aspect', config.params)
+
+    def test_persistent_camera_and_video_defaults_need_no_cli_device_arguments(self):
+        # Use real config files edited in a temporary minimal source tree.
+        # No scan_camera_device, call_camera_device or dimensions are passed.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            packages = ['robot_navigation', 'robot_bringup', 'fine_tuning',
+                        'arm_and_gripper', 'path_manager']
+            for package in packages:
+                destination = source / package
+                destination.mkdir()
+                for name in ['launch', 'config']:
+                    original = PACKAGE.parent / package / name
+                    if original.is_dir():
+                        shutil.copytree(original, destination / name)
+            package = source / 'robot_navigation'
+            path = package / 'config/camera_devices.launch'
+            text = path.read_text(encoding='utf-8')
+            text = text.replace('name="scan_device" default="/dev/video2"',
+                                'name="scan_device" default="/dev/test-scan"')
+            text = text.replace('name="robot_audio_device" default="/dev/video0"',
+                                'name="robot_audio_device" default="/dev/test-call"')
+            text = text.replace('name="doctor_audio_device" default="/dev/video0"',
+                                'name="doctor_audio_device" default="/dev/test-doctor"')
+            path.write_text(text, encoding='utf-8')
+            path = package / 'config/audio_video_defaults.launch'
+            text = path.read_text(encoding='utf-8').replace(
+                'name="stream_height" default="480"', 'name="stream_height" default="360"')
+            path.write_text(text, encoding='utf-8')
+            with patch.dict(globals(), PACKAGE=package):
+                config = self.load_mission()
+                doctor = self.load_peer('slave')
+            self.assertEqual(config.params['/adaptive_scan_camera_node/video_device'].value,
+                             '/dev/test-scan')
+            self.assertEqual(config.params['/lower_cam/lower_usb_cam/video_device'].value,
+                             '/dev/test-call')
+            self.assertEqual(doctor.params['/upper_cam/upper_usb_cam/video_device'].value,
+                             '/dev/test-doctor')
+            for node in ['video_sender_master', 'video_stream_master']:
+                self.assertEqual(self.value(config, node, 'stream_width'), 640)
+                self.assertEqual(self.value(config, node, 'stream_height'), 360)
+            self.assertEqual(self.value(doctor, 'video_sender_slave', 'stream_height'), 360)
+            self.assertNotIn('/robot_status_display_node/video_aspect', config.params)
 
     def test_mission_field_uses_same_waypoints_and_can_be_hidden(self):
         config = self.load_mission()

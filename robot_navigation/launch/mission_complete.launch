@@ -39,6 +39,7 @@
   <arg name="direction_signs" default="[1, 1, 1, 1]"/>
   <!-- ======================== 顶层开关参数 ======================== -->
   <arg name="enable_camera"       default="true"/>
+  <!-- Empty means use config/camera_devices.launch scan_device. -->
   <arg name="scan_camera_device" default=""/>
   <arg name="enable_arm"          default="true"/>
   <!-- Legacy compatibility argument; Y42 joint control is no longer launched. -->
@@ -99,8 +100,16 @@
   <arg name="temperature_topic" default="/vitals/temperature"/>
 
   <arg name="enable_gui" default="true"/>
+  <!-- Persistent media defaults live in config/audio_video_defaults.launch.
+       Leave these empty so normal startup follows the configuration file. -->
+  <arg name="audio_video_config" default="$(find robot_navigation)/config/audio_video_defaults.launch"/>
+  <arg name="call_stream_width" default=""/>
+  <arg name="call_stream_height" default=""/>
+  <arg name="call_stream_fps" default=""/>
+  <arg name="video_aspect" default=""/>
   <arg name="show_map" default="true"/>
   <arg name="gui_fullscreen" default="true"/>
+  <!-- Empty means use config/camera_devices.launch robot_audio_device. -->
   <arg name="call_camera_device" default=""/>
   <arg name="audio_mic_device" default="default"/>
   <arg name="audio_speaker_device" default="default"/>
@@ -314,13 +323,16 @@
   <!-- Continuous media uses its own /audio_video/ready topic; PC1 only starts motion.
        Shared Pi camera roles: scan video2, call video0. -->
   <group if="$(arg enable_audio_video)">
-    <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
+    <include file="$(arg audio_video_config)">
       <arg name="role" value="$(arg audio_role)"/>
       <arg name="local_ip" value="$(arg audio_local_ip)"/>
       <arg name="remote_ip" value="$(arg audio_remote_ip)"/>
       <arg name="ready_topic" value="$(arg audio_ready_topic)"/>
       <arg name="enable_display" value="$(arg enable_gui)"/>
       <arg name="enable_image_view" value="false"/>
+      <arg if="$(eval arg('call_stream_width') != '')" name="stream_width" value="$(arg call_stream_width)"/>
+      <arg if="$(eval arg('call_stream_height') != '')" name="stream_height" value="$(arg call_stream_height)"/>
+      <arg if="$(eval arg('call_stream_fps') != '')" name="stream_framerate" value="$(arg call_stream_fps)"/>
       <arg name="enable_status_gui" value="false"/>
       <arg name="lower_cam_device" value="$(arg call_camera_device)"/>
       <arg name="upper_cam_device" value="$(arg call_camera_device)"/>
@@ -342,6 +354,7 @@
     <arg name="config_file" value="$(arg vitals_config)"/>
     <arg name="load_config" value="false"/>
     <arg name="show_map" value="$(arg show_map)"/>
+    <arg name="video_aspect" value="$(arg video_aspect)"/>
     <arg name="paths_file" value="$(arg paths_file)"/>
     <arg name="enable_vitals_bridge" value="false"/>
     <arg name="enable_gui" value="$(arg enable_gui)"/>

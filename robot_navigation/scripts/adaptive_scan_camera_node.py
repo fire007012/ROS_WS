@@ -15,6 +15,7 @@ from scan_camera_policy import ScanCameraPolicy, capture_dimensions_acceptable
 
 class AdaptiveScanCamera:
     def __init__(self):
+        cv2.setNumThreads(1)
         self.device = rospy.get_param('~video_device', '/dev/video0')
         self.topic = rospy.get_param('~image_topic', '/usb_cam/image_raw')
         self.frame_id = rospy.get_param('~frame_id', 'scan_camera')

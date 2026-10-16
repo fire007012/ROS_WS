@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).parents[1] / 'scripts'))
-from status_scene import PoseTrack, field_transform, draw_field, task_text
+from status_scene import PoseTrack, field_transform, draw_field, task_text, RangeReadings, fit_landscape, RANGE_CHANNELS
 
 
 class Canvas:
@@ -65,6 +65,30 @@ class SceneTests(unittest.TestCase):
         obj.update('map',0,0,(0,0,0,1),12)
         draw_field(canvas,620,280,obj.snapshot(),{},12)
         self.assertTrue(any('坐标系不匹配' in text for text in texts()))
+
+    def test_six_distance_channels_valid_invalid_and_stale(self):
+        obj = RangeReadings(.5)
+        self.assertEqual(len(RANGE_CHANNELS), 6)
+        self.assertIn('未收到', obj.text('front', 10))
+        obj.update('front', .250, .05, 3., 10)
+        self.assertEqual(obj.text('front', 10.1), '250 mm')
+        self.assertIn('已过期', obj.text('front', 11))
+        obj.update('rear', float('nan'), .05, 3., 10)
+        self.assertIn('无效', obj.text('rear', 10.1))
+        obj.update('left', .3, .05, 3., 10, .6)
+        self.assertIn('已过期', obj.text('left', 10.1))
+
+    def test_landscape_letterbox_and_optional_camera_rotation(self):
+        rotate,w,h,bw,bh = fit_landscape(480,640,800,600,rotate_portrait=True)
+        self.assertTrue(rotate)
+        self.assertGreater(w,h)
+        self.assertAlmostEqual(bw/bh, 4/3)
+        rotate,w,h,bw,bh = fit_landscape(480,640,800,600,16/9,False)
+        self.assertFalse(rotate)
+        self.assertLess(w,h)  # Preserve upright image; pad its landscape canvas.
+        self.assertAlmostEqual(bw/bh,16/9,places=2)
+        self.assertLessEqual(w,bw)
+        self.assertLessEqual(h,bh)
 
     def test_specific_task_and_box_are_not_visit_numbers(self):
         assignment=dict(first_bed=3,first_box=1,second_bed=1,second_box=3)

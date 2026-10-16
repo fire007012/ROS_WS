@@ -149,3 +149,46 @@ def draw_field(canvas, width, height, scene, layout, now, timeout=1.0):
                        font=('Microsoft YaHei',9),width=max(80,width-16))
     canvas.create_text(8,height-6,anchor='sw',text='估计位置 · +x向上 · 绿线轨迹 · 黄十字目标',
                        fill='#a6bdcb',font=('Microsoft YaHei',8))
+
+
+RANGE_CHANNELS = (
+    ('front', '前', '/front/range'), ('left', '左', '/left/range'),
+    ('right', '右', '/right/range'), ('rear', '后', '/rear/range'),
+    ('arm_upper_left', '臂左', '/arm_upper_left/range'),
+    ('arm_upper_right', '臂右', '/arm_upper_right/range'),
+)
+
+
+class RangeReadings:
+    """Bounded last readings, in metres, with separate receive/header freshness."""
+    def __init__(self, timeout=.5):
+        self.timeout = timeout
+        self.samples = {}
+
+    def update(self, name, value, minimum, maximum, received, stamp_age=0.0):
+        valid = (all(math.isfinite(v) for v in (value, minimum, maximum, stamp_age))
+                 and 0 < value and minimum <= value <= maximum and -.05 <= stamp_age <= self.timeout)
+        self.samples[name] = (value, received-max(0.0, stamp_age), valid)
+
+    def text(self, name, now):
+        if name not in self.samples:
+            return '-- 未收到'
+        value, received, valid = self.samples[name]
+        if now-received > self.timeout or now < received:
+            return '-- 已过期'
+        if not valid:
+            return '-- 无效'
+        return '%.0f mm' % (value*1000)
+
+
+def fit_landscape(source_width, source_height, panel_width, panel_height, aspect=4/3,
+                  rotate_portrait=False):
+    """Return (rotate90, image width/height, letterboxed canvas width/height)."""
+    rotate = rotate_portrait and source_height > source_width
+    if rotate:
+        source_width, source_height = source_height, source_width
+    box_width = max(1, min(int(panel_width), int(panel_height*aspect)))
+    box_height = max(1, min(int(panel_height), int(box_width/aspect)))
+    scale = min(box_width/source_width, box_height/source_height)
+    return (rotate, max(1, int(source_width*scale)), max(1, int(source_height*scale)),
+            box_width, box_height)

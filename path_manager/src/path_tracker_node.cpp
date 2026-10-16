@@ -261,6 +261,12 @@ void PathTracker::rangeCallback(size_t index, const sensor_msgs::Range::ConstPtr
 void PathTracker::publishAvoidanceState(const std::string& state) {
   if (avoidance_state_ == state) return;
   avoidance_state_ = state;
+  const double now=ros::SteadyTime::now().toSec();
+  ROS_INFO("[path_tracker] avoidance=%s pose=(%.3f,%.3f,%.3f) target=(%.3f,%.3f) body_clearance_m F=%.3f L=%.3f R=%.3f B=%.3f valid=%d%d%d%d age_s=%.3f/%.3f/%.3f/%.3f",
+      state.c_str(),current_x_,current_y_,current_yaw_,current_target_.x,current_target_.y,
+      detour_.ranges[0].distance,detour_.ranges[1].distance,detour_.ranges[2].distance,detour_.ranges[3].distance,
+      detour_.ranges[0].valid,detour_.ranges[1].valid,detour_.ranges[2].valid,detour_.ranges[3].valid,
+      now-detour_.ranges[0].received,now-detour_.ranges[1].received,now-detour_.ranges[2].received,now-detour_.ranges[3].received);
   std_msgs::String msg; msg.data = state;
   avoidance_state_pub_.publish(msg);
   if (state.compare(0, 7, "FAILED_") == 0)
