@@ -359,7 +359,7 @@ if(CATKIN_ENABLE_TESTING)
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_scan_camera_policy.py)
 endif()
 
-install(FILES scripts/scan_camera_policy.py
+install(FILES scripts/scan_camera_policy.py scripts/status_scene.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 if(CATKIN_ENABLE_TESTING)
@@ -380,4 +380,9 @@ endif()
 if(CATKIN_ENABLE_TESTING)
   add_rostest(test/mission_upper_alignment.test)
   add_rostest(test/mission_medicine_event.test)
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME status_field_and_task
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_status_scene.py)
 endif()

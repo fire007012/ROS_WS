@@ -29,9 +29,15 @@ std = types.ModuleType('std_msgs.msg')
 std.Bool = std.Float32 = std.String = type('Message', (), {})
 robot = types.ModuleType('robot_navigation.msg')
 robot.QrResult = type('QrResult', (), {})
+nav = types.ModuleType('nav_msgs.msg')
+nav.Odometry = type('Odometry', (), {})
+path = types.ModuleType('path_manager.msg')
+path.PathPoint = type('PathPoint', (), {})
 sys.modules.update({'rospy': rospy, 'std_msgs': types.ModuleType('std_msgs'),
                     'std_msgs.msg': std, 'robot_navigation': types.ModuleType('robot_navigation'),
-                    'robot_navigation.msg': robot})
+                    'robot_navigation.msg': robot,
+                    'nav_msgs': types.ModuleType('nav_msgs'), 'nav_msgs.msg': nav,
+                    'path_manager': types.ModuleType('path_manager'), 'path_manager.msg': path})
 
 
 def load(name, filename):
@@ -218,6 +224,11 @@ def make_window():
     obj = display.StatusWindow.__new__(display.StatusWindow)
     obj.lock = threading.Lock()
     obj.pending = {}
+    obj.mission_phase = ''
+    obj.assignment = {}
+    obj.mission_finished = None
+    obj.bedside_note = ''
+    obj.pose_track = display.PoseTrack()
     obj.sensor_hint = ''
     obj.atomic_source = False
     obj.last_vitals = time.monotonic()
@@ -283,6 +294,51 @@ class DisplayTests(unittest.TestCase):
             status='online_idle', measuring=False, temperature_sensor_ready=False))))
         obj.pump()
         self.assertIn('温度传感器未识别', obj.labels['esp'].text)
+
+    def test_specific_beds_are_resolved_for_all_qr_orders(self):
+        for bed, box in [(1, 1), (1, 3), (3, 1), (3, 3)]:
+            obj = make_window()
+            obj.qr(types.SimpleNamespace(first_bed=bed, first_box=box,
+                                        second_bed=4-bed, second_box=4-box))
+            obj.mission_state(types.SimpleNamespace(data='GOTO_BED_A'))
+            self.assertIn('正在前往%d号床' % bed, obj.pending['task'])
+            obj.mission_state(types.SimpleNamespace(data='PLACE_MEDICINE_B'))
+            self.assertIn('向%d号床放药' % (4-bed), obj.pending['task'])
+            self.assertIn('%d号药箱' % (4-box), obj.pending['task'])
+
+    def test_barcode_and_late_bedside_messages_do_not_replace_current_task(self):
+        obj = make_window()
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        obj.robot_display(types.SimpleNamespace(data='1床条码:123\n3床条码:456'))
+        obj.bedside_status(types.SimpleNamespace(data='bedside call and measurement completed'))
+        self.assertEqual(obj.pending['task'], '当前任务：正在前往护士台')
+        obj.mission_state(types.SimpleNamespace(data='STOP'))
+        obj.mission_result(types.SimpleNamespace(data=True))
+        self.assertIn('任务完成', obj.pending['task'])
+
+    def test_new_mission_clears_old_assignment_and_goal(self):
+        obj = make_window()
+        obj.qr(types.SimpleNamespace(first_bed=3, first_box=1, second_bed=1, second_box=3))
+        obj.pose_track.goal = (4, 2.2)
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        self.assertEqual(obj.assignment, {})
+        self.assertIsNone(obj.pose_track.goal)
+
+    def test_pose_and_goal_callbacks_only_update_data(self):
+        obj = make_window()
+        q = types.SimpleNamespace(x=0., y=0., z=0., w=1.)
+        p = types.SimpleNamespace(x=1.2, y=.4)
+        msg = types.SimpleNamespace(header=types.SimpleNamespace(frame_id='odom',
+                    stamp=types.SimpleNamespace(is_zero=lambda: True)),
+                    pose=types.SimpleNamespace(pose=types.SimpleNamespace(position=p, orientation=q)))
+        worker = threading.Thread(target=lambda: obj.odometry(msg))
+        worker.start(); worker.join()
+        self.assertEqual(obj.pose_track.pose, (1.2, .4, 0.))
+        self.assertIsNone(obj.labels['task'].text)
+        obj.path_target(types.SimpleNamespace(frame_id='map', x=4, y=2.2))
+        self.assertIsNone(obj.pose_track.goal)
+        obj.path_target(types.SimpleNamespace(frame_id='odom', x=4, y=2.2))
+        self.assertEqual(obj.pose_track.goal, (4, 2.2))
 
     def test_callback_bursts_are_coalesced(self):
         obj = make_window()

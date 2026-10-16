@@ -6,6 +6,12 @@ import math
 import threading
 import time
 import tkinter as tk
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from status_scene import PoseTrack, task_text, draw_field
+from nav_msgs.msg import Odometry
+from path_manager.msg import PathPoint
 
 try:
     import cv2
@@ -32,6 +38,33 @@ class StatusWindow:
             raise ValueError('audio_role must be master or slave')
         self.lock = threading.Lock()
         self.pending = {}  # coalesce bursts; memory does not grow with message rate
+        self.mission_phase = ''
+        self.assignment = {}
+        self.mission_finished = None
+        self.bedside_note = ''
+        self.show_map = bool(rospy.get_param('~show_map', True))
+        self.pose_track = PoseTrack(rospy.get_param('~map_frame', 'odom'))
+        self.map_timeout = float(rospy.get_param('~map_timeout_s', 1.0))
+        if not math.isfinite(self.map_timeout) or self.map_timeout <= 0:
+            raise ValueError('map_timeout_s must be positive and finite')
+        self.map_layout = rospy.get_param('~arena', {})
+        waypoints = rospy.get_param('~routes/waypoints', {})
+        stations = dict(self.map_layout.get('stations', {}))
+        for name, key, radius in [('起始区', 'P0', .08), ('护士台扫码点', 'P1', .08),
+                                  ('1号床停靠圈', 'P4', .3), ('3号床停靠圈', 'P6', .3)]:
+            if key in waypoints:
+                p = waypoints[key]
+                stations[name] = [float(p['x']), float(p['y']), radius]
+        for bed in (1, 3):
+            name = '%d号床停靠圈' % bed
+            prefix = '/mission_controller_node/mission/circle_bed%d_' % bed
+            if name in stations:
+                stations[name] = [float(rospy.get_param(prefix + axis, value))
+                                  for axis, value in zip(('x', 'y', 'radius'), stations[name])]
+        self.map_layout['robot_radius_m'] = float(rospy.get_param(
+            '/chassis_geometry/radius_m', self.map_layout.get('robot_radius_m', .25)))
+        self.map_layout['stations'] = stations
+        self.last_map_render = 0.0
         self.last_vitals = time.monotonic()
         self.stale_timeout = float(rospy.get_param('~vitals_timeout_s', 3.0))
         self.sensor_hint = ''
@@ -71,7 +104,9 @@ class StatusWindow:
         self.left_panel.grid_columnconfigure(0, weight=1)
         self.right_panel = tk.Frame(self.root, bg='#05080b', padx=8, pady=8)
         self.right_panel.grid(row=0, column=1, sticky='nsew')
-        self.right_panel.grid_rowconfigure(1, weight=1)
+        self.right_panel.grid_rowconfigure(1, weight=1, uniform='media')
+        if self.show_map:
+            self.right_panel.grid_rowconfigure(2, weight=1, uniform='media')
         self.right_panel.grid_columnconfigure(0, weight=1)
         self.labels = {}
         self.make('title', '送药巡诊机器人', 25, '#4dd0e1')
@@ -90,11 +125,20 @@ class StatusWindow:
         self.video_info = tk.Label(self.right_panel, text='', justify='right',
                                    font=('DejaVu Sans', 11), fg='#e4eaee',
                                    bg='#18232b', anchor='e', padx=10, pady=7)
-        self.video_info.grid(row=2, column=0, sticky='ew')
+        if self.show_map:
+            self.map_canvas = tk.Canvas(self.right_panel, height=240, width=1,
+                                         bg='#111f2b', highlightthickness=0)
+            self.map_canvas.grid(row=2, column=0, sticky='nsew', pady=(6, 0))
+        self.video_info.grid(row=3, column=0, sticky='ew')
         self.root.bind('<Configure>', self.resize_text)
         self.right_panel.bind('<Configure>', self.resize_text)
-        rospy.Subscriber('/robot_display', String, lambda m: self.set('task', '当前任务：' + m.data.replace('\n', ' | ')))
+        rospy.Subscriber('/robot_display', String, self.robot_display)
         rospy.Subscriber('/mission/state', String, self.mission_state)
+        rospy.Subscriber('/mission_finished', Bool, self.mission_result)
+        if self.show_map:
+            rospy.Subscriber(rospy.get_param('~odom_topic', '/odom'), Odometry,
+                             self.odometry, queue_size=1)
+            rospy.Subscriber('/path_points', PathPoint, self.path_target, queue_size=1)
         rospy.Subscriber('/bedside/status', String, self.bedside_status)
         rospy.Subscriber('/qr_result', QrResult, self.qr)
         rospy.Subscriber('/barcode_bed1', String, lambda m: self.set('bed1', '1号床条码：' + (m.data or '---')))
@@ -112,30 +156,72 @@ class StatusWindow:
         rospy.Subscriber(self.call_camera_status_topic, String, self.call_camera_status, queue_size=1)
         self.root.after(33, self.pump)
 
+    def update_task_locked(self):
+        text = task_text(self.mission_phase, self.assignment, self.mission_finished)
+        if self.mission_phase in ('BEDSIDE_A', 'BEDSIDE_B') and self.bedside_note:
+            text += '／' + self.bedside_note
+        self.pending['task'] = '当前任务：' + text
+
     def mission_state(self, msg):
-        stages = {
-            'IDLE': '等待本体启动按钮', 'GOTO_NURSE': '前往护士台',
-            'SCAN_QR': '识别护士台二维码', 'GOTO_BED_A': '前往第一张病床',
-            'GOTO_BED_B': '前往第二张病床',
-            'POSITION_IN_CIRCLE_A': '第一床入圈微调', 'POSITION_IN_CIRCLE_B': '第二床入圈微调',
-            'SCAN_BARCODE_A': '识别第一床条码', 'SCAN_BARCODE_B': '识别第二床条码',
-            'OPEN_BOX_A': '选择第一床药箱', 'OPEN_BOX_B': '选择第二床药箱',
-            'PLACE_MEDICINE_A': '第一床放药及播报', 'PLACE_MEDICINE_B': '第二床放药及播报',
-            'VOICE_A': '等待第一床播报完成', 'VOICE_B': '等待第二床播报完成',
-            'BEDSIDE_A': '第一床音视频交流及体征测量',
-            'BEDSIDE_B': '第二床音视频交流及体征测量',
-            'RETURN_HOME': '返回起始区', 'HOME_CHECK': '检查回归并保持静止',
-            'STOP': '任务停止', 'FAILED': '任务失败', 'TIMEOUT': '任务超时',
-        }
-        self.set('task', '当前任务：' + stages.get(msg.data, msg.data))
+        with self.lock:
+            previous = self.mission_phase
+            self.mission_phase = msg.data
+            if msg.data in ('IDLE', 'GOTO_NURSE') and previous != msg.data:
+                self.assignment = {}
+                self.mission_finished = None
+                self.pose_track.trail.clear()
+                self.pose_track.goal = None
+            if msg.data in ('IDLE', 'STOP', 'FAILED', 'TIMEOUT', 'HOME_CHECK'):
+                self.pose_track.goal = None
+            if previous != msg.data:
+                self.bedside_note = ''
+            self.update_task_locked()
+
+    def mission_result(self, msg):
+        with self.lock:
+            self.mission_finished = bool(msg.data)
+            if msg.data:
+                self.pose_track.goal = None
+            self.update_task_locked()
+
+    def robot_display(self, msg):
+        # /robot_display also carries persistent barcodes. It is not a task state.
+        with self.lock:
+            failure = (self.mission_phase in ('FAILED', 'TIMEOUT', 'STOP')
+                       and msg.data.startswith(('任务失败', '任务超时', '急停')))
+            if not self.mission_phase or failure:
+                self.pending['task'] = '当前任务：' + msg.data.replace('\n', ' | ')
 
     def bedside_status(self, msg):
-        # Keep the persistent bed1/bed3 barcode labels untouched.
-        text = {
-            'waiting for doctor video/audio and fresh bedside measurement': '等待音视频交流和本床有效体征',
-            'bedside call and measurement completed': '本床音视频交流及体征测量完成',
-        }.get(msg.data, msg.data)
-        self.set('task', '当前任务：' + text)
+        with self.lock:
+            self.bedside_note = {
+                'waiting for doctor video/audio and fresh bedside measurement': '等待本床新音视频及有效体征',
+                'bedside call and measurement completed': '本床交流和测量已完成',
+            }.get(msg.data, msg.data)
+            self.update_task_locked()
+
+    def odometry(self, msg):
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        stamp = msg.header.stamp
+        age = 0.0 if stamp.is_zero() else (rospy.Time.now()-stamp).to_sec()
+        with self.lock:
+            self.pose_track.update(msg.header.frame_id, p.x, p.y,
+                                   (q.x, q.y, q.z, q.w), time.monotonic(), age)
+
+    def path_target(self, msg):
+        with self.lock:
+            if (msg.frame_id.strip('/') == self.pose_track.frame
+                    and math.isfinite(msg.x) and math.isfinite(msg.y)):
+                self.pose_track.goal = (msg.x, msg.y)
+            else:
+                self.pose_track.goal = None
+
+    def render_map(self, now):
+        with self.lock:
+            scene = self.pose_track.snapshot()
+        draw_field(self.map_canvas, max(100, self.map_canvas.winfo_width()),
+                   max(100, self.map_canvas.winfo_height()), scene,
+                   self.map_layout, now, self.map_timeout)
 
     def make(self, key, text, size, color):
         label = tk.Label(self.left_panel, text=text,
@@ -277,8 +363,19 @@ class StatusWindow:
             self.legacy_set(key, text)
 
     def qr(self, msg):
-        self.set('scan', '识别状态：护士台二维码 %d%d，下一站 %d%d' %
-                 (msg.first_bed, msg.first_box, msg.second_bed, msg.second_box))
+        with self.lock:
+            values = (msg.first_bed, msg.first_box, msg.second_bed, msg.second_box)
+            if (all(v in (1, 3) for v in values) and msg.first_bed != msg.second_bed
+                    and msg.first_box != msg.second_box):
+                self.assignment = dict(zip(('first_bed', 'first_box', 'second_bed', 'second_box'), values))
+                self.pending['scan'] = ('识别状态：先到%d号床（%d号药箱），再到%d号床（%d号药箱）' % values)
+                if self.mission_phase:
+                    self.update_task_locked()
+            else:
+                self.assignment = {}
+                self.pending['scan'] = '识别状态：等待有效的护士台二维码'
+                if self.mission_phase:
+                    self.update_task_locked()
 
     def pump(self):
         if rospy.is_shutdown():
@@ -307,6 +404,9 @@ class StatusWindow:
             self.labels['hr'].config(text='心率：-- bpm')
             self.labels['temp'].config(text='体温：-- °C')
         now = time.monotonic()
+        if getattr(self, 'show_map', False) and now-self.last_map_render >= .1:
+            self.render_map(now)
+            self.last_map_render = now
         if video is not None and now - self.last_video_render >= 1.0 / self.video_display_fps:
             self.render_video(video)
             self.last_video_render = now

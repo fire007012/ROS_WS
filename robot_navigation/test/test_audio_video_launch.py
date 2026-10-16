@@ -333,6 +333,15 @@ class AVLaunchLoading(unittest.TestCase):
         self.assertIn('speak_node', names)
         self.assertIn('barcode_qr_detector_node', names)
 
+    def test_mission_field_uses_same_waypoints_and_can_be_hidden(self):
+        config = self.load_mission()
+        self.assertTrue(self.value(config, 'robot_status_display_node', 'show_map'))
+        self.assertEqual(self.value(config, 'robot_status_display_node', 'odom_topic'), '/odom')
+        self.assertEqual(self.value(config, 'robot_status_display_node', 'map_frame'), 'odom')
+        self.assertEqual(config.params['/robot_status_display_node/routes/waypoints/P4/x'].value, 4.0)
+        config = self.load_mission(['show_map:=false'])
+        self.assertFalse(self.value(config, 'robot_status_display_node', 'show_map'))
+
     def test_mission_pre_recorded_speech_files_exist(self):
         config = self.load_mission()
         for name in ['bed1_audio_file', 'bed3_audio_file']:

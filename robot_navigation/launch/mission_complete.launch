@@ -96,6 +96,7 @@
   <arg name="temperature_topic" default="/vitals/temperature"/>
 
   <arg name="enable_gui" default="true"/>
+  <arg name="show_map" default="true"/>
   <arg name="gui_fullscreen" default="true"/>
   <arg name="call_camera_device" default=""/>
   <arg name="audio_mic_device" default="default"/>
@@ -337,6 +338,8 @@
   <include file="$(find robot_navigation)/launch/status_display.launch">
     <arg name="config_file" value="$(arg vitals_config)"/>
     <arg name="load_config" value="false"/>
+    <arg name="show_map" value="$(arg show_map)"/>
+    <arg name="paths_file" value="$(arg paths_file)"/>
     <arg name="enable_vitals_bridge" value="false"/>
     <arg name="enable_gui" value="$(arg enable_gui)"/>
     <arg name="fullscreen" value="$(arg gui_fullscreen)"/>
