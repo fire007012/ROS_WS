@@ -1,0 +1,293 @@
+[WARN] [1792128898.509942364]: STAND TEST: immediate standard speed commands; physical start bypassed, all fault guards retained
+[WARN] [1792128898.608040353]: [cmd_vel_mux] command timeout: no active cmd_vel source for 0.500 s; publishing zero velocity
+[WARN] [1792128898.648644466]: [path_tracker] ?????? /odom ??????...
+[INFO] [1792128898.776053552]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128899.308183531]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128899.841391082]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128900.341517850]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128900.874559928]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128901.374855620]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128901.874923022]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128902.374925520]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128902.908460858]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128903.441346705]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128903.974887258]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128904.474992704]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128905.008274229]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128905.541964132]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128906.074686559]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128906.574707356]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128907.075072146]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128907.607834487]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128908.108082482]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128908.608106824]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128909.108776541]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128909.641598693]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128910.175564498]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128910.708095958]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128911.241970707]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128911.774985240]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128912.275141769]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128912.807985710]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128913.341380197]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128913.874678327]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128914.374791369]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128914.875292465]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128915.408043121]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128915.941510663]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128916.441881093]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128916.942469150]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128917.474608895]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128917.975409366]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128918.508238824]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128919.041406854]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128919.541451524]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128920.041957324]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128920.574949034]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128921.108127638]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128921.608433777]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128922.141855711]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128922.675027677]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128923.207895222]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128923.708414596]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128924.241267075]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128924.774739980]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128925.275548540]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128925.808401098]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128926.341758974]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128926.874554842]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128927.374694619]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128927.874827363]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128928.375562836]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128928.907972784]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128929.408218645]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128929.908302737]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128930.441289238]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128930.941504588]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128931.441540429]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128931.941704048]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128932.474628472]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128932.974709361]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128933.474859384]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128933.975132235]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128934.508766146]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128935.041633817]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128935.574701246]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128936.074880549]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128936.574984635]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128937.075021443]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128937.607749062]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128938.108038113]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128938.608437618]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128939.109192560]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128939.642088581]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128940.174997222]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128940.708508954]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128941.241488779]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128941.741596273]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128942.241731348]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128942.774879514]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128943.308570717]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128943.841479380]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128944.341530837]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128944.874818610]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128945.408146284]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128945.941233721]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128946.441495663]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128946.941651258]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128947.474893517]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128947.975019024]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128948.507859745]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128949.008090728]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128949.508302933]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128950.041282001]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128950.574460090]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128951.074620826]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128951.607904180]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128952.107971177]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128952.641758484]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128953.175113450]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128953.708063462]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128954.242291703]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128954.775274546]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128955.308621729]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128955.841959796]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128956.375247195]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128956.907897107]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128957.408306858]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L][ERROR] [1792128965.501754376]: CAN bus error on can0: class=0xC controller=see-flags flags=0x00 protocol=0x10 location=0x00 CRC=no format=no bit-stuffing=no overflow=no (not an application RX timeout)
+[ERROR] [1792128965.615073705]: [can_interface] ESTOP latched: STM32 queue/execution/transport failure counter changed
+[INFO] [1792128898.485672760]: STM32 custom protocol: device=can0 TX=0x100 RX=0x101 standard frames. This is NOT native Y42 passthrough; CAN bitrate must match STM32 CAN1.
+[INFO] [1792128898.511316884]: Logical wheel 0 -> STM32 index 1 / CAN2 address 2, sign=1
+[INFO] [1792128898.511338104]: Logical wheel 1 -> STM32 index 0 / CAN2 address 1, sign=1
+[INFO] [1792128898.511346540]: Logical wheel 2 -> STM32 index 3 / CAN2 address 4, sign=1
+[INFO] [1792128898.511353132]: Logical wheel 3 -> STM32 index 2 / CAN2 address 3, sign=1
+[INFO] [1792128898.597118322]: SocketCAN bound on can0; binding/queued TX does not prove STM32 reception.
+[INFO] [1792128898.597173696]: [can_interface] motion start state=STAND_TEST_IMMEDIATE
+[INFO] [1792128898.602751175]: First CAN RX on can0: ID=0x101 standard DLC=8; configured STM32 RX=0x101 standard.
+[INFO] [1792128898.647296256]: First CAN TX queued on can0: ID=0x200 extended DLC=2. Use STM32 RX/feedback to confirm delivery.
+[INFO] [1792128965.615161710]: [can_interface] motion start state=ESTOP_LATCHED
+=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128957.908750320]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128958.441604220]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128958.974609915]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128959.474701292]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128959.974861006]: cmd_vel(vx=0.030, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[3.8, -0.0, -3.8, -0.0]
+[INFO] [1792128960.507885201]: cmd_vel(vx=0.083, vy=0.000, wz=-0.005) -> rpm[F,R,B,L]=[10.7, 0.1, -10.5, 0.1]
+[INFO] [1792128961.008885846]: cmd_vel(vx=0.100, vy=0.000, wz=0.008) -> rpm[F,R,B,L]=[12.5, -0.2, -12.9, -0.2]
+[INFO] [1792128961.541466946]: cmd_vel(vx=0.100, vy=0.000, wz=-0.003) -> rpm[F,R,B,L]=[12.8, 0.1, -12.7, 0.1]
+[INFO] [1792128962.041693448]: cmd_vel(vx=0.100, vy=0.000, wz=0.009) -> rpm[F,R,B,L]=[12.5, -0.2, -13.0, -0.2]
+[INFO] [1792128962.574832049]: cmd_vel(vx=0.100, vy=0.000, wz=0.005) -> rpm[F,R,B,L]=[12.6, -0.1, -12.9, -0.1]
+[INFO] [1792128963.107969131]: cmd_vel(vx=0.100, vy=0.000, wz=0.004) -> rpm[F,R,B,L]=[12.6, -0.1, -12.8, -0.1]
+[INFO] [1792128963.641412192]: cmd_vel(vx=0.100, vy=0.000, wz=0.003) -> rpm[F,R,B,L]=[12.7, -0.1, -12.8, -0.1]
+[INFO] [1792128964.141446324]: cmd_vel(vx=0.100, vy=0.000, wz=0.015) -> rpm[F,R,B,L]=[12.3, -0.4, -13.1, -0.4]
+[INFO] [1792128964.641963223]: cmd_vel(vx=0.100, vy=0.000, wz=-0.004) -> rpm[F,R,B,L]=[12.8, 0.1, -12.6, 0.1]
+[INFO] [1792128965.175147006]: cmd_vel(vx=0.100, vy=0.000, wz=0.004) -> rpm[F,R,B,L]=[12.6, -0.1, -12.8, -0.1]
+[INFO] [1792128965.675409515]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128966.205415750]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128966.708135127]: cmd_vel(vx=0.000, vy=0.000, wz=0.000) -> rpm[F,R,B,L]=[0.0, 0.0, -0.0, -0.0]
+[INFO] [1792128898.853021419]: [path_manager] ??????????????????????????? 13 ?????????
+[INFO] [1792128898.853887815]:   - nurse_station (2 ??????)
+[INFO] [1792128898.853908634]:   - bed1_circle (4 ??????)
+[INFO] [1792128898.853926147]:   - bed3_circle (4 ??????)
+[INFO] [1792128898.853939872]:   - bed1_to_bed3 (4 ??????)
+[INFO] [1792128898.853952276]:   - bed3_to_bed1 (4 ??????)
+[INFO] [1792128898.853955542]:   - bed1_to_bed3_via_p1 (6 ??????)
+[INFO] [1792128898.853958578]:   - bed3_to_bed1_via_p1 (6 ??????)
+[INFO] [1792128898.853961764]:   - HOME (2 ??????)
+[INFO] [1792128898.853964629]:   - bed1_to_home (5 ??????)
+[INFO] [1792128898.853967454]:   - bed3_to_home (5 ??????)
+[INFO] [1792128898.853970169]:   - medicine_rack (3 ??????)
+[INFO] [1792128898.853973045]:   - charging_station (3 ??????)
+[INFO] [1792128898.853975890]:   - patrol_loop (5 ??????)
+[INFO] [1792128898.854186616]: [path_manager] ??????????????????????????? 13 ?????????
+[INFO] [1792128958.965035877]: [path_manager] ???????????????: nurse_station (2 ??????)
+[INFO] [1792128959.583197573]: [path_manager] ???????????? 2/2 (x=1.300000, y=0.000000)
+[INFO] [1792128898.614408826]: [path_tracker] ???????????????
+[INFO] [1792128898.619035590]: [path_tracker]   ????????????: 30.0 Hz
+[INFO] [1792128898.619053564]: [path_tracker]   ????????????: ??????????????????
+[INFO] [1792128898.619057772]: [path_tracker]   Kp_linear=0.80, Kp_angular=1.50
+[INFO] [1792128898.619062611]: [path_tracker]   ????????????=0.050 m, ????????????=0.080 rad
+[INFO] [1792128898.619067069]: [path_tracker]   ????????????: v=0.10 m/s, ??=0.35 rad/s
+[INFO] [1792128898.619070215]: [path_tracker]   ?????? /path_points ...
+[INFO] [1792128958.965214297]: [path_tracker] ???????????????????????? 1?????????????????????
+[INFO] [1792128959.054844573]: [path_tracker] ???????????? (x=0.000, y=0.000), has_next=true
+[INFO] [1792128959.081249030]: [path_tracker] ????????????????????? (x=0.000, y=0.000)????????????...
+[INFO] [1792128959.583375953]: [path_tracker] ??????????????????????????????????????????
+[INFO] [1792128959.654983204]: [path_tracker] ???????????? (x=1.300, y=0.000), has_next=false
+[INFO] [1792128898.907808532]: [cmd_vel_mux] command source recovered: external
+... logging to /tmp/chassis_medical_route_test/medical_route_stand_20261016_133457/52d90dc8-c923-11f1-ba10-3d08d09b0693/roslaunch-fire1-41306.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/tmp/chassis_medical_route_test/stand_route.launch
+[1mstarted roslaunch server http://127.0.0.1:40061/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /base_odometry_node/odom_publish_hz: 50.0
+ * /can_interface_node/can_device: can0
+ * /can_interface_node/command_publish_rate_hz: 20.0
+ * /can_interface_node/command_timeout_sec: 0.5
+ * /can_interface_node/direction_signs: [1, 1, 1, 1]
+ * /can_interface_node/max_rpm: 20.0
+ * /can_interface_node/motor_indices: [1, 0, 3, 2]
+ * /can_interface_node/report_mask: 5
+ * /can_interface_node/test_immediate_motion: True
+ * /cmd_vel_mux_node/publish_rate_hz: 30.0
+ * /path_manager/paths: [{'name': 'nurse_...
+ * /path_manager/waypoints/P0/tolerance: 0.02
+ * /path_manager/waypoints/P0/x: 0.0
+ * /path_manager/waypoints/P0/y: 0.0
+ * /path_manager/waypoints/P0/yaw: 0.0
+ * /path_manager/waypoints/P1/tolerance: 0.02
+ * /path_manager/waypoints/P1/x: 1.3
+ * /path_manager/waypoints/P1/y: 0.0
+ * /path_manager/waypoints/P1/yaw: 0.0
+ * /path_manager/waypoints/P1_PASS/tolerance: 0.05
+ * /path_manager/waypoints/P1_PASS/x: 1.3
+ * /path_manager/waypoints/P1_PASS/y: 0.0
+ * /path_manager/waypoints/P2L/tolerance: 0.05
+ * /path_manager/waypoints/P2L/x: 2.0
+ * /path_manager/waypoints/P2L/y: 1.1
+ * /path_manager/waypoints/P2R/tolerance: 0.05
+ * /path_manager/waypoints/P2R/x: 2.0
+ * /path_manager/waypoints/P2R/y: -1.1
+ * /path_manager/waypoints/P3L/tolerance: 0.05
+ * /path_manager/waypoints/P3L/x: 3.0
+ * /path_manager/waypoints/P3L/y: 2.0
+ * /path_manager/waypoints/P3R/tolerance: 0.05
+ * /path_manager/waypoints/P3R/x: 3.0
+ * /path_manager/waypoints/P3R/y: -2.0
+ * /path_manager/waypoints/P4/tolerance: 0.02
+ * /path_manager/waypoints/P4/x: 4.0
+ * /path_manager/waypoints/P4/y: 2.2
+ * /path_manager/waypoints/P4/yaw: 0.0
+ * /path_manager/waypoints/P6/tolerance: 0.02
+ * /path_manager/waypoints/P6/x: 4.0
+ * /path_manager/waypoints/P6/y: -2.2
+ * /path_manager/waypoints/P6/yaw: 0.0
+ * /path_manager/waypoints/P7/tolerance: 0.03
+ * /path_manager/waypoints/P7/x: 1.0
+ * /path_manager/waypoints/P7/y: 0.0
+ * /path_manager/waypoints/P8/tolerance: 0.02
+ * /path_manager/waypoints/P8/x: 0.0
+ * /path_manager/waypoints/P8/y: 0.0
+ * /path_manager_node/default_path: 
+ * /path_manager_node/frame_id: odom
+ * /path_manager_node/publish_rate_hz: 10.0
+ * /path_manager_node/yaml_file_path: /home/fire/ros_ws...
+ * /path_tracker_node/arrival_hold_time: 0.5
+ * /path_tracker_node/control_rate_hz: 30.0
+ * /path_tracker_node/heading_tolerance: 0.08
+ * /path_tracker_node/kp_angular: 1.5
+ * /path_tracker_node/kp_linear: 0.8
+ * /path_tracker_node/max_angular_vel: 0.5
+ * /path_tracker_node/max_linear_vel: 0.25
+ * /path_tracker_node/odom_timeout_sec: 0.5
+ * /path_tracker_node/position_tolerance: 0.05
+ * /path_tracker_node/range_avoidance/enabled: False
+ * /path_tracker_node/use_holonomic: False
+ * /path_tracker_node/use_turn_then_move: True
+ * /planner_node/max_rpm: 20.0
+ * /planner_node/print_debug_log: True
+ * /robot/cmd_timeout_sec: 0.5
+ * /robot/max_angular_accel: 0.2
+ * /robot/max_angular_vel: 0.35
+ * /robot/max_linear_accel: 0.1
+ * /robot/max_linear_vel: 0.1
+ * /robot/max_rpm: 20.0
+ * /robot/odom_publish_hz: 50.0
+ * /robot/publish_tf: True
+ * /robot/wheel_base: 0.2
+ * /robot/wheel_radius: 0.075
+ * /rosdistro: noetic
+ * /rosversion: 1.17.4
+
+NODES
+  /
+    base_odometry_node (motion_planner/base_odometry_node)
+    can_interface_node (can_motor_interface/can_interface_node)
+    cmd_vel_mux_node (motion_planner/cmd_vel_mux_node)
+    path_manager_node (path_manager/path_manager_node)
+    path_tracker_node (path_manager/path_tracker_node)
+    planner_node (motion_planner/planner_node)
+
+[1mROS_MASTER_URI=http://127.0.0.1:11329[0m
+]2;/tmp/chassis_medical_route_test/stand_route.launch http://127.0.0.1:11329
+[1mprocess[cmd_vel_mux_node-1]: started with pid [41337][0m
+[1mprocess[base_odometry_node-2]: started with pid [41338][0m
+[1mprocess[planner_node-3]: started with pid [41340][0m
+[1mprocess[can_interface_node-4]: started with pid [41354][0m
+[1mprocess[path_manager_node-5]: started with pid [41355][0m
+[1mprocess[path_tracker_node-6]: started with pid [41361][0m
+[path_tracker_node-6] killing on exit
+[path_manager_node-5] killing on exit
+[can_interface_node-4] killing on exit
+[planner_node-3] killing on exit
+[base_odometry_node-2] killing on exit
+[cmd_vel_mux_node-1] killing on exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+[1mdone[0m

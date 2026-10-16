@@ -34,7 +34,7 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
       motor_count_(4),
       heartbeat_timeout_sec_(1.0),
       event_dedup_window_sec_(0.5),
-      command_publish_rate_hz_(50.0),
+      command_publish_rate_hz_(20.0),
       command_timeout_sec_(0.5),
       start_ack_timeout_sec_(0.4),
       start_state_(0.4) {
@@ -75,17 +75,20 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   pnh_.param("heartbeat_timeout_sec", heartbeat_timeout_sec_, heartbeat_timeout_sec_);
   pnh_.param("event_dedup_window_sec", event_dedup_window_sec_, event_dedup_window_sec_);
   pnh_.param("command_publish_rate_hz", command_publish_rate_hz_, command_publish_rate_hz_);
+  pnh_.param("command_refresh_sec", command_refresh_sec_, command_refresh_sec_);
   pnh_.param("command_timeout_sec", command_timeout_sec_, command_timeout_sec_);
   pnh_.param("start_ack_timeout_sec", start_ack_timeout_sec_, start_ack_timeout_sec_);
   start_ack_timeout_sec_ = std::max(0.3, std::min(0.5, start_ack_timeout_sec_));
   start_state_.setAckTimeout(start_ack_timeout_sec_);
-  command_publish_rate_hz_ = std::max(1.0, command_publish_rate_hz_);
   command_timeout_sec_ = std::max(0.05, command_timeout_sec_);
 
   if (motor_count_ != 4 || !std::isfinite(max_rpm_) || max_rpm_ <= 0 || max_rpm_ > 3000 ||
       !std::isfinite(heartbeat_timeout_sec_) || heartbeat_timeout_sec_ < 0.6 ||
-      !std::isfinite(command_publish_rate_hz_) || !std::isfinite(command_timeout_sec_))
-    throw std::invalid_argument("Require four chassis motors, max_rpm=0..3000 and feedback timeout >=0.6s");
+      !std::isfinite(command_publish_rate_hz_) || command_publish_rate_hz_ < 10 ||
+      command_publish_rate_hz_ > 50 || !std::isfinite(command_refresh_sec_) ||
+      command_refresh_sec_ < 0.05 || command_refresh_sec_ > 0.25 ||
+      !std::isfinite(command_timeout_sec_))
+    throw std::invalid_argument("Require four chassis motors, max_rpm=0..3000, feedback timeout >=0.6s, command rate=10..50Hz/wheel and refresh=0.05..0.25s");
   pnh_.getParam("motor_indices", wheel_map_.indices);
   pnh_.getParam("direction_signs", wheel_map_.signs);
   wheel_map_.validate();
@@ -113,7 +116,8 @@ CanInterfaceNode::CanInterfaceNode(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   link_ready_pub_ = nh_.advertise<std_msgs::Bool>("/motor_link_ready", 2, true);
   can_diagnostics_pub_ = nh_.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 2);
   monitor_timer_ = nh_.createWallTimer(ros::WallDuration(0.1), &CanInterfaceNode::timerCallback, this);
-  command_timer_ = nh_.createWallTimer(ros::WallDuration(1.0 / command_publish_rate_hz_),
+  // Running: one wheel per callback; never catch up missed slots with a burst.
+  command_timer_ = nh_.createWallTimer(ros::WallDuration(1.0 / (4 * command_publish_rate_hz_)),
       &CanInterfaceNode::commandTimerCallback, this);
   probe_timer_ = nh_.createWallTimer(ros::WallDuration(0.05), &CanInterfaceNode::probeTimerCallback, this);
 
@@ -343,6 +347,10 @@ void CanInterfaceNode::emergencyResetCallback(const std_msgs::Bool::ConstPtr& ms
     motion_ack_health_ = MotionAckHealth{};
     start_state_.resetForReprepare();
     cached_generation_ = 0;
+    last_speed_sent_sec_.fill(0);
+    command_wheel_slot_ = 0;
+    cached_target_valid_ = false;
+    last_cached_batch_sec_ = 0;
     return true;
   })) {
     ROS_WARN("ESTOP reset denied: require fresh driver replies, heartbeat ACK and stable firmware diagnostics");
@@ -419,6 +427,17 @@ void CanInterfaceNode::commandTimerCallback(const ros::WallTimerEvent&) {
   if (start_state_.canSendCachedMotion()) {
     if (cached_generation_ == command_generation_ &&
         start_state_.state() == MotionStartState::CACHE_READY) return;
+    std::array<int32_t, 4> wire_targets{};
+    for (size_t i = 0; i < targets.size(); ++i)
+      wire_targets[i] = static_cast<int32_t>(std::lround(
+          std::max(-max_rpm_, std::min(max_rpm_, targets[i]))));
+    if (cached_target_valid_ && wire_targets == last_cached_rpm_) {
+      cached_generation_ = command_generation_;
+      return;
+    }
+    // Preparing a synchronized cache still needs the whole four-wheel group.
+    // The faster running-mode timer must not multiply these batches.
+    if (now - last_cached_batch_sec_ < 1.0 / command_publish_rate_hz_) return;
     for (size_t i = 0; i < targets.size(); ++i) {
       if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i], true)) {
         triggerEmergencyStop("CAN cached motion transmit failure");
@@ -426,6 +445,9 @@ void CanInterfaceNode::commandTimerCallback(const ros::WallTimerEvent&) {
       }
     }
     cached_generation_ = command_generation_;
+    last_cached_rpm_ = wire_targets;
+    cached_target_valid_ = true;
+    last_cached_batch_sec_ = now;
     start_state_.cacheReady();
     ROS_INFO("[can_interface] synchronized speed cache prepared; state=%s",
              motionStartStateName(start_state_.state()));
@@ -438,12 +460,20 @@ void CanInterfaceNode::commandTimerCallback(const ros::WallTimerEvent&) {
   if (!command_fresh) {
     std::fill(targets.begin(), targets.end(), 0.0f);
   }
-  for (size_t i = 0; i < targets.size(); ++i) {
-    if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i], false)) {
-      triggerEmergencyStop("CAN transmit failure; explicit reset required after link repair");
-      break;
-    }
+  const size_t i = command_wheel_slot_++ % targets.size();
+  const int32_t wire_rpm = static_cast<int32_t>(std::lround(
+      std::max(-max_rpm_, std::min(max_rpm_, targets[i]))));
+  // Deduplicate on the actual integer wire value, not on ROS message arrival.
+  // Periodic refresh stays comfortably inside the existing 0.5s F6 ACK guard.
+  // Read the newest target at each slot; there is no backlog to replay.
+  if (last_speed_sent_sec_[i] != 0 && last_speed_rpm_[i] == wire_rpm &&
+      now - last_speed_sent_sec_[i] < command_refresh_sec_) return;
+  if (!sendSpeedCommand(static_cast<uint8_t>(i), targets[i], false)) {
+    triggerEmergencyStop("CAN transmit failure; explicit reset required after link repair");
+    return;
   }
+  last_speed_rpm_[i] = wire_rpm;
+  last_speed_sent_sec_[i] = now;
 }
 
 bool CanInterfaceNode::isDuplicateEvent(uint8_t key, const ros::SteadyTime& now) {
@@ -696,11 +726,18 @@ void CanInterfaceNode::handleCanErrorFrame(const can_frame& frame) {
       (frame.data[3] == CAN_ERR_PROT_LOC_CRC_SEQ || frame.data[3] == CAN_ERR_PROT_LOC_CRC_DEL);
   const bool format = (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_FORM);
   const bool stuff = (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_STUFF);
+  const bool bit = (errors & CAN_ERR_PROT) &&
+      (frame.data[2] & (CAN_ERR_PROT_BIT | CAN_ERR_PROT_BIT0 | CAN_ERR_PROT_BIT1));
+  if (errors & CAN_ERR_PROT) {
+    last_protocol_error_.store(frame.data[2]);
+    last_protocol_location_.store(frame.data[3]);
+  }
   const bool overflow = (errors & CAN_ERR_CRTL) &&
       (frame.data[1] & (CAN_ERR_CRTL_RX_OVERFLOW | CAN_ERR_CRTL_TX_OVERFLOW));
   if (crc) ++can_crc_error_count_;
   if (format) ++can_format_error_count_;
   if (stuff) ++can_stuff_error_count_;
+  if (bit) ++can_bit_error_count_;
   if (overflow) ++can_overflow_count_;
   const bool passive = (errors & CAN_ERR_CRTL) &&
       (frame.data[1] & (CAN_ERR_CRTL_RX_PASSIVE | CAN_ERR_CRTL_TX_PASSIVE));
@@ -720,11 +757,15 @@ void CanInterfaceNode::handleCanErrorFrame(const can_frame& frame) {
     last_failure_time_sec_.store(ros::SteadyTime::now().toSec());
     ROS_ERROR_THROTTLE(1.0,
         "CAN bus error on %s: class=0x%X controller=%s flags=0x%02X protocol=0x%02X location=0x%02X "
-        "CRC=%s format=%s bit-stuffing=%s overflow=%s (not an application RX timeout)",
+        "CRC=%s format=%s bit-stuffing=%s bit-error=%s dominant-bit-failed=%s recessive-bit-failed=%s "
+        "overflow=%s (not an application RX timeout)",
         can_device_.c_str(), errors,
         bus_off ? "BUS-OFF" : passive ? "ERROR-PASSIVE" : warning ? "ERROR-WARNING" : "see-flags",
         frame.data[1], frame.data[2], frame.data[3], crc ? "yes" : "no",
-        format ? "yes" : "no", stuff ? "yes" : "no", overflow ? "yes" : "no");
+        format ? "yes" : "no", stuff ? "yes" : "no", bit ? "yes" : "no",
+        (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_BIT0) ? "yes" : "no",
+        (errors & CAN_ERR_PROT) && (frame.data[2] & CAN_ERR_PROT_BIT1) ? "yes" : "no",
+        overflow ? "yes" : "no");
   }
   if (passive || bus_off) {
     controller_fault_.store(true);
@@ -764,6 +805,9 @@ void CanInterfaceNode::publishCanDiagnostics(double now) {
   add("crc_errors", std::to_string(can_crc_error_count_.load()));
   add("format_errors", std::to_string(can_format_error_count_.load()));
   add("bit_stuffing_errors", std::to_string(can_stuff_error_count_.load()));
+  add("bit_errors", std::to_string(can_bit_error_count_.load()));
+  add("last_protocol_error", std::to_string(last_protocol_error_.load()));
+  add("last_protocol_location", std::to_string(last_protocol_location_.load()));
   add("controller_overflows", std::to_string(can_overflow_count_.load()));
   add("last_error_class", std::to_string(last_can_error_class_.load()));
   add("last_controller_flags", std::to_string(last_controller_status_.load()));

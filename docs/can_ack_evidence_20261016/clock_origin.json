@@ -1,0 +1,312 @@
+{
+  "phases": [
+    {
+      "label": "clock_original",
+      "sample_point": 0.875,
+      "sjw": 1,
+      "nominal_bitrate": 500000,
+      "counts": {
+        "error_frames": 411,
+        "protocol_errors": 307,
+        "passive_reports": 117,
+        "hardware_ack_errors": 104,
+        "heartbeat_write_accepted": 1,
+        "local_echo": 1,
+        "tx_confirmations": 1,
+        "bus_off_errors": 248
+      },
+      "actual_fault_reports": 411,
+      "clean": false,
+      "actual_bittiming": {
+        "bitrate": 500000,
+        "sample_point": 0.875,
+        "tq": 125,
+        "prop_seg": 6,
+        "phase_seg1": 7,
+        "phase_seg2": 2,
+        "sjw": 1
+      }
+    },
+    {
+      "label": "clock_candidate_0",
+      "sample_point": 0.8,
+      "sjw": 2,
+      "nominal_bitrate": 480000,
+      "counts": {
+        "error_frames": 1003,
+        "bus_off_errors": 699,
+        "protocol_errors": 824,
+        "passive_reports": 183,
+        "hardware_ack_errors": 179,
+        "heartbeat_write_accepted": 1,
+        "local_echo": 1,
+        "tx_confirmations": 1
+      },
+      "actual_fault_reports": 1003,
+      "clean": false,
+      "actual_bittiming": {
+        "bitrate": 480000,
+        "sample_point": 0.8,
+        "tq": 104,
+        "prop_seg": 7,
+        "phase_seg1": 8,
+        "phase_seg2": 4,
+        "sjw": 2
+      }
+    },
+    {
+      "label": "clock_candidate_1",
+      "sample_point": 0.8,
+      "sjw": 2,
+      "nominal_bitrate": 489796,
+      "counts": {
+        "error_frames": 489,
+        "protocol_errors": 368,
+        "passive_reports": 118,
+        "hardware_ack_errors": 120,
+        "bus_off_errors": 309,
+        "heartbeat_write_accepted": 1,
+        "external_frames": 1,
+        "rx_0x111": 1
+      },
+      "actual_fault_reports": 489,
+      "clean": false,
+      "actual_bittiming": {
+        "bitrate": 489795,
+        "sample_point": 0.785,
+        "tq": 145,
+        "prop_seg": 5,
+        "phase_seg1": 5,
+        "phase_seg2": 3,
+        "sjw": 2
+      }
+    },
+    {
+      "label": "clock_candidate_2",
+      "sample_point": 0.8,
+      "sjw": 2,
+      "nominal_bitrate": 505263,
+      "counts": {
+        "error_frames": 471,
+        "protocol_errors": 352,
+        "passive_reports": 116,
+        "hardware_ack_errors": 119,
+        "bus_off_errors": 293,
+        "heartbeat_write_accepted": 1
+      },
+      "actual_fault_reports": 471,
+      "clean": false,
+      "actual_bittiming": {
+        "bitrate": 505263,
+        "sample_point": 0.8,
+        "tq": 395,
+        "prop_seg": 1,
+        "phase_seg1": 2,
+        "phase_seg2": 1,
+        "sjw": 1
+      }
+    },
+    {
+      "label": "clock_candidate_3",
+      "sample_point": 0.75,
+      "sjw": 2,
+      "nominal_bitrate": 521739,
+      "counts": {
+        "error_frames": 370,
+        "protocol_errors": 266,
+        "passive_reports": 114,
+        "hardware_ack_errors": 103,
+        "heartbeat_write_accepted": 1,
+        "bus_off_errors": 208,
+        "external_frames": 1,
+        "rx_0x111": 1
+      },
+      "actual_fault_reports": 370,
+      "clean": false,
+      "actual_bittiming": {
+        "bitrate": 521739,
+        "sample_point": 0.75,
+        "tq": 479,
+        "prop_seg": 1,
+        "phase_seg1": 1,
+        "phase_seg2": 1,
+        "sjw": 1
+      }
+    }
+  ],
+  "before": {
+    "ifindex": 12,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-PASSIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.875,
+          "tq": 125,
+          "prop_seg": 6,
+          "phase_seg1": 7,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 1240,
+        "error_passive": 10732,
+        "bus_off": 25666
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 356832,
+        "packets": 44604,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 40,
+        "packets": 5,
+        "errors": 0,
+        "dropped": 0,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "conclusion": "No verified timing repair; restored original",
+  "after": {
+    "ifindex": 12,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-ACTIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.875,
+          "tq": 125,
+          "prop_seg": 6,
+          "phase_seg1": 7,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 1328,
+        "error_passive": 11374,
+        "bus_off": 27423
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 378864,
+        "packets": 47358,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 56,
+        "packets": 7,
+        "errors": 0,
+        "dropped": 3,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  }
+}

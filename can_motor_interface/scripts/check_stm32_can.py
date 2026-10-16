@@ -22,8 +22,8 @@ def link_problems(link, bitrate):
         problems.append('not a physical SocketCAN interface (expected link kind can)')
     if 'UP' not in link.get('flags', []):
         problems.append('interface is DOWN')
-    if data.get('state') in ('BUS-OFF', 'STOPPED', 'SLEEPING'):
-        problems.append('CAN controller state: ' + data['state'])
+    if data.get('state') != 'ERROR-ACTIVE':
+        problems.append('CAN controller state: ' + str(data.get('state', 'unknown')))
     actual = data.get('bittiming', {}).get('bitrate')
     if actual != bitrate:
         problems.append('bitrate is %s, expected %s; must match STM32 CAN1' % (actual, bitrate))
@@ -43,6 +43,22 @@ def is_stm32_reply(can_id, dlc, msg_flags, rx_id, extended):
     return (not msg_flags & socket.MSG_DONTROUTE and not can_id & (RTR | ERR)
             and 0 < dlc <= 8 and bool(can_id & EFF) == extended
             and can_id & (0x1FFFFFFF if extended else 0x7FF) == rx_id)
+
+
+def describe_can_error(can_id, data):
+    reasons = []
+    if can_id & 0x20:
+        reasons.append('hardware ACK missing')
+    if can_id & 0x40:
+        reasons.append('BUS-OFF')
+    if can_id & 0x04 and len(data) >= 2:
+        if data[1] & 0x30:
+            reasons.append('ERROR-PASSIVE')
+        if data[1] & 0x0C:
+            reasons.append('ERROR-WARNING')
+    if can_id & 0x08 and len(data) >= 4:
+        reasons.append('CAN protocol violation (type=0x%02X location=0x%02X)' % (data[2], data[3]))
+    return ', '.join(reasons) or 'CAN error class=0x%X' % (can_id & 0x1FFFFFFF)
 
 
 def main():
@@ -72,8 +88,12 @@ def main():
                 print('FAIL:', problem)
             return 2
         print('Link configuration OK. Passively listening; no CAN commands will be sent.')
-        replies = local = other = 0
+        replies = local = other = errors = state_notifications = 0
         with socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW) as sock:
+            # CAN_RAW excludes error frames by default. Data RX can continue
+            # during ERROR-PASSIVE and must never hide missing hardware ACKs.
+            sock.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_ERR_FILTER,
+                            struct.pack('=I', 0x1FFFFFFF))
             sock.bind((args.device,))
             sock.setblocking(False)
             deadline = time.monotonic() + args.listen_seconds
@@ -84,6 +104,17 @@ def main():
                 if len(raw) != FRAME.size:
                     continue
                 cid, dlc, data = FRAME.unpack(raw)
+                if cid & ERR:
+                    # Older candleLight firmware reports ESR changes using
+                    # CAN_ERR_CRTL even when returning to error-active. This
+                    # notification alone is not an ACK/protocol/controller fault.
+                    if (cid & 0x1FFFFFFF) == 0x04 and dlc == 8 and data[1] in (0, 0x40):
+                        state_notifications += 1
+                        continue
+                    errors += 1
+                    if errors <= 10:
+                        print('FAIL: ' + describe_can_error(cid, data[:min(dlc, 8)]))
+                    continue
                 if flags & socket.MSG_DONTROUTE:
                     local += 1
                 elif is_stm32_reply(cid, dlc, flags, args.rx_id, args.frame_format == 'extended'):
@@ -95,7 +126,20 @@ def main():
                         'local-TX' if flags & socket.MSG_DONTROUTE else 'bus-RX',
                         'extended' if cid & EFF else 'standard', cid & 0x1FFFFFFF,
                         dlc, data[:min(dlc, 8)].hex(' ')))
-        print('Expected STM32 bus RX=%d; local TX echoes=%d; other bus RX=%d' % (replies, local, other))
+        print('Expected STM32 bus RX=%d; local TX echoes=%d; other bus RX=%d; CAN error frames=%d' % (
+            replies, local, other, errors))
+        print('Controller error-active notifications=%d' % state_notifications)
+        final_links = json.loads(subprocess.run(
+            ['ip', '-json', '-details', '-statistics', 'link', 'show', 'dev', args.device],
+            capture_output=True, text=True, check=True).stdout)
+        if not final_links:
+            raise ValueError('interface disappeared during capture')
+        final_problems = link_problems(final_links[0], args.bitrate)
+        if errors or final_problems:
+            for problem in final_problems:
+                print('FAIL:', problem)
+            print('FAIL: CAN link fault observed; matching data RX does not prove a healthy link.')
+            return 4
         if not replies:
             print('No matching external reply observed. If the ROS node was running, check '
                   'ID/IDE/bitrate, STM32 CAN1 filter/FIFO interrupt, transceivers, H/L/GND and termination. '

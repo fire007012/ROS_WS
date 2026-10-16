@@ -1,0 +1,61 @@
+[==========] Running 14 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 14 tests from CanTransport
+[ RUN      ] CanTransport.BackpressurePreservesSocketAndReceivesRealHeartbeat
+[ERROR] [1792129239.256346935]: CAN TX failed on can0 ID=0x200: No buffer space available; check link state, bitrate, STM32 ACK and bus wiring.
+[ERROR] [1792129239.256417067]: [can_interface] ESTOP latched: CAN2 feedback probe transmit failure
+[WARN] [1792129239.262153106]: [can_interface] duplicate ESTOP ignored: CAN heartbeat transmit failure
+[INFO] [1792129239.226047896]: STM32 custom protocol: device=can0 TX=0x100 RX=0x101 standard frames. This is NOT native Y42 passthrough; CAN bitrate must match STM32 CAN1.
+[INFO] [1792129239.233674179]: Logical wheel 0 -> STM32 index 1 / CAN2 address 2, sign=1
+[INFO] [1792129239.233726017]: Logical wheel 1 -> STM32 index 0 / CAN2 address 1, sign=1
+[INFO] [1792129239.233732328]: Logical wheel 2 -> STM32 index 3 / CAN2 address 4, sign=1
+[INFO] [1792129239.233735985]: Logical wheel 3 -> STM32 index 2 / CAN2 address 3, sign=1
+[INFO] [1792129239.255991338]: SocketCAN bound on can0; binding/queued TX does not prove STM32 reception.
+[INFO] [1792129239.256045189]: [can_interface] motion start state=IDLE
+[INFO] [1792129239.256432175]: [can_interface] motion start state=ESTOP_LATCHED
+[INFO] [1792129239.256541691]: First CAN RX on can0: ID=0x102 standard DLC=8; configured STM32 RX=0x101 standard.
+[       OK ] CanTransport.BackpressurePreservesSocketAndReceivesRealHeartbeat (237 ms)
+[ RUN      ] CanTransport.EagainAndInterruptedWritesDoNotReopenSocket
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.EagainAndInterruptedWritesDoNotReopenSocket (224 ms)
+[ RUN      ] CanTransport.StopIsAttemptedBeforeFailingHeartbeatAndSuppressesQueries
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.StopIsAttemptedBeforeFailingHeartbeatAndSuppressesQueries (201 ms)
+[ RUN      ] CanTransport.FirstHeartbeatFailureStillAttemptsStopInSameTick
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.FirstHeartbeatFailureStillAttemptsStopInSameTick (204 ms)
+[ RUN      ] CanTransport.DeviceLossBacksOffAndReconnectSubmitsStopFirst
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.DeviceLossBacksOffAndReconnectSubmitsStopFirst (202 ms)
+[ RUN      ] CanTransport.FirstDisconnectedTickDoesNotConsumeStopRetryBeforeReopen
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.FirstDisconnectedTickDoesNotConsumeStopRetryBeforeReopen (200 ms)
+[ RUN      ] CanTransport.RepeatedMissingDeviceAttemptsAreBoundedAndBackoffIsCapped
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.RepeatedMissingDeviceAttemptsAreBoundedAndBackoffIsCapped (203 ms)
+[ RUN      ] CanTransport.PassiveAndProtocolErrorsAreDiagnosedWithoutRefreshingHealth
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.PassiveAndProtocolErrorsAreDiagnosedWithoutRefreshingHealth (203 ms)
+[ RUN      ] CanTransport.BusOffNeedsRecoveryAndDoesNotTriggerSocketChurn
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.BusOffNeedsRecoveryAndDoesNotTriggerSocketChurn (202 ms)
+[ RUN      ] CanTransport.LatchedQueriesAreReducedAndRecoveryRequiresResetAndNewCommand
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.LatchedQueriesAreReducedAndRecoveryRequiresResetAndNewCommand (202 ms)
+[ RUN      ] CanTransport.RunningTargetsAreStaggeredAndRepeatedWireValuesAreCoalesced
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.RunningTargetsAreStaggeredAndRepeatedWireValuesAreCoalesced (293 ms)
+[ RUN      ] CanTransport.SlotsUseNewestCommandAndExpiredCommandBecomesZero
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.SlotsUseNewestCommandAndExpiredCommandBecomesZero (212 ms)
+[ RUN      ] CanTransport.CoalescingPreservesMissingMotionAckStop
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.CoalescingPreservesMissingMotionAckStop (203 ms)
+[ RUN      ] CanTransport.PrestartCacheDoesNotRepeatOnNewIdenticalMessagesOrFasterTicks
+XmlRpcServer::acceptConnection: Could not accept connection (Resource temporarily unavailable).
+[       OK ] CanTransport.PrestartCacheDoesNotRepeatOnNewIdenticalMessagesOrFasterTicks (202 ms)
+[----------] 14 tests from CanTransport (2989 ms total)
+
+[----------] Global test environment tear-down
+[==========] 14 tests from 1 test suite ran. (2990 ms total)
+[  PASSED  ] 14 tests.

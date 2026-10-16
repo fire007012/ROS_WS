@@ -1,0 +1,275 @@
+{
+  "started": "2026-10-16T02:39:56.807921+08:00",
+  "events": [
+    {
+      "time": 1792089596.8130167,
+      "kind": "capture_begin",
+      "stage": "original_receive_only"
+    },
+    {
+      "time": 1792089596.8338294,
+      "kind": "first_error",
+      "frame": {
+        "stage": "original_receive_only",
+        "time": 1792089596.8336911,
+        "can_id": "0x2000000c",
+        "dlc": 8,
+        "data": "0030100000000000",
+        "flags": 0
+      }
+    },
+    {
+      "time": 1792089598.8136103,
+      "kind": "capture_end",
+      "stage": "original_receive_only",
+      "counts": {
+        "error_reports": 137,
+        "hardware_ack_reports": 35
+      }
+    },
+    {
+      "time": 1792089598.8136897,
+      "kind": "configure_begin",
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "dev",
+        "can0",
+        "down"
+      ]
+    },
+    {
+      "time": 1792089598.8200564,
+      "kind": "configure_end",
+      "returncode": 0,
+      "stderr": ""
+    },
+    {
+      "time": 1792089598.8201315,
+      "kind": "configure_begin",
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "dev",
+        "can0",
+        "type",
+        "can",
+        "one-shot",
+        "on"
+      ]
+    },
+    {
+      "time": 1792089598.8222508,
+      "kind": "configure_end",
+      "returncode": 2,
+      "stderr": "RTNETLINK answers: Operation not supported"
+    },
+    {
+      "time": 1792089598.822328,
+      "kind": "configure_begin",
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "dev",
+        "can0",
+        "down"
+      ]
+    },
+    {
+      "time": 1792089598.8240168,
+      "kind": "configure_end",
+      "returncode": 0,
+      "stderr": ""
+    },
+    {
+      "time": 1792089598.824086,
+      "kind": "configure_begin",
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "dev",
+        "can0",
+        "type",
+        "can",
+        "one-shot",
+        "off"
+      ]
+    },
+    {
+      "time": 1792089598.8265877,
+      "kind": "configure_end",
+      "returncode": 0,
+      "stderr": ""
+    },
+    {
+      "time": 1792089598.826657,
+      "kind": "configure_begin",
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "dev",
+        "can0",
+        "up"
+      ]
+    },
+    {
+      "time": 1792089598.8325102,
+      "kind": "configure_end",
+      "returncode": 0,
+      "stderr": ""
+    },
+    {
+      "time": 1792089598.8325965,
+      "kind": "capture_begin",
+      "stage": "restored_receive_only"
+    },
+    {
+      "time": 1792089598.8327317,
+      "kind": "failed",
+      "error": "[Errno 100] Network is down"
+    }
+  ],
+  "counts": {
+    "original_receive_only": {
+      "error_reports": 137,
+      "hardware_ack_reports": 35
+    }
+  },
+  "before": {
+    "ifindex": 11,
+    "ifname": "can0",
+    "flags": [
+      "NOARP",
+      "UP",
+      "LOWER_UP",
+      "ECHO"
+    ],
+    "mtu": 16,
+    "qdisc": "pfifo_fast",
+    "operstate": "UP",
+    "linkmode": "DEFAULT",
+    "group": "default",
+    "txqlen": 10,
+    "link_type": "can",
+    "promiscuity": 0,
+    "min_mtu": 0,
+    "max_mtu": 0,
+    "linkinfo": {
+      "info_kind": "can",
+      "info_data": {
+        "state": "ERROR-PASSIVE",
+        "restart_ms": 0,
+        "bittiming": {
+          "bitrate": 500000,
+          "sample_point": 0.875,
+          "tq": 125,
+          "prop_seg": 6,
+          "phase_seg1": 7,
+          "phase_seg2": 2,
+          "sjw": 1
+        },
+        "bittiming_const": {
+          "name": "gs_usb",
+          "tseg1": {
+            "min": 1,
+            "max": 16
+          },
+          "tseg2": {
+            "min": 1,
+            "max": 8
+          },
+          "sjw": {
+            "min": 1,
+            "max": 4
+          },
+          "brp": {
+            "min": 1,
+            "max": 1024
+          },
+          "brp_inc": 1
+        },
+        "clock": 48000000
+      },
+      "info_xstats": {
+        "restarts": 0,
+        "bus_error": 0,
+        "arbitration_lost": 0,
+        "error_warning": 4914,
+        "error_passive": 59950,
+        "bus_off": 104323
+      }
+    },
+    "num_tx_queues": 1,
+    "num_rx_queues": 1,
+    "gso_max_size": 65536,
+    "gso_max_segs": 65535,
+    "stats64": {
+      "rx": {
+        "bytes": 2837480,
+        "packets": 354685,
+        "errors": 0,
+        "dropped": 0,
+        "over_errors": 0,
+        "multicast": 0
+      },
+      "tx": {
+        "bytes": 104,
+        "packets": 13,
+        "errors": 0,
+        "dropped": 4,
+        "carrier_errors": 0,
+        "collisions": 0
+      }
+    }
+  },
+  "qdisc_before": [
+    {
+      "kind": "pfifo_fast",
+      "handle": "0:",
+      "root": true,
+      "refcnt": 2,
+      "options": {
+        "bands": 3,
+        "priomap": [
+          1,
+          2,
+          2,
+          2,
+          1,
+          2,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "multiqueue": false
+      },
+      "bytes": 208,
+      "packets": 13,
+      "drops": 0,
+      "overlimits": 0,
+      "requeues": 0,
+      "backlog": 0,
+      "qlen": 0
+    }
+  ],
+  "first_error": {
+    "stage": "original_receive_only",
+    "time": 1792089596.8336911,
+    "can_id": "0x2000000c",
+    "dlc": 8,
+    "data": "0030100000000000",
+    "flags": 0
+  }
+}

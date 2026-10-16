@@ -30,8 +30,9 @@
     <param name="heartbeat_timeout_sec" value="1.0"/>
     <param name="event_dedup_window_sec" value="0.5"/>
 
-    <!-- Repeat the latest speed target independently of ROS command arrival jitter. -->
-    <param name="command_publish_rate_hz" value="50.0"/>
+    <!-- Per-wheel maximum: stagger four wheels, refresh unchanged RPM every 200ms. -->
+    <param name="command_publish_rate_hz" value="20.0"/>
+    <param name="command_refresh_sec" value="0.2"/>
     <param name="command_timeout_sec" value="0.5"/>
     <!-- Physical-start command ACK must arrive in the firmware's 300..500 ms window. -->
     <param name="start_ack_timeout_sec" value="0.4"/>
