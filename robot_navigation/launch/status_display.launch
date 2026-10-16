@@ -1,6 +1,7 @@
 <launch>
   <arg name="config_file" default="$(find robot_navigation)/config/status_display.yaml"/>
   <arg name="load_config" default="true"/>
+  <arg name="scan_preview" default="false"/>
   <arg name="show_map" default="true"/>
   <arg name="odom_topic" default="/odom"/>
   <arg name="map_frame" default="odom"/>
@@ -35,6 +36,7 @@
   <node pkg="robot_navigation" type="robot_status_display_node.py" name="robot_status_display_node" output="screen" if="$(arg enable_gui)" required="true">
     <rosparam file="$(arg arena_config)" command="load" ns="arena"/>
     <rosparam file="$(arg paths_file)" command="load" ns="routes"/>
+    <param name="scan_preview" value="$(arg scan_preview)"/>
     <param name="show_map" value="$(arg show_map)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="map_frame" value="$(arg map_frame)"/>

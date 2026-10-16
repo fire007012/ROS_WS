@@ -244,6 +244,7 @@ target_link_libraries(start_button_node
 )
 
 catkin_install_python(PROGRAMS
+  scripts/audio_video_ready_node.py
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
   scripts/button_autostart.py
@@ -290,6 +291,7 @@ install(DIRECTORY systemd/
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/mission_routes.test)
+  add_rostest(test/mission_waypoint_position.test)
   add_rostest(test/safety_and_fine_tuning.test)
   add_rostest(test/rear_can_safety.test)
   add_rostest(test/mission_cancellation.test)

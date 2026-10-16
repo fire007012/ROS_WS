@@ -48,6 +48,7 @@
   <group if="$(arg enable_gui)">
     <include file="$(find robot_navigation)/launch/status_display.launch">
       <arg name="fullscreen" value="$(arg fullscreen)"/>
+      <arg name="scan_preview" value="true"/>
     </include>
   </group>
 </launch>

@@ -39,8 +39,8 @@ class AVSettingsStructure(unittest.TestCase):
         self.assertEqual(settings.find("arg[@name='video_display_fps']").get('default'), '15.0')
         self.assertEqual(settings.find('include').get('pass_all_args'), 'true')
         camera = PEER.read_text(encoding='utf-8')
-        self.assertIn('<arg name="capture_wait_for_ready" value="true"/>', camera)
-        self.assertIn('<arg name="capture_ready_topic" value="$(arg ready_topic)"/>', camera)
+        self.assertIn("<arg name=\"capture_wait_for_ready\" value=\"$(eval not arg('always_on'))\"/>", camera)
+        self.assertIn('<arg name="capture_ready_topic" value="$(arg effective_ready_topic)"/>', camera)
 
     def test_status_gui_defaults_are_explicit_and_not_part_of_peer_nodes(self):
         settings = ET.parse(SETTINGS).getroot()
@@ -158,7 +158,7 @@ class AVLaunchLoading(unittest.TestCase):
             with self.subTest(role=role):
                 c = self.load_peer(role)
                 expected_nodes = {camera, 'video_sender_' + role,
-                                  'video_stream_' + role, 'audio_chat_' + role}
+                                  'video_stream_' + role, 'audio_chat_' + role, 'audio_video_ready_' + role}
                 if role == 'slave':
                     expected_nodes.add(view)
                 self.assertEqual({n.name for n in c.nodes}, expected_nodes)
@@ -166,6 +166,7 @@ class AVLaunchLoading(unittest.TestCase):
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'local_ip'), local)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'remote_ip'), remote)
                 self.assertEqual(self.value(c, 'video_stream_' + role, 'enable_http'), False)
+                self.assertEqual(self.value(c, 'audio_chat_' + role, 'ready_topic'), '/audio_video/ready')
                 for n in c.nodes:
                     self.assertEqual(dict(n.env_args)['ROS_IP'], local)
                     self.assertEqual(dict(n.env_args)['ROS_MASTER_URI'], NETWORK['ROS_MASTER_URI'])
@@ -188,7 +189,7 @@ class AVLaunchLoading(unittest.TestCase):
     def test_audio_only_cli_override(self):
         for role in ('slave', 'master'):
             self.assertEqual([n.name for n in self.load_peer(role, ['enable_video:=false']).nodes],
-                             ['audio_chat_' + role])
+                             ['audio_video_ready_' + role, 'audio_chat_' + role])
 
     def test_camera_off_cli_override(self):
         for role, camera_arg in (('master', 'start_lower_cam'), ('slave', 'start_upper_cam')):
@@ -310,7 +311,7 @@ class AVLaunchLoading(unittest.TestCase):
             self.assertEqual(dict(node.remap_args)['/vitals/temperature'], '/custom/temp')
         node = next(n for n in config.nodes if n.name == 'mission_controller_node')
         self.assertEqual(dict(node.remap_args)['/Ready'], '/custom/ready')
-        self.assertEqual(self.value(config, 'audio_chat_master', 'ready_topic'), '/custom/ready')
+        self.assertEqual(self.value(config, 'audio_chat_master', 'ready_topic'), '/audio_video/ready')
 
     def test_mission_role_and_av_devices_forward_to_bedside_and_gui(self):
         config = self.load_mission(['audio_role:=slave', 'call_camera_device:=/dev/test-camera',
@@ -332,6 +333,23 @@ class AVLaunchLoading(unittest.TestCase):
         self.assertFalse(self.value(config, 'bedside_session_node', 'patient_measurement_enabled'))
         self.assertIn('speak_node', names)
         self.assertIn('barcode_qr_detector_node', names)
+
+    def test_continuous_media_and_independent_vitals_defaults(self):
+        config = self.load_mission()
+        self.assertIn('audio_video_ready_master', [n.name for n in config.nodes])
+        self.assertFalse(config.params['/lower_cam/lower_usb_cam/wait_for_ready'].value)
+        self.assertEqual(self.value(config, 'video_sender_master', 'ready_topic'), '/audio_video/ready')
+        self.assertFalse(self.value(config, 'bedside_session_node', 'patient_measurement_enabled'))
+        self.assertIn('esp32_vitals_bridge_node', [n.name for n in config.nodes])
+        self.assertFalse(self.value(config, 'mission_controller_node', 'enable_bedside_distance_tuning'))
+        self.assertEqual(config.params['/adaptive_scan_camera_node/video_device'].value, '/dev/video2')
+        self.assertEqual(config.params['/lower_cam/lower_usb_cam/video_device'].value, '/dev/video0')
+
+    def test_legacy_ready_can_still_gate_media_explicitly(self):
+        config = self.load_peer('master', ['always_on:=false'])
+        self.assertNotIn('audio_video_ready_master', [n.name for n in config.nodes])
+        self.assertEqual(self.value(config, 'audio_chat_master', 'ready_topic'), '/Ready')
+        self.assertTrue(config.params['/lower_cam/lower_usb_cam/wait_for_ready'].value)
 
     def test_mission_field_uses_same_waypoints_and_can_be_hidden(self):
         config = self.load_mission()

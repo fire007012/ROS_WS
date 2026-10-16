@@ -29,6 +29,7 @@
 -->
 <launch>
   <rosparam file="$(find robot_navigation)/config/chassis_geometry.yaml"/>
+  <arg name="enable_bedside_distance_tuning" default="false"/>
   <arg name="enable_arm_upper_alignment" default="false"/>
   <arg name="can_device" default="can0"/>
   <arg name="tx_can_id" default="256"/>
@@ -85,6 +86,8 @@
   <arg name="audio_ready_topic" default="/Ready"/>
   <!-- ESP32 USB bridge is enabled by default; custom providers must publish vitals_frame_topic. -->
   <arg name="enable_patient_measurement" default="true"/>
+  <!-- Vitals are continuously available; they never block mission progression. -->
+  <arg name="require_bedside_measurement" default="false"/>
   <arg name="patient_measurement_launch"
        default="$(find robot_navigation)/launch/patient_measurement_interface.launch"/>
   <arg name="vitals_config" default="$(find robot_navigation)/config/status_display.yaml"/>
@@ -308,8 +311,8 @@
     </node>
   </group>
 
-  <!-- PC1 mission start keeps /Ready=1 through both beds and return.
-       Shared defaults capture the Pi call camera at 640x480@25 from /dev/video2. -->
+  <!-- Continuous media uses its own /audio_video/ready topic; PC1 only starts motion.
+       Shared Pi camera roles: scan video2, call video0. -->
   <group if="$(arg enable_audio_video)">
     <include file="$(find robot_navigation)/config/audio_video_defaults.launch">
       <arg name="role" value="$(arg audio_role)"/>
@@ -327,7 +330,7 @@
   </group>
   <node pkg="robot_navigation" type="bedside_session_node.py" name="bedside_session_node" output="screen" required="true">
     <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>
-    <param name="patient_measurement_enabled" value="$(arg enable_patient_measurement)"/>
+    <param name="patient_measurement_enabled" value="$(arg require_bedside_measurement)"/>
     <param name="timeout_s" value="$(arg bedside_timeout_s)"/>
     <param name="call_duration_s" value="$(arg call_duration_s)"/>
     <param name="audio_role" value="$(arg audio_role)"/>
@@ -427,6 +430,7 @@
         name="mission_controller_node" output="screen" required="true">
     <rosparam file="$(arg mission_config)" command="load"/>
     <remap from="/Ready" to="$(arg audio_ready_topic)"/>
+    <param name="enable_bedside_distance_tuning" value="$(arg enable_bedside_distance_tuning)"/>
       <param name="skip_bedside_scan" value="$(arg skip_bedside_scan)"/>
       <param name="competition_mode" value="$(arg competition_mode)"/>
       <param name="audio_video_enabled" value="$(arg enable_audio_video)"/>

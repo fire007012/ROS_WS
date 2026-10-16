@@ -28,12 +28,12 @@ def task_text(state, assignment=None, finished=None):
     actions = {
         'GOTO_BED': '正在前往{bed}',
         'ARM_UPPER_ALIGN': '正在对准{bed}床头柜',
-        'POSITION_IN_CIRCLE': '正在进行{bed}入圈微调',
+        'POSITION_IN_CIRCLE': '正在校验{bed}停靠位置与车体入圈',
         'SCAN_BARCODE': '已到{bed}，正在等待床头条形码',
         'OPEN_BOX': '正在为{bed}选择{box}',
         'PLACE_MEDICINE': '正在向{bed}放药（{box}），机械臂伸出、开箱及收回',
         'VOICE': '正在完成{bed}取药播报，底盘保持静止',
-        'BEDSIDE': '正在与{bed}音视频交流并测量心率、体温',
+        'BEDSIDE': '正在与{bed}音视频交流',
     }
     key = state[:-2] if state.endswith(('_A', '_B')) else state
     return actions.get(key, state or '等待任务状态').format(bed=target, box=medicine)

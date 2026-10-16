@@ -237,11 +237,17 @@ def make_window():
     obj.measuring_state = False
     obj.video_lock = threading.Lock()
     obj.latest_video = None
+    obj.latest_scan = None
+    obj.last_scan_time = 0.0
+    obj.display_source = None
     obj.last_video_time = 0.0
     obj.last_video_render = 0.0
     obj.video_has_signal = False
     obj.video_display_fps = 15.0
     obj.video_photo = None
+    obj.video_title = Label()
+    obj.scan_panel = types.SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None)
+    obj.scan_label = Label()
     obj.video_label = Label()
     obj.video_info = Label()
     obj.scan_summary = 'scan profile'
@@ -339,6 +345,43 @@ class DisplayTests(unittest.TestCase):
         self.assertIsNone(obj.pose_track.goal)
         obj.path_target(types.SimpleNamespace(frame_id='odom', x=4, y=2.2))
         self.assertEqual(obj.pose_track.goal, (4, 2.2))
+
+    def test_scan_preview_is_separate_and_never_replaces_doctor_video(self):
+        obj = make_window()
+        rendered = []
+        obj.render_video = lambda msg, label=None: rendered.append((msg, label))
+        scan, call = object(), types.SimpleNamespace(header=types.SimpleNamespace(frame_id='doctor'))
+        obj.mission_state(types.SimpleNamespace(data='SCAN_QR'))
+        obj.scan_video(scan)
+        obj.video(call)
+        obj.pump()
+        self.assertIn((scan, obj.scan_label), rendered)
+        self.assertIn((call, None), rendered)
+        self.assertTrue(obj.scan_visible)
+        self.assertIn('音视频', obj.video_title.text)
+        obj.mission_state(types.SimpleNamespace(data='GOTO_BED_A'))
+        obj.video(call)
+        obj.pump()
+        self.assertFalse(obj.scan_visible)
+        self.assertIsNone(obj.scan_photo)
+        obj.scan_preview = True
+        obj.scan_video(scan)
+        obj.pump()
+        self.assertTrue(obj.scan_visible)
+
+    def test_render_video_passes_binary_ppm_to_tk_without_base64(self):
+        obj = make_window()
+        obj.video_label.winfo_width = lambda: 2
+        obj.video_label.winfo_height = lambda: 1
+        pixels = bytes([255, 0, 0, 0, 255, 0])
+        frame = types.SimpleNamespace(shape=(1, 2, 3), tobytes=lambda: pixels)
+        obj.bridge = types.SimpleNamespace(imgmsg_to_cv2=lambda *a, **kw: frame)
+        cv = types.SimpleNamespace(COLOR_BGR2RGB=1, cvtColor=lambda *a: frame,
+                                  error=ValueError)
+        with patch.object(display, 'cv2', cv), patch.object(display.tk, 'PhotoImage') as photo:
+            obj.render_video(object())
+        self.assertEqual(photo.call_args.kwargs['data'], b'P6\n2 1\n255\n' + pixels)
+        self.assertEqual(photo.call_args.kwargs['format'], 'PPM')
 
     def test_callback_bursts_are_coalesced(self):
         obj = make_window()

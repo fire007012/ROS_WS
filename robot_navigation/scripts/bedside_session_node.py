@@ -103,7 +103,8 @@ class BedsideSession:
             call_since = measure_since = None
             call_done = not self.audio
             measure_done = not self.measure
-            self.status.publish('waiting for doctor video/audio and fresh bedside measurement')
+            self.status.publish('waiting for doctor video/audio and fresh bedside measurement' if self.measure
+                                else 'waiting for doctor video/audio')
             while not rospy.is_shutdown():
                 now = time.monotonic()
                 if generation != self.generation or not self.enabled or self.estop:
@@ -121,7 +122,7 @@ class BedsideSession:
                     measure_since = (measure_since if measure_since is not None else now) if valid else None
                     measure_done = measure_since is not None and now-measure_since >= self.measure_duration
                 if call_done and measure_done:
-                    self.status.publish('bedside call and measurement completed')
+                    self.status.publish('bedside call and measurement completed' if self.measure else 'bedside call completed')
                     return TriggerResponse(True, 'fresh receive and valid measurement gates completed')
                 time.sleep(0.05)
             return TriggerResponse(False, 'ROS shutdown')

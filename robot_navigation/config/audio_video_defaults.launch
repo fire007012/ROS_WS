@@ -29,11 +29,12 @@
   <arg name="http_port" default="8080" />
   <arg name="enable_http" default="false" />
   <arg name="enable_browser" default="false" />
-  <!-- Audio/video remains enabled from accepted PC1 mission start through mission termination. -->
+  <!-- Continuous media is independent of PC1, mission completion and emergency stops. -->
   <arg name="sample_rate" default="48000" />
   <arg name="frame_duration_ms" default="20" />
   <arg name="opus_bitrate" default="32000" />
   <arg name="ready_topic" default="/Ready" />
+  <arg name="always_on" default="true" />
   <arg name="capture_latency_ms" default="20" />
   <arg name="playback_latency_ms" default="40" />
   <arg name="jitter_buffer_ms" default="40" />

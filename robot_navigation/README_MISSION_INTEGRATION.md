@@ -1,132 +1,128 @@
-# 全流程启动与业务模块整合（2026-10-17）
+# 全流程启动、通话与显示（2026-10-17更新）
 
-入口是 `roslaunch robot_navigation mission_complete.launch`，文件后缀是 `.launch`。
-本次基于 ROS `035a669` 整合；沿用已联通的底盘路径规划、里程计、测距和避障配置。
+当前入口：`roslaunch robot_navigation mission_complete.launch`。
+本次依据实机反馈调整摄像头、持续音视频、停靠阶段和独立体征显示。最新行为以本篇为准。
 
-## 实际流程
+## 默认行为
 
-1. 提前在机器人启动全流程、医生电脑启动 `audio_video_slave.launch`，然后等待机器人本体启动按钮。
-2. STM32 物理启动事件通过 CAN 0x112 转到任务节点；任务发布 Ready，启动音视频采集和传输。
-3. 前往护士台，扫码得到 11/13/31/33，确定首床、首箱和另一床、另一箱。
-4. 前往首床、微调入圈，等待床头条码识别，在 GUI 对应行保留条码。
-5. 选择正确药箱，由 STM32 PWM 机械臂执行伸出、指定 SG90 开箱、关闭、收回序列。
-6. 定时释放事件 `/medicine/placed` 到来时立即播放对应床号语音；播报与机械臂回程可以并行，均完成后进入床旁服务，底盘保持锁定。
-7. 床旁服务等待本床新音视频接收连续满足 5 秒、ESP32 有效体征连续满足 2 秒；默认 28 秒内完成。满足后才前往下一床，重复扫码、放药、播报、床旁交流和测量。
-8. 返回起始区，验证配置的整机投影与底盘静止，保持 5 秒后结束；GUI 继续保留两床条码。
+1. 启动launch即打开机器人通话摄像头与音频；VM运行audio_video_slave.launch。两端更新后，无需PC1或任务Ready即可通话，任务完成或急停也不会关闭通话。
+2. ESP32桥接启动后随时接收、显示心率体温，不等待到病床；体征无效或不测量不会阻止离床。
+3. PC1只开始机器人任务：前往护士台→二维码决定首床/首箱→床前路径停靠→车体入圈和前向测距检查→床头条形码→指定药箱放药与播报→床旁音视频交流确认→另一床→回归。
+4. 二维码与条形码始终用同一个扫码摄像头、同一个 `/usb_cam/image_raw`。右侧始终保留医生视频；左下角只在扫码阶段显示独立取景，退出扫码便隐藏。
+5. 位置图继续显示 `/odom` 估计位置、朝向、轨迹及当前目标；不是独立定位系统，也不推测未观测障碍。
 
-`/medicine/placed` 当前由开箱等待时间推断，不是药品实际落点传感器反馈。有效体征位表示数据有效，不代表已经达到比赛精度。
+## 摄像头角色（按本次实机反馈修正）
 
-## 本次修复与接通
+| 机器/用途 | 默认设备 | 输出 |
+| --- | --- | --- |
+| Pi 扫码（二维码+条形码） | /dev/video2 | /usb_cam/image_raw |
+| Pi 通话摄像头 | /dev/video0 | /lower_cam/lower_usb_cam/image_raw → /lower_cam/network/compressed |
+| VM 医生摄像头 | /dev/video0（VM本机） | /upper_cam/upper_usb_cam/image_raw → /upper_cam/network/compressed |
 
-- 修复任务节点内 YAML 最后加载导致 `skip_bedside_scan=false` 被旧 true 默认覆盖的问题；YAML 和 C++ 默认均改为必须扫码，launch 参数最后覆盖配置。
-- 最新音视频约定是机器人 master、医生 slave。修复床旁服务还固定订阅 `/audio_chat/slave/peer_ready` 的问题；现在按角色选择真实接收状态与对端视频。
-- 任务入口复用 `status_display.launch`，GUI 和 ESP32 桥接各启动一份；共享配置只加载一次，避免后续加载覆盖串口、全屏等显式参数。
-- GUI 显示当前任务阶段和床旁等待状态；两床条码独立保留。调用摄像头状态及视频路由跟随音视频角色。
-- 接通 ESP32 串口、体征整帧及数值话题参数；床旁完成依赖整帧，不能仅发布两个 Float32 数值冒充完整测量接口。
-- 接通通话摄像头、麦克风、扬声器参数；放药播报默认使用与通话相同的扬声器，也可单独覆盖。
-- 自定义 Ready 话题现在同时重映射任务节点的发布/订阅与音视频组件。
-- GUI、扫码识别、播报和床旁节点为关键进程；启动失败或退出时全流程退出，避免显示/播报进程已经消失仍继续任务。
-
-## 启动
-
-机器人与医生端保持当前已联调的 ROS 网络配置；ROS Master 在机器人上。
-默认音视频 IP 沿用最新源码：机器人 `10.161.170.93`，医生 `10.161.170.41`，本次未修改网络。
-
-机器人 Ubuntu 工作空间内先构建并加载环境：
+共享路由在config/camera_devices.launch。默认对调依据用户反馈：原/视频0实际是通话摄像头。Linux设备编号可能随插拔变化，必要时用启动参数指定实际设备，建议使用可用的稳定by-id路径；video1/3可能只是同一设备的另一接口，不能直接认定是另一只摄像头。
 
 ```bash
+# Pi：先在工作空间编译并加载环境
 catkin_make
 source devel/setup.bash
-roslaunch robot_navigation mission_complete.launch
-```
+roslaunch robot_navigation mission_complete.launch \
+  scan_camera_device:=/dev/video2 \
+  call_camera_device:=/dev/video0
 
-医生电脑加载相同 ROS 工作空间后：
-
-```bash
+# VM：同步本次代码，编译并加载环境后运行
 roslaunch robot_navigation audio_video_slave.launch
 ```
 
-随后使用机器人本体按钮开始任务。医生端需要在同一个 ROS Master 下，Ready 信号才会到达两端。不要再另启 `audio_video_master.launch` 或默认的 `status_display.launch`：全流程已包含机器人音视频、GUI 和 ESP32 桥接，重复启动会抢占节点名、摄像头或串口。
+不要同时另开Pi的audio_video_master.launch或默认status_display.launch；全流程已包含它们的相关节点。
+默认IP沿用本机10.161.170.93、VM10.161.170.41；本次没有改变网络配置。两端必须使用一致、可访问的ROS_MASTER_URI，并正确声明各自ROS_IP。
 
-设备参数示例（路径和 PulseAudio 设备名按实际机器填写）：
+## 床前一直显示“微调”的处理
+
+与用户指定的1b9c8eac18c935de9dd090112704057a3f4ae92d相比，fine_tuning控制器、250mm目标以及底盘路径/规划/里程计/避障实现均没有变化。旧的完整任务会在路径到达后再执行测距微调，再校验车体投影；界面原来把整个阶段统称为微调，无法区分具体等待项。
+
+默认改为enable_bedside_distance_tuning=false：采用已验证路径的停靠位姿，不再强制执行额外的250mm前向修正，但仍校验新鲜里程计、整车底盘入圈和有效前向测距。没有放宽圈半径、车体尺寸或安全条件。若定位与圈坐标不一致，仍会停止等待并给出明确提示，不会自动开箱。
+
+车体半径默认0.25m、圆圈半径0.3m、余量0.02m，因此中心误差必须不超过0.03m；旧微调最多可移动0.05m，二者可能冲突。这是可确认的配置风险，未收到这次床旁日志，不能断言其为此次唯一根因。
+
+如已标定传感器安装/床柜位置，可以显式恢复额外测距修正：
 
 ```bash
-roslaunch robot_navigation mission_complete.launch \
-  scan_camera_device:=/dev/video0 \
-  call_camera_device:=/dev/video2 \
-  vitals_serial_device:=/dev/ttyUSB0 \
-  gui_fullscreen:=false
+roslaunch robot_navigation mission_complete.launch enable_bedside_distance_tuning:=true
 ```
 
-可配置项：
-
-| 参数 | 默认/作用 |
-| --- | --- |
-| `enable_camera` | true；护士台二维码和两床条码 |
-| `skip_bedside_scan` | false；比赛保持 false，true 仅供显式联调 |
-| `enable_arm` | true；包含 PWM 机械臂和两路 SG90；旧 enable_servo 参数已不控制本流程 |
-| `enable_audio_video` | true；机器人 master，医生另启 slave |
-| `audio_role` | master；床旁检测和 GUI 路由跟随此角色 |
-| `audio_local_ip` / `audio_remote_ip` | 10.161.170.93 / 10.161.170.41；改变网络时还需保证启动 shell 的 ROS 网络变量正确 |
-| `audio_mic_device` / `audio_speaker_device` | default；PulseAudio 设备名 |
-| `speech_speaker_device` | 默认跟随 audio_speaker_device，可单独指定 |
-| `speech_bed1_audio_file` / `speech_bed3_audio_file` | 随包提供的 bed1_kai.wav / bed3_kai.wav |
-| `enable_patient_measurement` | true；ESP32 USB 桥接及每床测量门槛 |
-| `vitals_config` | config/status_display.yaml；串口等持久配置 |
-| `vitals_transport` / `vitals_serial_device` / `vitals_baudrate` | 空值沿用 YAML，显式值覆盖；默认串口115200 |
-| `vitals_frame_topic` | /vitals/frame；bridge、GUI、床旁服务一致 |
-| `heart_rate_topic` / `temperature_topic` | /vitals/heart_rate / /vitals/temperature；实际重映射到 bridge 和 GUI |
-| `enable_gui` / `gui_fullscreen` | true / true；比赛需要实体屏显示 |
-| `bedside_timeout_s` / `call_duration_s` | 28 / 5 秒 |
-| `measurement_valid_hold_s` | 2 秒 |
-
-默认稳定串口路径见 status_display.yaml；若本机 CP2102 的 by-id 不同，通过 vitals_serial_device 覆盖。ESP32 当前源码上电连续测量，ROS 不下发采集启停指令。
-
-自定义 `patient_measurement_launch` 需要声明 config_file、load_config、transport、serial_device、baudrate、vitals_frame_topic、heart_rate_topic、temperature_topic 这些传入参数，并向指定整帧话题发布符合默认 bridge 的 JSON；如不使用某参数，也应声明以通过 roslaunch 的 include 参数检查。
-
-## 对照比赛规则仍需验收的事项
-
-对照用户提供规则第 10—11、13 页，流程所需的扫码、两箱送药、播报、两床音视频与体征显示、回归已接入。以下条件需要实物/场地验收，不能据离线测试宣称全部得分：
-
-- 药品是否全部落在床头柜中心直径100mm圆内；当前机械臂角度、SG90开关方向与时长须实测。
-- 心率 ±3 次/分、额头体温 ±0.5°C 的满分精度；需按规则指定部位与参考仪表比对。
-- 开箱至播报结束底盘持续在半径300mm圈内且不移动。目前已有入圈检查和底盘锁定，仍未增加全程持续复核位置与速度的保护。
-- GUI 在实体屏幕上保持两床条码、有效体征与医生视频；离线没有启动真实 Tk 窗口或摄像头。
-- home_zone_vertices 仍为注明占位的0.6m方框，full_projection_radius_m 需要按包括收回机械臂在内的实际投影标定。
-- 完整随机障碍布局、两端真人双向通话和急停效果需要实机跑全程。用户已确认底盘路径规划联通，本次不改该实现。
-
-任务当前仍有180秒软件总超时、单阶段30秒默认超时。这些是项目配置，不据此宣称规则规定了180秒全程限时；现场测量/交流耗时较长时，通过 mission_config 调整。
-
-## GUI 任务详情与实时位置图（2026-10-17 更新）
-
-`status_display.launch` 和 `mission_complete.launch` 默认显示场地位置图。通话视频在右上，场地俯视图在右下，左侧继续显示任务、两床条码和体征。图只显示控制器的定位估计，不会自行校正里程计漂移，也不会推测未观测到的障碍物。
-
-- 当前任务根据 `/mission/state` 与护士台 `/qr_result` 显示实际床号和药箱号，例如“正在前往3号床”“已到1号床，正在等待床头条形码”“正在向1号床放药（3号药箱）”。任务失败时保留失败原因，回归完成与急停/停止区分显示。
-- `/robot_display` 中的双行条码消息不再覆盖当前任务；两床条码继续在各自标签中留存。
-- 位置图使用 `/odom`，显示车辆位置、朝向、最多600个轨迹点及 `/path_points` 当前目标（黄色十字），约10Hz刷新。新任务清空旧轨迹；大幅定位跳变不会连接成虚假的行驶线段。
-- 起点为 `(0,0)`，图上方对应 `+x` 护士台方向、左方对应 `+y`。场地边界默认按项目7m场地坐标转换为 x=[-0.5,6.5]、y=[-3.5,3.5]，单位米。
-- 起点、护士台扫码点及两床停靠圈读取 `paths_file` 中的 P0/P1/P4/P6，全流程转发与路径管理器相同的路径配置；有任务私有圆圈配置时采用该配置。边界、可选已测家具矩形等在 `config/arena_display.yaml` 中设置。
-- 未收到定位时显示等待，超过1秒未更新显示“定位已过期”，坐标系不匹配时显示错误并拒绝混用。默认只接受 odom 坐标；没有自动进行 map→odom 的 TF 转换。
+GUI会具体显示“等待前向测距有效且新鲜”“等待车体完整进入停靠圈”等。若仍不通过，请记录：
 
 ```bash
-# 单独查看界面，已有桥接时避免重复打开串口
+rostopic echo -n 1 /mission/state
+rostopic echo -n 1 /fine_tuning/status
+rostopic echo -n 1 /front/range
+rostopic echo -n 1 /odom
+```
+
+同时保留 `[mission_controller] 投影校验未通过` 的center_error和usable_radius值。默认路径停靠模式没有启动fine_tuning/status更新时，其旧值不能代表当前正在微调，应以mission/state和界面入圈等待提示为准。
+
+## 音视频全程开启与连通检查
+
+两端always_on默认true。新增audio_video_ready_node只发布媒体专用 `/audio_video/ready=1`（锁存），不会启动底盘。所有音视频组件使用该媒体话题，摄像头不再等待PC1；任务节点的旧 `/Ready=0/1` 不影响媒体。
+
+两端必须同步本次更改并编译，尤其新增脚本需经过catkin安装/包装。单独需要兼容旧Ready门控时，可以对音视频wrapper传always_on:=false。
+
+ping通只说明IP层可达，不证明UDP5004音频、ROS节点反向连接和视频话题可达。Pi和VM各检查：
+
+```bash
+rostopic echo -n 1 /audio_video/ready
+rostopic echo -n 1 /audio_chat/master/active
+rostopic echo -n 1 /audio_chat/slave/active
+rostopic echo -n 1 /audio_chat/master/peer_ready
+rostopic echo -n 1 /audio_chat/slave/peer_ready
+rostopic hz /upper_cam/network/compressed
+rostopic hz /lower_cam/network/compressed
+```
+
+active表示本地音频线程已运行；peer_ready表示本机收到了有效对端Opus数据。GUI会区分“尚未启动/启动失败”“运行中但未收到医生端有效UDP”“本机运行/已接收医生音频”。若无UDP，需保留VM音频日志，检查默认声卡/麦克风及UDP5004、防火墙、虚拟机网络和remote_ip；本次不擅自修改网络。
+
+## 心率体温独立测量
+
+ESP32当前VITALS_AUTO_START=true，启动后连续采集；USB桥接和GUI持续显示有效数值。没有增加ROS向ESP32下发启停的指令。enable_patient_measurement=true控制是否启动桥接；require_bedside_measurement=false控制床旁服务不等待体征，二者已分开。
+
+床旁仍保留默认5秒音视频接收确认，以支持两床交流流程；不再要求体征连续有效2秒才能继续。不测量、手指离开或体征暂时无效，仅影响显示，不影响任务推进。
+
+## 显示与单独扫码
+
+当前任务按二维码显示实际床号、药箱号，条码独立留存。扫码阶段左下小窗显示真实取景，右侧医生画面不切换。PPM图像直接以二进制交给Tk，修复旧版Base64导致的couldn't recognize image data。
+
+退出全流程后，可只测试扫码，不启动底盘/机械臂：
+
+```bash
+roslaunch robot_navigation scan_and_display.launch video_device:=/dev/video2
+```
+
+单独查看显示、避免重复占用已运行桥接：
+
+```bash
 roslaunch robot_navigation status_display.launch enable_vitals_bridge:=false fullscreen:=false
-
-# 全流程默认带图；需要时可以隐藏
-roslaunch robot_navigation mission_complete.launch show_map:=false
 ```
 
-单独启动GUI不会启动底盘或伪造定位；需要已有节点发布 `/odom` 才会出现车辆位置。`status_display.launch` 还可以用 odom_topic、map_frame、arena_config、paths_file 指定显示数据源与示意图配置。更换定位坐标系时，场地配置也必须采用对应坐标。
+show_map:=false隐藏位置图。arena_config和paths_file控制场地示意及停靠点；全流程使用与路径管理器相同的paths_file。
 
-本次新增位置图与任务提示验证后，共79项离线回归通过，包括ROS launch解析26项、场地坐标/定位有效性5项、体征/GUI回调22项及既有床旁、扫码、按钮等测试。使用透明Tk窗口检查1024×600和1280×800布局，未连接机器人或启动真实ROS节点。
+## 急停和剩余实机验收
 
-## 验证
+PC1不解除锁存急停。确认物理急停松开、故障修复后：
 
-本次 Windows 离线验证共69项通过：音视频与完整任务 launch 回归25项、床旁行为8项、体征协议/GUI18项、单CAN默认5项、Ready生命周期1项、扫码策略7项、按钮启动脚本5项；34个launch均通过XML解析。
+```bash
+rosservice call /system_health/reset "{}"
+rostopic echo -n 1 /robot_state
+```
 
-其中 launch 回归使用本地缓存的 ROS roslaunch/xmlloader、参数加载与替换模块进行离线解析，适配了本地包路径，没有启动 ROS Master、任何 ROS 节点或硬件。另做9组配置的独立静态展开，确认节点无重复及串口/话题/全屏覆盖。
+服务成功只表示发出了复位请求；还要确认底盘接受并回到CACHE_READY。恢复后PC1开始新一轮任务，不是断点续跑；调试时优先回起点重新启动以保持里程计原点一致。
 
-没有在此Windows机器执行catkin构建或ROS运行时集成测试。已增加的回归在Ubuntu/CATKIN_ENABLE_TESTING环境会被运行。现有真实状态机rostest包含11/13/31/33四组合、放药事件与取消流程，仍应在目标Ubuntu运行。
+药品落入直径100mm圆、体征精度、整车入圈、回归白框与真实双向通话仍需实机验收。测距微调默认停用不等于已证明车体合规；home_zone_vertices等占位尺寸仍需实测。软件180秒任务总超时为项目配置，不据此解释为比赛规定的全程时限。
+
+## 验证范围
+
+新增ROS回归fixture mission_waypoint_position.test，用真实任务节点验证四种二维码顺序、未入圈不放药、路径停靠模式不调用测距服务；须在Ubuntu构建后运行。离线还编译运行了从当前源码提取的停靠入口/完成判定C++函数，验证关闭距离修正时不调用服务、投影/前向测距失败时不推进、合格后推进以及开启修正时仍等待完成。
+
+本次离线解析检查不能代替Ubuntu全量catkin构建或实机UDP、摄像头、测距验收。请在目标环境运行：
 
 ```bash
 catkin_make run_tests_robot_navigation

@@ -219,6 +219,7 @@ class MissionController {
   // 发布
   ros::Publisher mission_state_pub_;
   ros::Subscriber alignment_done_sub_;
+  bool enable_bedside_distance_tuning_ = true;
   bool enable_arm_upper_alignment_ = false;
   bool alignment_done_ = false;
   bool alignment_ready_for_done_ = false;
