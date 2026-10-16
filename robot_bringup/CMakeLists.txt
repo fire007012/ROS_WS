@@ -9,7 +9,7 @@ install(DIRECTORY launch config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
-catkin_install_python(PROGRAMS scripts/y42_keyboard.py
+catkin_install_python(PROGRAMS scripts/y42_keyboard.py scripts/chassis_rotation_test.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
