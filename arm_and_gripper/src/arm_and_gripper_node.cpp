@@ -15,7 +15,7 @@
 namespace arm_and_gripper {
 ArmAndGripperController::ArmAndGripperController(ros::NodeHandle& nh, ros::NodeHandle& pnh, FrameSender sender, AckReceiver receiver)
     : nh_(nh), pnh_(pnh), can_device_("can0"), arm_can_id_(0x701),
-      arm_place_angle_1_(-15.0), arm_place_angle_2_(-15.0), arm_home_angle_1_(0.0), arm_home_angle_2_(0.0),
+      arm_place_angle_1_(15.0), arm_place_angle_2_(15.0), arm_home_angle_1_(0.0), arm_home_angle_2_(0.0),
       arm_ack_timeout_s_(0.5), socket_fd_(-1),
       auto_start_on_fine_tuning_(false), default_reset_arm_(true),
       arm_move_timeout_s_(3.0), servo_hold_duration_s_(1.0), old_servo_move_duration_s_(0.5),
@@ -31,8 +31,8 @@ bool ArmAndGripperController::init(){
   int id=static_cast<int>(arm_can_id_); pnh_.param("arm_can_id",id,id); arm_can_id_=static_cast<uint32_t>(id);
   pnh_.param<bool>("auto_start_on_fine_tuning",auto_start_on_fine_tuning_,false);
   pnh_.param<bool>("default_reset_arm",default_reset_arm_,true);
-  pnh_.param("arm_place_angle_1",arm_place_angle_1_,-15.0);
-  pnh_.param("arm_place_angle_2",arm_place_angle_2_,-15.0);
+  pnh_.param("arm_place_angle_1",arm_place_angle_1_,15.0);
+  pnh_.param("arm_place_angle_2",arm_place_angle_2_,15.0);
   pnh_.param("arm_home_angle_1",arm_home_angle_1_,0.0);
   pnh_.param("arm_home_angle_2",arm_home_angle_2_,0.0);
   pnh_.param("arm_ack_timeout_s",arm_ack_timeout_s_,0.5);

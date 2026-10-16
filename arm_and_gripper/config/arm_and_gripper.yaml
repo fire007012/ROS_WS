@@ -8,10 +8,10 @@ arm_ack_timeout_s: 0.5
 # channel 1 = PC6/right/old ID5; channel 2 = PC7/left/old ID6.
 # PC8/right follows channel 1: same place/home angle and PWM calibration.
 # There are still two logical angles; do not add an independent angle_3.
-# Bench direction check: forward is negative logical angle on both axes.
+# Latest bench check: positive logical angle is forward on both axes.
 # Keep the STM32 per-servo PWM direction calibration unchanged.
-arm_place_angle_1: -45.0
-arm_place_angle_2: -45.0
+arm_place_angle_1: 45.0
+arm_place_angle_2: 45.0
 arm_home_angle_1: 0.0
 arm_home_angle_2: 0.0
 arm_move_timeout_s: 3.0 # ACK后等待机械动作的时间，不是到位反馈

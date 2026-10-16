@@ -48,7 +48,7 @@ rostopic echo /medicine_release_done
 
 默认文件：`config/arm_and_gripper.yaml`。
 
-- `arm_place_angle_1/2`：右侧组（PC6+PC8）和左侧（PC7）相对STM32校准零位的绝对伸出角；默认联调前伸为负角（当前YAML为-45/-45）。
+- `arm_place_angle_1/2`：右侧组（PC6+PC8）和左侧（PC7）相对STM32校准零位的绝对伸出角；默认联调前伸为正角（当前YAML为45/45）。
 - `arm_home_angle_1/2`：绝对收回角，默认0/0；不是反向旋转相同角度。
 - `arm_move_timeout_s`：ACK之后的动作等待时间，默认3秒，**不是物理到位反馈**。
 - `old_servo_*`：PB0药箱1；`new_servo_*`：PD14药箱3。
