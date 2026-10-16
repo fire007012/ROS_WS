@@ -38,18 +38,18 @@
   <arg name="mic_device" />
   <arg name="speaker_device" />
   <arg name="video_display_fps" />
-  <arg name="local_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
-  <arg name="local_camera_node" value="$(eval 'upper_usb_cam' if arg('role') == 'master' else 'lower_usb_cam')" />
-  <arg name="remote_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
-  <arg name="remote_display_topic" value="$(eval '/camera/lower_display' if arg('role') == 'master' else '/camera/upper_display')" />
-  <arg name="remote_view_node" value="$(eval 'view_lower_cam' if arg('role') == 'master' else 'view_upper_cam')" />
+  <arg name="local_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
+  <arg name="local_camera_node" value="$(eval 'lower_usb_cam' if arg('role') == 'master' else 'upper_usb_cam')" />
+  <arg name="remote_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
+  <arg name="remote_display_topic" value="$(eval '/camera/upper_display' if arg('role') == 'master' else '/camera/lower_display')" />
+  <arg name="remote_view_node" value="$(eval 'view_upper_cam' if arg('role') == 'master' else 'view_lower_cam')" />
   <env name="ROS_MASTER_URI" value="$(arg master_uri)" />
   <env name="ROS_IP" value="$(arg local_ip)" />
   <group if="$(arg enable_video)">
-    <group if="$(eval arg('start_upper_cam') if arg('role') == 'master' else arg('start_lower_cam'))">
+    <group if="$(eval arg('start_lower_cam') if arg('role') == 'master' else arg('start_upper_cam'))">
       <include file="$(find robot_navigation)/config/camera_devices.launch">
-        <arg name="camera_role" value="$(eval 'doctor_audio' if arg('role') == 'master' else 'robot_audio')"/>
-        <arg name="camera_device_override" value="$(eval arg('upper_cam_device') if arg('role') == 'master' else arg('lower_cam_device'))"/>
+        <arg name="camera_role" value="$(eval 'robot_audio' if arg('role') == 'master' else 'doctor_audio')"/>
+        <arg name="camera_device_override" value="$(eval arg('lower_cam_device') if arg('role') == 'master' else arg('upper_cam_device'))"/>
         <arg name="camera_ns" value="$(arg local_camera_ns)"/>
         <arg name="camera_node" value="$(arg local_camera_node)"/>
         <arg name="image_width" value="$(arg cam_width)"/>

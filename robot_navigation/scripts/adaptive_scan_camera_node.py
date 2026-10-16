@@ -27,6 +27,7 @@ class AdaptiveScanCamera:
         self.capture = None
         self.current = None
         self.actual_profile = None
+        self.pending_frame = None
         self.failed_modes = set()
         self.wait_for_ready = bool(rospy.get_param('~wait_for_ready', False))
         self.ready_topic = rospy.get_param('~ready_topic', '/Ready')
@@ -82,6 +83,7 @@ class AdaptiveScanCamera:
         self.capture = None
         self.current = None
         self.actual_profile = None
+        self.pending_frame = None
 
     def open(self, mode):
         self.close()
@@ -97,11 +99,24 @@ class AdaptiveScanCamera:
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config['height'])
         capture.set(cv2.CAP_PROP_FPS, config['fps'])
         capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = capture.get(cv2.CAP_PROP_FPS)
+        reported_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        reported_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
         actual_format = ''.join(chr((fourcc >> (8*i)) & 255) for i in range(4))
+        try:
+            ok, first_frame = capture.read()
+        except cv2.error as exc:
+            capture.release()
+            self.status.publish('error: frame read failed from '+self.device)
+            rospy.logwarn_throttle(5.0, '[scan_camera] first frame failed on %s: %s', self.device, exc)
+            return False
+        if not ok or first_frame is None or first_frame.size == 0:
+            capture.release()
+            self.status.publish('error: no frame from '+self.device)
+            rospy.logwarn_throttle(5.0, '[scan_camera] %s opened but produced no frame', self.device)
+            return False
+        height, width = first_frame.shape[:2]
+        fps = capture.get(cv2.CAP_PROP_FPS)
         if not capture_dimensions_acceptable(
                 mode, (config['width'], config['height']), (width, height)):
             rospy.logwarn_throttle(5.0,
@@ -111,11 +126,12 @@ class AdaptiveScanCamera:
             return False
         if (width,height) != (config['width'],config['height']):
             rospy.logwarn_throttle(5.0,
-                '[scan_camera] %s requested %dx%d but driver negotiated %dx%d; using actual mode',
-                mode,config['width'],config['height'],width,height)
+                '[scan_camera] %s requested %dx%d, OpenCV reported %dx%d and delivered %dx%d; using captured frame size',
+                mode,config['width'],config['height'],reported_width,reported_height,width,height)
         self.capture = capture
         self.current = mode
         self.actual_profile = (width,height,fps,actual_format)
+        self.pending_frame = first_frame
         self.status.publish('%s:%dx%d@%.1f:%s' % (mode,width,height,fps,actual_format))
         rospy.loginfo('[scan_camera] %s requested %dx%d@%.1ffps; actual %dx%d@%.1f %s',
                       mode,config['width'],config['height'],config['fps'],width,height,fps,actual_format)
@@ -148,11 +164,16 @@ class AdaptiveScanCamera:
                         continue
                     next_publish = 0.0
                     read_failures = 0
-                try:
-                    ok, frame = self.capture.read()
-                except cv2.error as exc:
-                    rospy.logwarn_throttle(5.0,'[scan_camera] decode failed: %s',exc)
-                    ok,frame=False,None
+                if self.pending_frame is not None:
+                    frame = self.pending_frame
+                    self.pending_frame = None
+                    ok = True
+                else:
+                    try:
+                        ok, frame = self.capture.read()
+                    except cv2.error as exc:
+                        rospy.logwarn_throttle(5.0,'[scan_camera] decode failed: %s',exc)
+                        ok,frame=False,None
                 if not ok or frame is None:
                     read_failures += 1
                     rospy.logwarn_throttle(5.0, '[scan_camera] invalid frame; dropping it, never publishing stale pixels')

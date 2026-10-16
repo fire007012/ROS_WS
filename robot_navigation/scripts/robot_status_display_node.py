@@ -144,8 +144,8 @@ class StatusWindow:
 
     def call_parameters(self):
         camera = '/lower_cam/lower_usb_cam/'
-        stream = '/video_sender_slave/'
-        audio = '/audio_chat_slave/'
+        stream = '/video_sender_master/'
+        audio = '/audio_chat_master/'
         device = self.param(camera + 'video_device', '/dev/video2')
         capture = '%sx%s@%sfps %s' % (
             self.param(camera + 'low_width', 640), self.param(camera + 'low_height', 480),

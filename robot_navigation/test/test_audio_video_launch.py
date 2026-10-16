@@ -22,7 +22,7 @@ SETTINGS = PACKAGE / 'config/audio_video_defaults.launch'
 PEER = PACKAGE / 'launch/audio_video_peer.launch'
 NETWORK = dict(ROS_MASTER_URI='http://10.161.170.93:11311',
                ROS_IP='10.161.170.93', ROBOT_PI_IP='10.161.170.93',
-               ROBOT_VM_IP='10.161.170.94')
+               ROBOT_VM_IP='10.161.170.41')
 
 
 class AVSettingsStructure(unittest.TestCase):
@@ -60,6 +60,44 @@ class AVSettingsStructure(unittest.TestCase):
                                  '$(find robot_navigation)/config/audio_video_defaults.launch')
                 self.assertFalse(root.findall('node'))
 
+    def test_role_ip_defaults_match_pi_master_and_vm_slave(self):
+        settings = ET.parse(SETTINGS).getroot()
+        self.assertIn("'10.161.170.93' if arg('role') == 'master' else '10.161.170.41'",
+                      settings.find("arg[@name='local_ip']").get('default'))
+        self.assertIn("'10.161.170.41' if arg('role') == 'master' else '10.161.170.93'",
+                      settings.find("arg[@name='remote_ip']").get('default'))
+
+    def test_role_camera_routing_matches_pi_master_and_vm_slave(self):
+        peer = ET.parse(PEER).getroot()
+        args = {arg.get('name'): arg.get('value') for arg in peer.findall('arg')}
+        self.assertEqual(args['local_camera_ns'],
+                         "$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')")
+        self.assertEqual(args['remote_camera_ns'],
+                         "$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')")
+        camera = next(node for node in peer.iter('include')
+                      if node.get('file', '').endswith('/config/camera_devices.launch'))
+        camera_args = {arg.get('name'): arg.get('value') for arg in camera.findall('arg')}
+        self.assertEqual(camera_args['camera_role'],
+                         "$(eval 'robot_audio' if arg('role') == 'master' else 'doctor_audio')")
+
+    def test_robot_status_display_uses_robot_master_camera_and_audio_nodes(self):
+        mission = ET.parse(PACKAGE / 'launch/mission_complete.launch').getroot()
+        status = next(node for node in mission.findall('node')
+                      if node.get('name') == 'robot_status_display_node')
+        params = {param.get('name'): param.get('value') for param in status.findall('param')}
+        self.assertEqual(params['video_topic'], '/camera/upper_display')
+        self.assertEqual(params['call_camera_status_topic'],
+                         '/lower_cam/lower_usb_cam/capture_status')
+        display = (PACKAGE / 'scripts/robot_status_display_node.py').read_text(encoding='utf-8')
+        self.assertIn("stream = '/video_sender_master/'", display)
+        self.assertIn("audio = '/audio_chat_master/'", display)
+
+    def test_mission_launch_defaults_to_pi_robot_role(self):
+        mission = ET.parse(PACKAGE / 'launch/mission_complete.launch').getroot()
+        self.assertEqual(mission.find("arg[@name='audio_role']").get('default'), 'master')
+        include = mission.find("group[@if=\"$(arg enable_audio_video)\"]/include")
+        self.assertEqual(include.find("arg[@name='role']").get('value'), '$(arg audio_role)')
+
     def test_audio_parameter_names_and_configurable_values(self):
         peer = ET.parse(PEER).getroot()
         audio = peer.find("node[@name='audio_chat_$(arg role)']")
@@ -74,8 +112,7 @@ class AVSettingsStructure(unittest.TestCase):
 class AVLaunchLoading(unittest.TestCase):
     def load_peer(self, role, argv=None, environment=None):
         env = dict(NETWORK)
-        if role == 'master':
-            env['ROS_IP'] = env['ROBOT_VM_IP']
+        env['ROS_IP'] = env['ROBOT_PI_IP'] if role == 'master' else env['ROBOT_VM_IP']
         if environment:
             env.update(environment)
 
@@ -99,14 +136,14 @@ class AVLaunchLoading(unittest.TestCase):
 
     def test_default_nodes_and_network_on_both_roles(self):
         for role, camera, view, local, remote in (
-            ('slave', 'lower_usb_cam', 'view_upper_cam', '10.161.170.93', '10.161.170.94'),
-            ('master', 'upper_usb_cam', 'view_lower_cam', '10.161.170.94', '10.161.170.93'),
+            ('master', 'lower_usb_cam', 'view_upper_cam', '10.161.170.93', '10.161.170.41'),
+            ('slave', 'upper_usb_cam', 'view_lower_cam', '10.161.170.41', '10.161.170.93'),
         ):
             with self.subTest(role=role):
                 c = self.load_peer(role)
                 expected_nodes = {camera, 'video_sender_' + role,
                                   'video_stream_' + role, 'audio_chat_' + role}
-                if role == 'master':
+                if role == 'slave':
                     expected_nodes.add(view)
                 self.assertEqual({n.name for n in c.nodes}, expected_nodes)
                 self.assertEqual(self.value(c, 'audio_chat_' + role, 'role'), role)
@@ -118,7 +155,7 @@ class AVLaunchLoading(unittest.TestCase):
                     self.assertEqual(dict(n.env_args)['ROS_MASTER_URI'], NETWORK['ROS_MASTER_URI'])
 
     def test_topics_and_namespaces_remain_compatible(self):
-        for role, local, remote in (('slave', 'lower', 'upper'), ('master', 'upper', 'lower')):
+        for role, local, remote in (('master', 'lower', 'upper'), ('slave', 'upper', 'lower')):
             with self.subTest(role=role):
                 c = self.load_peer(role)
                 self.assertEqual(self.value(c, 'video_sender_' + role, 'camera_topic'),
@@ -138,7 +175,7 @@ class AVLaunchLoading(unittest.TestCase):
                              ['audio_chat_' + role])
 
     def test_camera_off_cli_override(self):
-        for role, camera_arg in (('slave', 'start_lower_cam'), ('master', 'start_upper_cam')):
+        for role, camera_arg in (('master', 'start_lower_cam'), ('slave', 'start_upper_cam')):
             c = self.load_peer(role, [camera_arg + ':=false'])
             self.assertNotIn('video_sender_' + role, [n.name for n in c.nodes])
             self.assertIn('video_stream_' + role, [n.name for n in c.nodes])
@@ -160,7 +197,7 @@ class AVLaunchLoading(unittest.TestCase):
 
     def test_camera_audio_and_network_parameter_overrides(self):
         for role, device_arg, camera_ns in (
-            ('slave', 'lower_cam_device', 'lower_cam'), ('master', 'upper_cam_device', 'upper_cam')
+            ('master', 'lower_cam_device', 'lower_cam'), ('slave', 'upper_cam_device', 'upper_cam')
         ):
             with self.subTest(role=role):
                 c = self.load_peer(role, [device_arg + ':=/dev/video2', 'cam_width:=640',
@@ -183,30 +220,19 @@ class AVLaunchLoading(unittest.TestCase):
             ET.ElementTree(root).write(path, encoding='utf-8', xml_declaration=True)
             c = self.load_peer('slave', ['config_file:=' + str(path)])
         self.assertEqual(self.value(c, 'video_sender_slave', 'stream_width'), 640)
-        self.assertEqual(c.params['/lower_cam/lower_usb_cam/low_width'].value, 640)
-        self.assertNotIn('view_upper_cam', [n.name for n in c.nodes])
+        self.assertEqual(c.params['/upper_cam/upper_usb_cam/low_width'].value, 640)
+        self.assertNotIn('view_lower_cam', [n.name for n in c.nodes])
 
     def test_changed_network_from_environment(self):
         c = self.load_peer('slave', environment=dict(ROS_MASTER_URI='http://10.0.0.10:11311',
                            ROS_IP='10.0.0.10', ROBOT_VM_IP='10.0.0.11'))
-        self.assertEqual(self.value(c, 'audio_chat_slave', 'remote_ip'), '10.0.0.11')
+        self.assertEqual(self.value(c, 'audio_chat_slave', 'remote_ip'), '10.161.170.93')
         self.assertEqual(dict(c.nodes[0].env_args)['ROS_MASTER_URI'], 'http://10.0.0.10:11311')
 
-    def test_missing_required_environment_has_clear_error(self):
-        for name in NETWORK:
-            # Only the role-specific remote variable is required by the slave.
-            if name == 'ROBOT_PI_IP':
-                continue
-            env = dict(NETWORK)
-            del env[name]
-            with self.subTest(variable=name), patch.dict(os.environ, env, clear=True), \
-                    patch.object(roslaunch.substitution_args, '_find',
-                                 lambda resolved, expr, args, ctx: resolved.replace('$(' + expr + ')', str(PACKAGE))):
-                with self.assertRaises(roslaunch.xmlloader.XmlParseException) as error:
-                    roslaunch.xmlloader.XmlLoader().load(
-                        str(PACKAGE / 'launch/audio_video_slave.launch'),
-                        roslaunch.config.ROSLaunchConfig(), argv=[], verbose=False)
-                self.assertIn(name, str(error.exception))
+    def test_network_defaults_can_still_be_overridden(self):
+        c = self.load_peer('master', ['local_ip:=10.1.1.1', 'remote_ip:=10.1.1.2'])
+        self.assertEqual(self.value(c, 'audio_chat_master', 'local_ip'), '10.1.1.1')
+        self.assertEqual(self.value(c, 'audio_chat_master', 'remote_ip'), '10.1.1.2')
 
 
 if __name__ == '__main__':

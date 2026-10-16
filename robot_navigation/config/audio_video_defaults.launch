@@ -1,19 +1,16 @@
 <?xml version='1.0' encoding='utf-8'?>
 <launch>
-  <!-- Shared defaults for BOTH peers. master/slave are AV roles, not the ROS Master location. -->
-  <!-- ROS_MASTER_URI and ROS_IP must be set in the launching shell. Do not use env tags to relocate roslaunch itself. -->
-  <!-- remote_ip uses ROBOT_PI_IP on the doctor (master), ROBOT_VM_IP on the robot (slave). Set the real addresses, not sample IPs. -->
-  <!-- 网络：读取本机 .bashrc；机器人端 remote_ip=ROBOT_VM_IP，医生端 remote_ip=ROBOT_PI_IP。 -->
+  <!-- AV master is the robot Pi; AV slave is the doctor VM. ROS Master remains on the Pi. -->
   <arg name="role" />
   <arg name="master_uri" default="$(env ROS_MASTER_URI)" />
-  <arg name="local_ip" default="$(env ROS_IP)" />
-  <arg name="remote_ip" default="$(eval env('ROBOT_VM_IP') if arg('role') == 'slave' else env('ROBOT_PI_IP'))" />
+  <arg name="local_ip" default="$(eval '10.161.170.93' if arg('role') == 'master' else '10.161.170.41')" />
+  <arg name="remote_ip" default="$(eval '10.161.170.41' if arg('role') == 'master' else '10.161.170.93')" />
   <!-- 功能开关：纯音频可把 enable_video 改为 false；无桌面把 enable_display 改为 false。 -->
   <arg name="enable_audio" default="true" />
   <arg name="enable_video" default="true" />
   <arg name="enable_display" default="true" />
-  <!-- Doctor keeps the standalone remote view; robot embeds it in status GUI. -->
-  <arg name="enable_image_view" default="$(eval arg('role') == 'master')" />
+  <!-- Robot embeds the doctor's camera in its status GUI; doctor gets a standalone view. -->
+  <arg name="enable_image_view" default="$(eval arg('role') == 'slave')" />
   <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
   <arg name="start_lower_cam" default="true" />
   <arg name="use_opencv_capture" default="true" />
