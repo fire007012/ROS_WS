@@ -40,7 +40,7 @@ class CanInterfaceDefaults(unittest.TestCase):
 
     def test_legacy_examples_use_current_interface(self):
         for relative in ['arm_and_gripper/README.md', 'arm_and_gripper/launch/arm_and_gripper.launch',
-                         'docs/mission_system_testing.md', 'docs/机器人导航系统架构说明.md',
+                         'docs/ROS_Noetic_全向轮_CAN联调测试说明.md', 'docs/机器人导航系统架构说明.md',
                          'robot_navigation/include/robot_navigation/can_utils.h']:
             with self.subTest(example=relative):
                 text = (SRC / relative).read_text(encoding='utf-8')
