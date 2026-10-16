@@ -55,7 +55,7 @@ void DistanceSafetyNode::rangeCallback(size_t index, const sensor_msgs::Range::C
   // Convert sensor-origin range into clearance outside the circular body.
   // An inset sensor can report a valid obstacle at/below the body edge.
   sample.distance_mm = std::max(0.0, msg->range - sensor_insets_m_[index]) * 1000.0;
-  sample.received = ros::SteadyTime::now();
+  sample.received = ros::SteadyTime::now() - ros::WallDuration(std::max(0.0, age));
 }
 void DistanceSafetyNode::requestedCallback(const geometry_msgs::Twist::ConstPtr& msg) {
   requested_ = *msg;

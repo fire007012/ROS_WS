@@ -221,6 +221,11 @@ void Vl53l1xCanBridge::handleSample(const Vl53l1xSample& sample, const ros::Time
     publishRange(state, stamp, false);
     publishAlignment();
     ++state.invalid_samples;
+    if (stm32RangeNoReturn(sample)) {
+      state.consecutive_failures = 0;
+      state.diagnostic_error_code = 0;
+      return;
+    }
     ++state.consecutive_failures;
     ROS_WARN_THROTTLE(1.0, "[stm32_range_bridge] invalid %s sample: %u mm (status=%s)",
                       state.device_name.c_str(), static_cast<unsigned int>(sample.distance_mm),
@@ -258,17 +263,13 @@ void Vl53l1xCanBridge::publishRange(SensorState& state, const ros::Time& stamp, 
 void Vl53l1xCanBridge::publishAlignment() {
   if (!alignment_mode_pub_) return;
   const double now = ros::SteadyTime::now().toSec();
-  // Mirror the firmware's existing local stop scope even for a lateral
-  // request. Upper sensors are comparison inputs and never enter this check.
-  bool local_obstacle = false;
-  for (size_t id = 0; id < 3; ++id)
-    local_obstacle = local_obstacle || (sensors_[id].has_valid && sensors_[id].distance_mm <= 300);
+  // All chassis clearance, insets and hysteresis belong to distance_safety.
+  // Upper 3/4 remain stage-specific comparison inputs only.
   geometry_msgs::Twist command;
-  if (local_obstacle) alignment_.stopMotion();
-  else command.linear.y = alignment_.velocity(now);
+  command.linear.y = alignment_.velocity(now);
   alignment_cmd_pub_.publish(command);
   std_msgs::Bool active; active.data = alignment_.active(); alignment_mode_pub_.publish(active);
-  std_msgs::Bool done; done.data = !local_obstacle && alignment_.done(now); alignment_done_pub_.publish(done);
+  std_msgs::Bool done; done.data = alignment_.done(now); alignment_done_pub_.publish(done);
 }
 
 void Vl53l1xCanBridge::stageCallback(const std_msgs::String::ConstPtr& msg) {
@@ -322,7 +323,6 @@ void Vl53l1xCanBridge::handleDiagnostic(const Vl53l1xDiagnosticFrame& diagnostic
   state.consecutive_failures = diagnostic.consecutive_errors;
   state.diagnostic_error_code = diagnostic.error_code;
   state.status = diagnostic.last_status;
-  state.distance_mm = diagnostic.last_valid_distance_mm;
   if (diagnostic.error_code != 0 || diagnostic.consecutive_errors != 0 ||
       stm32RangeStatusHasFailure(diagnostic.last_status) ||
       !(diagnostic.last_status & kStm32RangeValid)) {
@@ -414,11 +414,15 @@ void Vl53l1xCanBridge::publishDiagnostics(const ros::Time& now) {
     diagnostic_msgs::DiagnosticStatus status;
     status.name = "STM32 Range/" + state.name;
     const auto steady_now = ros::SteadyTime::now();
+    const bool communicating = vl53l1xSampleFresh(state.has_sequence, steady_now,
+        state.last_receive_steady, sensor_timeout_ms_);
+    const bool no_return = stm32RangeNoReturn(Vl53l1xSample{
+        0, state.distance_mm, state.sigma_mm, state.status, state.sequence});
     const bool fresh = vl53l1xSampleFresh(state.has_valid, steady_now, state.last_valid, sensor_timeout_ms_);
-    if (!fresh || state.consecutive_failures != 0 || state.diagnostic_error_code != 0 ||
+    if (!communicating || (!fresh && !no_return) || state.consecutive_failures != 0 || state.diagnostic_error_code != 0 ||
         stm32RangeStatusHasFailure(state.status)) {
       status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
-      status.message = fresh ? "measurement error" : (state.has_valid ? "timeout" : "no valid sample");
+      status.message = !communicating ? "sample communication timeout" : "measurement error";
     } else if (state.status & kStm32RangeEmergency) {
       status.level = diagnostic_msgs::DiagnosticStatus::WARN;
       status.message = "emergency distance";
@@ -427,7 +431,7 @@ void Vl53l1xCanBridge::publishDiagnostics(const ros::Time& now) {
       status.message = "low quality";
     } else {
       status.level = diagnostic_msgs::DiagnosticStatus::OK;
-      status.message = "valid";
+      status.message = no_return ? "no return (normal)" : "valid";
     }
     auto add = [&status](const std::string& key, const std::string& value) {
       diagnostic_msgs::KeyValue kv; kv.key = key; kv.value = value; status.values.push_back(kv);

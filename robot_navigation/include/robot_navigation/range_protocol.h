@@ -41,8 +41,14 @@ inline bool stm32RangeSampleValid(const Vl53l1xSample& sample) {
 }
 
 inline bool stm32RangeStatusHasFailure(uint8_t status) {
-  return (status & (kStm32RangeOutOfRange | kStm32RangeTimeout |
-                    kStm32RangeI2cError)) != 0;
+  return (status & (kStm32RangeTimeout | kStm32RangeI2cError)) != 0;
+}
+
+// An acquired sample with no target is normal. Timeout/I2C errors still carry
+// acquisition failure semantics and are diagnosed separately from no return.
+inline bool stm32RangeNoReturn(const Vl53l1xSample& sample) {
+  return sample.distance_mm == 0xFFFF && !(sample.status & kStm32RangeValid) &&
+      !stm32RangeStatusHasFailure(sample.status) && !(sample.status & kStm32RangeEmergency);
 }
 
 inline uint8_t stm32RangeRadiationType(uint8_t /*sensor_id*/) {

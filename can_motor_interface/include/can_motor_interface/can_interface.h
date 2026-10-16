@@ -37,6 +37,9 @@ class CanInterfaceNode {
   void canReceiveThread();
   void softwareEstopCallback(const std_msgs::Bool::ConstPtr& msg);
   void emergencyResetCallback(const std_msgs::Bool::ConstPtr& msg);
+  void distanceSafetyCallback(const std_msgs::String::ConstPtr& msg);
+  void cancelPreparedMotion(const char* reason);
+  void chassisLockCallback(const std_msgs::Bool::ConstPtr& msg);
   void remoteStartCallback(const std_msgs::Empty::ConstPtr& msg);
 
   bool openSocket();
@@ -72,6 +75,9 @@ class CanInterfaceNode {
   ros::Subscriber software_estop_sub_;
   ros::Subscriber emergency_reset_sub_;
   ros::Subscriber remote_start_sub_;
+  ros::Subscriber chassis_lock_sub_, stop_all_sub_, distance_safety_sub_;
+  bool chassis_locked_ = false;
+  bool distance_stopped_ = false;
   ros::Publisher motor_state_pub_;
   ros::Publisher motor_status_flag_pub_;
   ros::Publisher emergency_stop_pub_;
@@ -131,6 +137,7 @@ class CanInterfaceNode {
   std::atomic<bool> link_was_healthy_{false};
   size_t probe_slot_ = 0;
   std::vector<float> motor_state_rpm_;
+  std::array<double, 4> published_speed_time_{};
   std::vector<uint8_t> motor_status_flags_;
   std::mutex telemetry_mutex_;
 
@@ -160,15 +167,18 @@ class CanInterfaceNode {
   std::array<double, 4> last_speed_sent_sec_{};
   std::array<int32_t, 4> last_cached_rpm_{};
   bool cached_target_valid_ = false;
-  double last_cached_batch_sec_ = 0;
+  // Exactly one cached speed command may await 0x102. The wire ACK has no
+  // motor index or host sequence, so serial submission avoids invented mapping.
+  size_t cached_confirmed_ = 0;
+  bool cached_ack_pending_ = false;
+  double cached_ack_sent_sec_ = 0;
+  bool input_timeout_reported_ = false;
   double command_timeout_sec_;
   double start_ack_timeout_sec_;
   std::atomic<double> last_rx_time_sec_;
   std::mutex event_mutex_;
   std::map<uint8_t, ros::SteadyTime> last_event_times_;
   MotionStartStateMachine start_state_;
-  uint64_t command_generation_ = 0;
-  uint64_t cached_generation_ = 0;
 };
 
 }  // namespace can_motor_interface

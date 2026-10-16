@@ -26,6 +26,7 @@ class RearCanSafety(unittest.TestCase):
         self.rear_sequence = 0
         self.repeat = False
         self.running = True
+        self.commands_enabled = True
         self.frames = rospy.Publisher('/test/range_can', UInt8MultiArray, queue_size=50)
         self.commands = rospy.Publisher('/cmd_vel_teleop', Twist, queue_size=1)
         subs = [rospy.Subscriber('/cmd_vel_muxed', Twist, lambda m: self.store('output', m)),
@@ -98,6 +99,19 @@ class RearCanSafety(unittest.TestCase):
                 self.command.linear.x = .2
                 self.command.angular.z = 0
             self.wait(lambda: self.state == 'CLEAR' and self.output.linear.x > .19)
+            # Successful acquisitions without echoes are ordinary navigation,
+            # distinct from a stopped sensor stream or an I2C/timeout fault.
+            for status in (0, 2):
+                self.rear = (65535, status)
+                self.wait(lambda: math.isnan(self.distance) and self.diagnostic == 0
+                          and self.output.linear.x > .19)
+            self.rear = (65535, 8)
+            self.wait(lambda: self.diagnostic == 2)
+            self.rear = (65535, 0)
+            self.wait(lambda: self.diagnostic == 0)
+            # Range bridge/timers keep running while the original command stops.
+            self.commands_enabled = False
+            self.wait(lambda: self.output.linear.x == 0 and self.output.angular.z == 0, timeout=1.0)
         finally:
             self.running = False
             thread.join(timeout=1)
@@ -127,7 +141,8 @@ class RearCanSafety(unittest.TestCase):
                     sequence = self.rear_sequence if sensor_id == 5 else self.sequence
                     self.frames.publish(UInt8MultiArray(data=[0x10, 1, 1, sensor_id,
                         distance & 255, distance >> 8, 255, 255, status, sequence]))
-                self.commands.publish(self.command)
+                if self.commands_enabled:
+                    self.commands.publish(self.command)
             time.sleep(.02)
 
     def wait_reverse(self):

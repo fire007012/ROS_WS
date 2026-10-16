@@ -119,7 +119,7 @@ TEST(CanProtocol, StartAckAndButtonOrderAreCorrelatedBySequence) {
   first.cacheReady();
   EXPECT_FALSE(first.acknowledge(0x1234, 0x05, 0)); // ACK arrives first
   first.physicalStart(0, 0x1234, 1.0);
-  EXPECT_TRUE(first.startPending());
+  EXPECT_EQ(MotionStartState::RUNNING, first.state());
   EXPECT_TRUE(first.ackAccepted());
   first.motionStarted();
   EXPECT_EQ(MotionStartState::RUNNING, first.state());
@@ -142,6 +142,7 @@ TEST(CanProtocol, StartFailureRejectionExecutionFailureAndTimeout) {
 
   can_motor_interface::MotionStartStateMachine failed;
   failed.cacheReady();
+  failed.physicalStart(0, 2, 0);
   failed.physicalStart(2, 2, 0);
   EXPECT_EQ(MotionStartState::START_FAILED, failed.state());
 
@@ -165,7 +166,7 @@ TEST(CanProtocol, EstopCancelsPendingStartAndHeartbeatIsLatched) {
   EXPECT_EQ(MotionStartState::IDLE, sm.state());
 }
 
-TEST(CanProtocol, MotionWriteGatePausesDuringStartAndReopensAfterFeedback) {
+TEST(CanProtocol, MotionWriteGatePausesDuringStartAndReopensAfterTerminalAck) {
   can_motor_interface::MotionStartStateMachine sm;
   EXPECT_TRUE(sm.canSendCachedMotion()); // cache may be prepared while heartbeat runs
   sm.cacheReady();
@@ -175,6 +176,31 @@ TEST(CanProtocol, MotionWriteGatePausesDuringStartAndReopensAfterFeedback) {
   sm.acknowledge(9, 0x05, 0);
   sm.motionStarted();
   EXPECT_TRUE(sm.canSendRunningMotion());
+}
+
+TEST(CanProtocol, StartSequenceGuardsDuplicateLateFailureAndEstop) {
+  using can_motor_interface::MotionStartState;
+  can_motor_interface::MotionStartStateMachine sm;
+  sm.cacheReady();
+  sm.physicalStart(0, 41, 1.0);
+  sm.physicalStart(0, 41, 1.3);
+  sm.physicalStart(2, 40, 1.3);
+  EXPECT_TRUE(sm.startPending());
+  EXPECT_FALSE(sm.acknowledge(40, 5, 0));
+  EXPECT_TRUE(sm.timeout(1.41)); // duplicate did not renew the deadline
+  sm.resetForReprepare(); sm.cacheReady();
+  sm.physicalStart(0, 42, 2.0);
+  ASSERT_TRUE(sm.acknowledge(42, 5, 0));
+  EXPECT_EQ(MotionStartState::RUNNING, sm.state()); // even a zero-speed start
+  sm.physicalStart(0, 42, 2.1);
+  sm.physicalStart(2, 41, 2.1);
+  EXPECT_EQ(MotionStartState::RUNNING, sm.state());
+  sm.physicalStart(2, 42, 2.1);
+  EXPECT_EQ(MotionStartState::START_FAILED, sm.state());
+  sm.estopLatched();
+  sm.physicalStart(0, 43, 3.0);
+  sm.physicalStart(1, 43, 3.1);
+  EXPECT_EQ(MotionStartState::ESTOP_LATCHED, sm.state());
 }
 
 TEST(CanProtocol, StatusSafetyReasonsAreDistinguished) {
@@ -282,7 +308,14 @@ TEST(LinkHealth, MissingOptionalAxisDoesNotHideChassisMotionAckLoss) {
   acks.acknowledge(3, 10.5);
   EXPECT_TRUE(acks.healthy(10.6, 0.5));
   for (size_t wheel = 0; wheel < 4; ++wheel) acks.sent(wheel, 11);
-  EXPECT_FALSE(acks.healthy(11.1, 0.5)); // repeated TX never extends the ACK deadline
+  EXPECT_TRUE(acks.healthy(11.1, 0.5)); // previous batch completed: a new deadline
+  for (size_t wheel = 0; wheel < 4; ++wheel) acks.sent(wheel, 11.4);
+  EXPECT_FALSE(acks.healthy(11.6, 0.5)); // repeated TX cannot extend outstanding deadline
+  for (size_t wheel = 0; wheel < 4; ++wheel) {
+    acks.acknowledge(wheel, 11.6);
+    acks.acknowledge(wheel, 11.6);
+  }
+  EXPECT_TRUE(acks.healthy(100, 0.5)); // healthy idle never expires a completed request
 }
 
 TEST(LinkHealth, FirmwareFailureDiagnosisRetainsExactCounterTransition) {
