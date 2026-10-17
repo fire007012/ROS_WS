@@ -15,4 +15,7 @@ robot_status_display_node:
   video_topic: /camera/upper_display
   scan_mode_topic: /barcode_scan/camera_mode
   call_camera_status_topic: /lower_cam/lower_usb_cam/capture_status
-  video_display_fps: 15.0
+  video_display_fps: 10.0
+  # Video aspect follows config/audio_video_defaults.launch stream_width/stream_height.
+  rotate_portrait_video: false
+  range_timeout_s: 0.5

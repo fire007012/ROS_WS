@@ -39,6 +39,14 @@ class ScanCameraPolicyTests(unittest.TestCase):
         self.assertFalse(capture_dimensions_acceptable('high',(1280,720),(640,360)))
         self.assertFalse(capture_dimensions_acceptable('low',(640,480),(0,0)))
 
+    def test_scan_low_mode_requests_the_camera_native_640x480_mjpeg_rate(self):
+        from pathlib import Path
+        import re
+        config = Path(__file__).resolve().parents[1] / 'config/scan_camera.yaml'
+        values = dict(re.findall(r'^(low_\w+):\s*([^#\s]+)', config.read_text(encoding='utf-8'), re.M))
+        self.assertEqual((values['low_width'], values['low_height'], values['low_fps'], values['low_pixel_format']),
+                         ('640', '480', '30.0', 'mjpeg'))
+
     def test_timeout_validation(self):
         for value in [0,-1,float('nan'),float('inf')]:
             with self.assertRaises(ValueError):ScanCameraPolicy(timeout=value)

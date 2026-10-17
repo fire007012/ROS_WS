@@ -3,5 +3,17 @@
   <!-- Settings live in config/audio_video_defaults.launch. CLI overrides are forwarded. -->
   <arg name="role" value="master" />
   <arg name="config_file" default="$(find robot_navigation)/config/audio_video_defaults.launch" />
+  <arg name="enable_status_gui" default="true" />
+  <arg name="status_gui_fullscreen" default="true" />
   <include file="$(arg config_file)" pass_all_args="true" />
+  <!-- Final robot UI: remote doctor video plus task, barcode and vitals status. -->
+  <node pkg="robot_navigation" type="robot_status_display_node.py"
+        name="robot_status_display_node" output="screen"
+        if="$(arg enable_status_gui)">
+    <param name="fullscreen" value="$(arg status_gui_fullscreen)"/>
+    <param name="video_topic" value="/camera/upper_display"/>
+    <param name="scan_mode_topic" value="/barcode_scan/camera_mode"/>
+    <param name="call_camera_status_topic" value="/lower_cam/lower_usb_cam/capture_status"/>
+    <param name="video_display_fps" value="10.0"/>
+  </node>
 </launch>

@@ -29,9 +29,18 @@ std = types.ModuleType('std_msgs.msg')
 std.Bool = std.Float32 = std.String = type('Message', (), {})
 robot = types.ModuleType('robot_navigation.msg')
 robot.QrResult = type('QrResult', (), {})
+nav = types.ModuleType('nav_msgs.msg')
+nav.Odometry = type('Odometry', (), {})
+path = types.ModuleType('path_manager.msg')
+path.PathPoint = type('PathPoint', (), {})
+sensor = types.ModuleType('sensor_msgs.msg')
+sensor.Range = type('Range', (), {})
 sys.modules.update({'rospy': rospy, 'std_msgs': types.ModuleType('std_msgs'),
                     'std_msgs.msg': std, 'robot_navigation': types.ModuleType('robot_navigation'),
-                    'robot_navigation.msg': robot})
+                    'robot_navigation.msg': robot,
+                    'nav_msgs': types.ModuleType('nav_msgs'), 'nav_msgs.msg': nav,
+                    'path_manager': types.ModuleType('path_manager'), 'path_manager.msg': path,
+                    'sensor_msgs': types.ModuleType('sensor_msgs'), 'sensor_msgs.msg': sensor})
 
 
 def load(name, filename):
@@ -218,6 +227,15 @@ def make_window():
     obj = display.StatusWindow.__new__(display.StatusWindow)
     obj.lock = threading.Lock()
     obj.pending = {}
+    obj.navigation_hint = ''
+    obj.ranges = display.RangeReadings()
+    obj.aspect = 4.0/3.0
+    obj.rotate_portrait = False
+    obj.mission_phase = ''
+    obj.assignment = {}
+    obj.mission_finished = None
+    obj.bedside_note = ''
+    obj.pose_track = display.PoseTrack()
     obj.sensor_hint = ''
     obj.atomic_source = False
     obj.last_vitals = time.monotonic()
@@ -226,11 +244,17 @@ def make_window():
     obj.measuring_state = False
     obj.video_lock = threading.Lock()
     obj.latest_video = None
+    obj.latest_scan = None
+    obj.last_scan_time = 0.0
+    obj.display_source = None
     obj.last_video_time = 0.0
     obj.last_video_render = 0.0
     obj.video_has_signal = False
     obj.video_display_fps = 15.0
     obj.video_photo = None
+    obj.video_title = Label()
+    obj.scan_panel = types.SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None)
+    obj.scan_label = Label()
     obj.video_label = Label()
     obj.video_info = Label()
     obj.scan_summary = 'scan profile'
@@ -283,6 +307,128 @@ class DisplayTests(unittest.TestCase):
             status='online_idle', measuring=False, temperature_sensor_ready=False))))
         obj.pump()
         self.assertIn('温度传感器未识别', obj.labels['esp'].text)
+
+    def test_specific_beds_are_resolved_for_all_qr_orders(self):
+        for bed, box in [(1, 1), (1, 3), (3, 1), (3, 3)]:
+            obj = make_window()
+            obj.qr(types.SimpleNamespace(first_bed=bed, first_box=box,
+                                        second_bed=4-bed, second_box=4-box))
+            obj.mission_state(types.SimpleNamespace(data='GOTO_BED_A'))
+            self.assertIn('正在前往%d号床' % bed, obj.pending['task'])
+            obj.mission_state(types.SimpleNamespace(data='PLACE_MEDICINE_B'))
+            self.assertIn('向%d号床放药' % (4-bed), obj.pending['task'])
+            self.assertIn('%d号药箱' % (4-box), obj.pending['task'])
+
+    def test_barcode_and_late_bedside_messages_do_not_replace_current_task(self):
+        obj = make_window()
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        obj.robot_display(types.SimpleNamespace(data='1床条码:123\n3床条码:456'))
+        obj.bedside_status(types.SimpleNamespace(data='bedside call and measurement completed'))
+        self.assertEqual(obj.pending['task'], '当前任务：正在前往护士台')
+        obj.mission_state(types.SimpleNamespace(data='STOP'))
+        obj.mission_result(types.SimpleNamespace(data=True))
+        self.assertIn('任务完成', obj.pending['task'])
+
+    def test_new_mission_clears_old_assignment_and_goal(self):
+        obj = make_window()
+        obj.qr(types.SimpleNamespace(first_bed=3, first_box=1, second_bed=1, second_box=3))
+        obj.pose_track.goal = (4, 2.2)
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        self.assertEqual(obj.assignment, {})
+        self.assertIsNone(obj.pose_track.goal)
+
+    def test_pose_and_goal_callbacks_only_update_data(self):
+        obj = make_window()
+        q = types.SimpleNamespace(x=0., y=0., z=0., w=1.)
+        p = types.SimpleNamespace(x=1.2, y=.4)
+        msg = types.SimpleNamespace(header=types.SimpleNamespace(frame_id='odom',
+                    stamp=types.SimpleNamespace(is_zero=lambda: True)),
+                    pose=types.SimpleNamespace(pose=types.SimpleNamespace(position=p, orientation=q)))
+        worker = threading.Thread(target=lambda: obj.odometry(msg))
+        worker.start(); worker.join()
+        self.assertEqual(obj.pose_track.pose, (1.2, .4, 0.))
+        self.assertIsNone(obj.labels['task'].text)
+        obj.path_target(types.SimpleNamespace(frame_id='map', x=4, y=2.2))
+        self.assertIsNone(obj.pose_track.goal)
+        obj.path_target(types.SimpleNamespace(frame_id='odom', x=4, y=2.2))
+        self.assertEqual(obj.pose_track.goal, (4, 2.2))
+
+    def test_scan_preview_is_separate_and_never_replaces_doctor_video(self):
+        obj = make_window()
+        rendered = []
+        obj.render_video = lambda msg, label=None: rendered.append((msg, label))
+        scan, call = object(), types.SimpleNamespace(header=types.SimpleNamespace(frame_id='doctor'))
+        obj.mission_state(types.SimpleNamespace(data='SCAN_QR'))
+        obj.scan_video(scan)
+        obj.video(call)
+        obj.pump()
+        self.assertIn((scan, obj.scan_label), rendered)
+        self.assertIn((call, None), rendered)
+        self.assertTrue(obj.scan_visible)
+        self.assertIn('音视频', obj.video_title.text)
+        obj.mission_state(types.SimpleNamespace(data='GOTO_BED_A'))
+        obj.video(call)
+        obj.pump()
+        self.assertFalse(obj.scan_visible)
+        self.assertIsNone(obj.scan_photo)
+        obj.scan_preview = True
+        obj.scan_video(scan)
+        obj.pump()
+        self.assertTrue(obj.scan_visible)
+
+    def test_render_video_passes_binary_ppm_to_tk_without_base64(self):
+        obj = make_window()
+        obj.video_label.winfo_width = lambda: 4
+        obj.video_label.winfo_height = lambda: 3
+        pixels = bytes([255, 0, 0]*12)
+        frame = types.SimpleNamespace(shape=(3, 4, 3), tobytes=lambda: pixels)
+        obj.bridge = types.SimpleNamespace(imgmsg_to_cv2=lambda *a, **kw: frame)
+        cv = types.SimpleNamespace(COLOR_BGR2RGB=1, cvtColor=lambda *a: frame,
+                                  error=ValueError)
+        with patch.object(display, 'cv2', cv), patch.object(display.tk, 'PhotoImage') as photo:
+            obj.render_video(object())
+        self.assertEqual(photo.call_args.kwargs['data'], b'P6\n4 3\n255\n' + pixels)
+        self.assertEqual(photo.call_args.kwargs['format'], 'PPM')
+
+    def test_distance_callback_queues_state_and_expires(self):
+        obj = make_window()
+        msg = types.SimpleNamespace(range=.251, min_range=.05, max_range=3.,
+            header=types.SimpleNamespace(stamp=types.SimpleNamespace(is_zero=lambda: True)))
+        obj.range_sample('front', msg)
+        self.assertEqual(obj.ranges.text('front', time.monotonic()), '251 mm')
+        self.assertIsNone(obj.labels['task'].text)
+        msg.range = float('nan')
+        obj.range_sample('rear', msg)
+        self.assertIn('无效', obj.ranges.text('rear', time.monotonic()))
+
+    def test_navigation_and_video_missing_stage_are_reported(self):
+        obj = make_window()
+        obj.mission_state(types.SimpleNamespace(data='GOTO_NURSE'))
+        obj.avoidance_status(types.SimpleNamespace(data='SIDESTEP'))
+        self.assertIn('横移绕障', obj.pending['task'])
+        obj.avoidance_status(types.SimpleNamespace(data='FAILED_STALLED'))
+        self.assertIn('FAILED_STALLED', obj.pending['task'])
+        obj.video_pipeline_status(types.SimpleNamespace(data=json.dumps(
+            dict(input_age_s=.1, signal_age_s=-1, no_signal=True))))
+        self.assertGreater(obj.remote_video_received, 0)
+        self.assertEqual(obj.remote_video_real, 0)
+        self.assertTrue(obj.remote_video_no_signal)
+
+    def test_gui_aspect_follows_configured_receiver_without_cli_parameters(self):
+        class InitializationComplete(Exception):
+            pass
+        for role in ('master', 'slave'):
+            params = {'~audio_role': role,
+                      '/video_stream_' + role + '/stream_width': 640,
+                      '/video_stream_' + role + '/stream_height': 360}
+            obj = display.StatusWindow.__new__(display.StatusWindow)
+            with patch.object(rospy, 'get_param',
+                    side_effect=lambda key, default=None: params.get(key, default), create=True), \
+                    patch.object(display, 'CvBridge', return_value=object()), \
+                    patch.object(display.tk, 'Tk', side_effect=InitializationComplete):
+                with self.assertRaises(InitializationComplete):
+                    obj.__init__()
+            self.assertAlmostEqual(obj.aspect, 16/9)
 
     def test_callback_bursts_are_coalesced(self):
         obj = make_window()

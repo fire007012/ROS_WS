@@ -37,7 +37,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
     , medicine_release_done_received_(false)
     , odom_received_(false)
     , home_arrived_(false)
-    , skipBedsideScan_(true)
+    , skipBedsideScan_(false)
     , bedsideScanSkipWaitSec_(1.0)
     , stage_timeout_sec_(30.0)
     , mission_timeout_sec_(180.0)
@@ -81,6 +81,7 @@ MissionController::MissionController(ros::NodeHandle& nh, ros::NodeHandle& pnh)
   mission_nh.param<double>("state_machine_rate_hz", state_machine_rate_hz_, 10.0);
   mission_nh.param("odom_timeout_sec", odom_timeout_sec_, 0.5);
   mission_nh.param("medicine_placed_event_timeout_sec", medicine_placed_event_timeout_sec_, 1.0);
+  pnh_.param<bool>("enable_bedside_distance_tuning", enable_bedside_distance_tuning_, true);
   pnh_.param<bool>("competition_mode", competition_mode_, true);
   pnh_.param<bool>("audio_video_enabled", audio_video_enabled_, false);
   int start_token = static_cast<int>(start_auth_token_); pnh_.param<int>("start_auth_token", start_token, start_token); start_auth_token_ = static_cast<uint32_t>(start_token);
@@ -140,7 +141,7 @@ bool MissionController::init() {
     return false;
   }
 
-  pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, true);
+  pnh_.param<bool>("skip_bedside_scan", skipBedsideScan_, false);
   pnh_.param<double>("bedside_scan_skip_wait_s", bedsideScanSkipWaitSec_, 1.0);
   bedsideScanSkipWaitSec_ = std::max(0.0, bedsideScanSkipWaitSec_);
   // ── 订阅 ──
@@ -356,6 +357,15 @@ void MissionController::startSignalCallback(const std_msgs::UInt32::ConstPtr& ms
 
   if (mission_started_.load()) return;
 
+  if(odom_received_) {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    const auto& p=current_odom_.pose.pose.position;
+    const auto& q=current_odom_.pose.pose.orientation;
+    const double yaw=std::atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z));
+    ROS_INFO("[mission_controller] accepted start pose=(%.3f,%.3f,%.3f); configured P0=(0,0,0)",p.x,p.y,yaw);
+    if(std::hypot(p.x,p.y)>.10 || std::abs(yaw)>.20)
+      ROS_WARN("[mission_controller] odometry not at P0: moving vehicle by hand or restarting mission does not reset odometry; verify physical start pose");
+  }
   resetMissionState();
   ++mission_generation_;
   std_msgs::Bool enabled;
@@ -632,7 +642,7 @@ void MissionController::enterState(State new_state) {
   alignment_done_ = false;
   alignment_ready_for_done_ = false;
   std_msgs::String state; state.data = stateToString(new_state); mission_state_pub_.publish(state);
-  std_msgs::Bool qr_enabled; qr_enabled.data = new_state == State::SCAN_QR; qr_enabled_pub_.publish(qr_enabled);
+  std_msgs::Bool qr_enabled; qr_enabled.data = false; qr_enabled_pub_.publish(qr_enabled);
   const bool navigating = new_state == State::GOTO_NURSE ||
       new_state == State::GOTO_BED_A || new_state == State::GOTO_BED_B ||
       new_state == State::RETURN_HOME;
@@ -654,10 +664,12 @@ void MissionController::actionGotoNurse() {
 }
 
 void MissionController::actionScanQr() {
-  ++scan_session_id_; std_msgs::UInt32 session; session.data = scan_session_id_; scan_session_pub_.publish(session);
-  ROS_INFO("[mission_controller] 动作: 等待二维码识别");
+  // Do not accept an old/early QR result before clearing the new scan session.
   qr_received_.store(false);
-  // 无额外动作，等待 qrResultCallback 设置标志
+  ++scan_session_id_;
+  std_msgs::UInt32 session; session.data = scan_session_id_; scan_session_pub_.publish(session);
+  std_msgs::Bool enabled; enabled.data = true; qr_enabled_pub_.publish(enabled);
+  ROS_INFO("[mission_controller] Waiting for nurse QR (11/13/31/33), session=%u", scan_session_id_);
 }
 
 void MissionController::actionGotoBedA() {
@@ -669,10 +681,12 @@ void MissionController::actionGotoBedA() {
 }
 
 void MissionController::actionPositionInCircleA() {
-  ROS_INFO("[mission_controller] 动作: 启动微调（A床）");
-  fine_tuning_done_received_.store(false);
+  // The proven waypoint approach supplies the stop pose. Distance calibration
+  // is opt-in until the sensor target is calibrated to the same physical circle.
+  fine_tuning_done_received_.store(!enable_bedside_distance_tuning_);
   medicine_release_done_received_.store(false);
-  callFineTuningStart();
+  if (enable_bedside_distance_tuning_) callFineTuningStart();
+  else ROS_INFO("[mission_controller] Bedside waypoint reached; checking footprint and fresh front range without extra distance motion");
 }
 
 void MissionController::actionScanBarcodeA() {
@@ -723,10 +737,12 @@ void MissionController::actionGotoBedB() {
 }
 
 void MissionController::actionPositionInCircleB() {
-  ROS_INFO("[mission_controller] 动作: 启动微调（B床）");
-  fine_tuning_done_received_.store(false);
+  // The proven waypoint approach supplies the stop pose. Distance calibration
+  // is opt-in until the sensor target is calibrated to the same physical circle.
+  fine_tuning_done_received_.store(!enable_bedside_distance_tuning_);
   medicine_release_done_received_.store(false);
-  callFineTuningStart();
+  if (enable_bedside_distance_tuning_) callFineTuningStart();
+  else ROS_INFO("[mission_controller] Bedside waypoint reached; checking footprint and fresh front range without extra distance motion");
 }
 
 void MissionController::actionScanBarcodeB() {
@@ -830,7 +846,13 @@ bool MissionController::checkPositionInCircleComplete() {
     const CircleDef& circle = (bed == 1) ? circle_bed1_ : circle_bed3_;
     // The bed circle excludes the arm: only the complete chassis footprint is
     // required to be inside it. VL53 freshness/clearance is checked as well.
-    if (!isProjectionInsideCircle(circle, false) || !areVl53RangesValid()) {
+    const bool projection_ok = isProjectionInsideCircle(circle, false);
+    const bool ranges_ok = areVl53RangesValid();
+    if (!projection_ok || !ranges_ok) {
+      std_msgs::String status;
+      status.data = !projection_ok ? "等待车体完整进入停靠圈（检查实际定位与圈坐标）"
+                                  : "等待前向测距有效且新鲜";
+      display_text_pub_.publish(status);
       return false;
     }
     if (is_first_visit) {
@@ -1013,6 +1035,8 @@ bool MissionController::pollServiceCall() {
 }
 
 void MissionController::cancelMissionActions() {
+  std_msgs::Bool qr_disabled; qr_disabled.data = false; qr_enabled_pub_.publish(qr_disabled);
+  std_msgs::Int8 no_bed; no_bed.data = 0; scan_target_bed_pub_.publish(no_bed);
   std_msgs::Int32 av_off; av_off.data=0; av_ready_pub_.publish(av_off);
   awaiting_medicine_placed_ = false;
   ++mission_generation_;

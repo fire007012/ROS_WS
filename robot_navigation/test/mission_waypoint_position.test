@@ -1,0 +1,6 @@
+<launch>
+  <!-- Real mission node, four QR orders and footprint gating, no actuators. -->
+  <include file="$(find robot_navigation)/test/mission_routes.test">
+    <arg name="distance_tuning" value="false"/>
+  </include>
+</launch>

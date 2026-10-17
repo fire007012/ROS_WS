@@ -1,24 +1,22 @@
 <?xml version='1.0' encoding='utf-8'?>
 <launch>
-  <!-- Shared defaults for BOTH peers. master/slave are AV roles, not the ROS Master location. -->
-  <!-- ROS_MASTER_URI and ROS_IP must be set in the launching shell. Do not use env tags to relocate roslaunch itself. -->
-  <!-- remote_ip uses ROBOT_PI_IP on the doctor (master), ROBOT_VM_IP on the robot (slave). Set the real addresses, not sample IPs. -->
-  <!-- 网络：读取本机 .bashrc；机器人端 remote_ip=ROBOT_VM_IP，医生端 remote_ip=ROBOT_PI_IP。 -->
+  <!-- AV master is the robot Pi; AV slave is the doctor VM. ROS Master remains on the Pi. -->
   <arg name="role" />
   <arg name="master_uri" default="$(env ROS_MASTER_URI)" />
-  <arg name="local_ip" default="$(env ROS_IP)" />
-  <arg name="remote_ip" default="$(eval env('ROBOT_VM_IP') if arg('role') == 'slave' else env('ROBOT_PI_IP'))" />
+  <arg name="local_ip" default="$(eval '10.161.170.93' if arg('role') == 'master' else '10.161.170.41')" />
+  <arg name="remote_ip" default="$(eval '10.161.170.41' if arg('role') == 'master' else '10.161.170.93')" />
   <!-- 功能开关：纯音频可把 enable_video 改为 false；无桌面把 enable_display 改为 false。 -->
   <arg name="enable_audio" default="true" />
   <arg name="enable_video" default="true" />
   <arg name="enable_display" default="true" />
-  <!-- Doctor keeps the standalone remote view; robot embeds it in status GUI. -->
-  <arg name="enable_image_view" default="$(eval arg('role') == 'master')" />
+  <!-- Robot embeds the doctor's camera in its status GUI; doctor gets a standalone view. -->
+  <arg name="enable_image_view" default="$(eval arg('role') == 'slave')" />
   <!-- 机器人相机；医生相机对应下方 start_upper_cam / upper_cam_device。 -->
   <arg name="start_lower_cam" default="true" />
   <arg name="use_opencv_capture" default="true" />
   <arg name="use_test_camera" default="false" />
   <arg name="lower_cam_device" default="" />
+  <!-- Camera capture size. Edit here; both robot/doctor peers read this file. -->
   <arg name="cam_width" default="640" />
   <arg name="cam_height" default="480" />
   <arg name="cam_framerate" default="25" />
@@ -26,17 +24,20 @@
        available with use_opencv_capture:=false; YUYV is an explicit option. -->
   <arg name="cam_pixel_format" default="mjpeg" />
   <arg name="jpeg_quality" default="75" />
+  <!-- Persistent output size, WIDTH then HEIGHT: 640x480 = 4:3.
+       For 16:9 edit these to 640 and 360. The mission and GUI follow automatically. -->
   <arg name="stream_width" default="640" />
   <arg name="stream_height" default="480" />
-  <arg name="stream_framerate" default="25.0" />
+  <arg name="stream_framerate" default="10.0" />
   <arg name="http_port" default="8080" />
   <arg name="enable_http" default="false" />
   <arg name="enable_browser" default="false" />
-  <!-- Audio/video remains enabled from accepted PC1 mission start through mission termination. -->
+  <!-- Continuous media is independent of PC1, mission completion and emergency stops. -->
   <arg name="sample_rate" default="48000" />
   <arg name="frame_duration_ms" default="20" />
   <arg name="opus_bitrate" default="32000" />
   <arg name="ready_topic" default="/Ready" />
+  <arg name="always_on" default="true" />
   <arg name="capture_latency_ms" default="20" />
   <arg name="playback_latency_ms" default="40" />
   <arg name="jitter_buffer_ms" default="40" />
@@ -49,7 +50,10 @@
        /dev/videoN setting. Use a source name from `pactl list short sources`. -->
   <arg name="mic_device" default="default" />
   <arg name="speaker_device" default="default" />
-  <arg name="video_display_fps" default="15.0" />
+  <arg name="video_display_fps" default="10.0" />
+  <!-- Standalone robot master wrapper enables the final status GUI explicitly. -->
+  <arg name="enable_status_gui" default="false" />
+  <arg name="status_gui_fullscreen" default="true" />
   <!-- Old CLI network options remain available, but must match the shell environment used by roslaunch. -->
   <include file="$(find robot_navigation)/launch/audio_video_peer.launch" pass_all_args="true" />
 </launch>

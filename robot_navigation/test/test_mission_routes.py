@@ -19,6 +19,7 @@ from arm_and_gripper.srv import ArmPlaceMedicine, ArmPlaceMedicineResponse
 
 class MissionRoutes(unittest.TestCase):
     def test_qr_routes_projection_and_home_hold(self):
+        distance_tuning = rospy.get_param('~distance_tuning', True)
         source = Path(__file__).resolve().parents[2]
         with (source / 'robot_bringup/config/paths.yaml').open() as stream:
             self.paths = {p['name']: p['points'] for p in yaml.safe_load(stream)['paths']}
@@ -48,7 +49,11 @@ class MissionRoutes(unittest.TestCase):
                     self.result = QrResult(first_bed, first_box, 4-first_bed, 4-first_box)
                     self.block_projection = True
                     self.start.publish(UInt32(0x5A17))
-                    self.wait(lambda: self.fine_calls == 1)
+                    if distance_tuning:
+                        self.wait(lambda: self.fine_calls == 1)
+                    else:
+                        self.wait(lambda: len(self.selected) == 2)
+                        self.assertEqual(self.fine_calls, 0)
                     time.sleep(.3)
                     self.assertEqual(self.boxes, [], 'partial chassis projection accepted')
                     with self.guard:

@@ -27,6 +27,8 @@
   <arg name="frame_duration_ms" />
   <arg name="opus_bitrate" />
   <arg name="ready_topic" />
+  <arg name="always_on" />
+  <arg name="effective_ready_topic" value="$(eval '/audio_video/ready' if arg('always_on') else arg('ready_topic'))"/>
   <arg name="capture_latency_ms" />
   <arg name="playback_latency_ms" />
   <arg name="jitter_buffer_ms" />
@@ -38,18 +40,26 @@
   <arg name="mic_device" />
   <arg name="speaker_device" />
   <arg name="video_display_fps" />
-  <arg name="local_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
-  <arg name="local_camera_node" value="$(eval 'upper_usb_cam' if arg('role') == 'master' else 'lower_usb_cam')" />
-  <arg name="remote_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
-  <arg name="remote_display_topic" value="$(eval '/camera/lower_display' if arg('role') == 'master' else '/camera/upper_display')" />
-  <arg name="remote_view_node" value="$(eval 'view_lower_cam' if arg('role') == 'master' else 'view_upper_cam')" />
+  <arg name="enable_status_gui" />
+  <arg name="status_gui_fullscreen" />
+  <arg name="local_camera_ns" value="$(eval 'lower_cam' if arg('role') == 'master' else 'upper_cam')" />
+  <arg name="local_camera_node" value="$(eval 'lower_usb_cam' if arg('role') == 'master' else 'upper_usb_cam')" />
+  <arg name="remote_camera_ns" value="$(eval 'upper_cam' if arg('role') == 'master' else 'lower_cam')" />
+  <arg name="remote_display_topic" value="$(eval '/camera/upper_display' if arg('role') == 'master' else '/camera/lower_display')" />
+  <arg name="remote_view_node" value="$(eval 'view_upper_cam' if arg('role') == 'master' else 'view_lower_cam')" />
   <env name="ROS_MASTER_URI" value="$(arg master_uri)" />
   <env name="ROS_IP" value="$(arg local_ip)" />
+  <!-- This only enables media. It never publishes motor or mission start commands. -->
+  <node pkg="robot_navigation" type="audio_video_ready_node.py" name="audio_video_ready_$(arg role)"
+        output="screen" if="$(arg always_on)" required="true">
+    <param name="ready_topic" value="$(arg effective_ready_topic)"/>
+  </node>
+
   <group if="$(arg enable_video)">
-    <group if="$(eval arg('start_upper_cam') if arg('role') == 'master' else arg('start_lower_cam'))">
+    <group if="$(eval arg('start_lower_cam') if arg('role') == 'master' else arg('start_upper_cam'))">
       <include file="$(find robot_navigation)/config/camera_devices.launch">
-        <arg name="camera_role" value="$(eval 'doctor_audio' if arg('role') == 'master' else 'robot_audio')"/>
-        <arg name="camera_device_override" value="$(eval arg('upper_cam_device') if arg('role') == 'master' else arg('lower_cam_device'))"/>
+        <arg name="camera_role" value="$(eval 'robot_audio' if arg('role') == 'master' else 'doctor_audio')"/>
+        <arg name="camera_device_override" value="$(eval arg('lower_cam_device') if arg('role') == 'master' else arg('upper_cam_device'))"/>
         <arg name="camera_ns" value="$(arg local_camera_ns)"/>
         <arg name="camera_node" value="$(arg local_camera_node)"/>
         <arg name="image_width" value="$(arg cam_width)"/>
@@ -58,8 +68,8 @@
         <arg name="pixel_format" value="$(arg cam_pixel_format)"/>
         <arg name="use_test_camera" value="$(arg use_test_camera)"/>
         <arg name="use_opencv_capture" value="$(arg use_opencv_capture)"/>
-        <arg name="capture_wait_for_ready" value="true"/>
-        <arg name="capture_ready_topic" value="$(arg ready_topic)"/>
+        <arg name="capture_wait_for_ready" value="$(eval not arg('always_on'))"/>
+        <arg name="capture_ready_topic" value="$(arg effective_ready_topic)"/>
       </include>
       <node pkg="robot_navigation" type="video_stream_node" name="video_sender_$(arg role)" output="screen">
         <param name="camera_topic" value="/$(arg local_camera_ns)/$(arg local_camera_node)/image_raw" />
@@ -71,7 +81,7 @@
         <param name="stream_width" value="$(arg stream_width)" />
         <param name="stream_height" value="$(arg stream_height)" />
         <param name="framerate" value="$(arg stream_framerate)" />
-        <param name="ready_topic" value="$(arg ready_topic)" />
+        <param name="ready_topic" value="$(arg effective_ready_topic)" />
       </node>
     </group>
       <node pkg="robot_navigation" type="video_stream_node" name="video_stream_$(arg role)" output="screen">
@@ -86,7 +96,7 @@
       <param name="stream_width" value="$(arg stream_width)" />
       <param name="stream_height" value="$(arg stream_height)" />
       <param name="framerate" value="$(arg stream_framerate)" />
-      <param name="ready_topic" value="$(arg ready_topic)" />
+      <param name="ready_topic" value="$(arg effective_ready_topic)" />
     </node>
     <node pkg="image_view" type="image_view" name="$(arg remote_view_node)" output="screen" if="$(eval arg('enable_image_view') and arg('enable_display'))">
       <remap from="image" to="$(arg remote_display_topic)" />
@@ -102,7 +112,7 @@
       <param name="stream_width" value="$(arg stream_width)" />
       <param name="stream_height" value="$(arg stream_height)" />
       <param name="framerate" value="$(arg stream_framerate)" />
-      <param name="ready_topic" value="$(arg ready_topic)" />
+      <param name="ready_topic" value="$(arg effective_ready_topic)" />
     </node>
   </group>
   <node pkg="robot_navigation" type="audio_chat_node" name="audio_chat_$(arg role)" output="screen" if="$(arg enable_audio)">
@@ -112,7 +122,7 @@
     <param name="sample_rate" value="$(arg sample_rate)" />
     <param name="frame_duration_ms" value="$(arg frame_duration_ms)" />
     <param name="opus_bitrate" value="$(arg opus_bitrate)" />
-    <param name="ready_topic" value="$(arg ready_topic)" />
+    <param name="ready_topic" value="$(arg effective_ready_topic)" />
     <param name="capture_latency_ms" value="$(arg capture_latency_ms)" />
     <param name="playback_latency_ms" value="$(arg playback_latency_ms)" />
     <param name="jitter_buffer_ms" value="$(arg jitter_buffer_ms)" />

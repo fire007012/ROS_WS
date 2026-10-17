@@ -244,6 +244,8 @@ target_link_libraries(start_button_node
 )
 
 catkin_install_python(PROGRAMS
+  scripts/diagnose_mission.py
+  scripts/audio_video_ready_node.py
   scripts/esp32_vitals_bridge_node.py
   scripts/robot_status_display_node.py
   scripts/button_autostart.py
@@ -290,6 +292,7 @@ install(DIRECTORY systemd/
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/mission_routes.test)
+  add_rostest(test/mission_waypoint_position.test)
   add_rostest(test/safety_and_fine_tuning.test)
   add_rostest(test/rear_can_safety.test)
   add_rostest(test/mission_cancellation.test)
@@ -348,6 +351,8 @@ endif()
 if(CATKIN_ENABLE_TESTING)
   add_test(NAME audio_video_launch_defaults
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_audio_video_launch.py)
+  add_test(NAME bedside_session_gates
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_bedside_session.py)
   add_test(NAME mission_wide_av_lifecycle
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_mission_av_lifecycle.py)
 endif()
@@ -357,7 +362,7 @@ if(CATKIN_ENABLE_TESTING)
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_scan_camera_policy.py)
 endif()
 
-install(FILES scripts/scan_camera_policy.py
+install(FILES scripts/scan_camera_policy.py scripts/status_scene.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 if(CATKIN_ENABLE_TESTING)
@@ -378,4 +383,15 @@ endif()
 if(CATKIN_ENABLE_TESTING)
   add_rostest(test/mission_upper_alignment.test)
   add_rostest(test/mission_medicine_event.test)
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_test(NAME status_field_and_task
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_status_scene.py)
+endif()
+
+if(CATKIN_ENABLE_TESTING)
+  add_executable(test_video_geometry test/test_video_geometry.cpp)
+  target_include_directories(test_video_geometry PRIVATE include)
+  add_test(NAME landscape_video_geometry COMMAND test_video_geometry)
 endif()

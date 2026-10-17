@@ -1,13 +1,18 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- Shared camera routing for the Raspberry Pi.
-       Edit scan_device/audio_device here when the v4l2 numbering changes.
+  <!-- Pi camera roles corrected from bench feedback: scan=video2, call=video0.
+       QR and linear barcodes share the scan role.
+       Shared camera routing for the Raspberry Pi.
+       Persistent defaults: edit scan_device for mission scan_camera_device,
+       robot_audio_device for mission call_camera_device, doctor_audio_device for VM.
+       Both QR and linear barcodes use the same scan_device.
+       Normal roslaunch startup requires no device arguments.
        The /dev/media* entries are discovery metadata; usb_cam uses /dev/video*. -->
   <arg name="camera_role" default="scan"/>
-  <arg name="scan_device" default="/dev/video0"/>
-  <arg name="scan_alternate_device" default="/dev/video1"/>
-  <arg name="robot_audio_device" default="/dev/video2"/>
-  <arg name="robot_audio_alternate_device" default="/dev/video3"/>
+  <arg name="scan_device" default="/dev/video2"/>
+  <arg name="scan_alternate_device" default="/dev/video3"/>
+  <arg name="robot_audio_device" default="/dev/video0"/>
+  <arg name="robot_audio_alternate_device" default="/dev/video1"/>
   <!-- The VM may have different local camera numbering. -->
   <arg name="doctor_audio_device" default="/dev/video0"/>
   <arg name="doctor_audio_alternate_device" default="/dev/video1"/>

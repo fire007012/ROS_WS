@@ -95,6 +95,8 @@ void BarcodeQrDetector::scanSessionCallback(const std_msgs::UInt32::ConstPtr& ms
 void BarcodeQrDetector::qrEnabledCallback(const std_msgs::Bool::ConstPtr& msg) {
   std::lock_guard<std::mutex> lock(mutex_);
   qr_enabled_ = msg->data;
+  if (qr_enabled_) qr_scan_start_time_ = ros::Time::now();
+  ROS_INFO("[barcode_qr_detector] nurse QR %s, session=%u", qr_enabled_ ? "enabled" : "disabled", scan_session_id_);
 }
 
 // ── 图像回调 ───────────────────────────────────────────────
@@ -126,6 +128,13 @@ void BarcodeQrDetector::imageCallback(const sensor_msgs::Image::ConstPtr& msg) {
   cv::cvtColor(cv_ptr->image, gray, cv::COLOR_BGR2GRAY);
 
   const auto decoded = decodeCodes(scanner_, gray, need_barcode, decode_attempt_++);
+  if (qr_enabled_ && !qr_detected_ && decoded.empty()) {
+    cv::Scalar mean, deviation;
+    cv::meanStdDev(gray, mean, deviation);
+    ROS_INFO_THROTTLE(5.0,
+        "[barcode_qr_detector] nurse QR frame=%dx%d mean=%.1f contrast=%.1f no code decoded; check scan preview, focus, glare and QR border",
+        gray.cols, gray.rows, mean[0], deviation[0]);
+  }
   for (const auto& symbol : decoded) {
     const std::string& data = symbol.data;
     const auto type = symbol.type;
